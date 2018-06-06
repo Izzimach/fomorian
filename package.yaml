@@ -1,0 +1,20 @@
+name:                remorhaz
+version:             0.1.0.0
+#synopsis:
+#description:
+homepage:            https://github.com/Izzimach/remorhaz#readme
+license:             BSD3
+author:              Gary Haussmann
+maintainer:          gjhaussmann@gmail.com
+copyright:           2018 Gary Haussmann
+category:            Web
+extra-source-files:
+- README.md
+
+dependencies:
+  - base >= 4.7 && < 5
+
+executables:
+  remorhaz:
+    source-dirs:      src
+    main:             Main.hs
