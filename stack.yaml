@@ -39,7 +39,21 @@ packages:
 - .
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
-# extra-deps: []
+extra-deps:
+- GLFW-b-3.2.1.0
+- bindings-GLFW-3.2.1.1
+- GLUtil-0.10.1
+- vinyl-0.8.1
+- vinyl-gl-0.3.3
+
+
+#
+# OH NO
+#
+# added this to override linear-opengl dependencies on old packages
+#
+
+allow-newer: true
 
 # Override default flag values for local packages and extra-deps
 # flags: {}

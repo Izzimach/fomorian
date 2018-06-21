@@ -13,6 +13,17 @@ extra-source-files:
 
 dependencies:
   - base >= 4.7 && < 5
+  - OpenGL >= 3.0 && < 4
+  - GLFW-b
+  - GLUtil
+  - linear
+  - filepath
+  - hashable
+  - vinyl >= 0.8.1
+  - vinyl-gl >= 0.3.3
+  - ghc-prim
+  - lens
+  - containers
 
 executables:
   remorhaz:
