@@ -20,4 +20,5 @@ to run install stack then:
 
 ```
 stack build
+stack exec remorhaz
 ```
