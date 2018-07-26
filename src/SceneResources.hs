@@ -21,17 +21,26 @@ import Control.Monad (foldM, (>=>))
 import qualified Data.Set as S
 import qualified Data.Map as M
 
+--
+-- Data attribute arrays at the moment can only be 2D/3D points or index buffers.
+-- In a scene node the vertex data is specified as a VertexSourceData value.
+--
 data VertexSourceData = V2Data [V2 GLfloat]
   | V3Data [V3 GLfloat]
   | IndexData  [Int]
   deriving (Ord, Eq)
 
+
+-- types so that vinyl-gl can check attribute data
 type Pos2 = '("pos2", V2 GLfloat)
 type Pos3 = '("pos3", V3 GLfloat)
 type VertIndex = '("index", Int)
 
 
-  
+--
+-- The resource map holds all loaded resources. Scene nodes specify resources
+-- in varying ways depending on resource: String/filepaths for shader programs, VertexSourceData
+-- for vertex, Strings/filepaths for textures
 data ResourceMap = Resources { 
     shaders :: (M.Map String GLU.ShaderProgram),
     v2Buffers :: (M.Map VertexSourceData (VGL.BufferedVertices '[Pos2], Word32)),
@@ -43,6 +52,10 @@ data ResourceMap = Resources {
 emptyResourceMap :: ResourceMap
 emptyResourceMap = Resources M.empty M.empty M.empty M.empty M.empty
 
+--
+-- Just a list of resources that need to be loaded or created.  The resource
+-- manager looks at this to figure what to load.
+--
 data ResourceList = ResourceList { 
     shaderfiles :: S.Set String,
     vertexfiles :: S.Set VertexSourceData,
@@ -59,6 +72,10 @@ mergeResourceLists r1 r2 = ResourceList
     vertexfiles = S.union (vertexfiles r1) (vertexfiles r2),
     texturefiles = S.union (texturefiles r1) (texturefiles r2)
   }
+
+--
+-- functions to load/create graphics resources
+--
 
 initShader :: String -> IO GLU.ShaderProgram
 initShader shadername = GLU.loadShaderFamily $ "resources" </> "shaders" </> shadername
