@@ -103,6 +103,7 @@ loadTextures tfs r = foldM loadTextureM r tfs
                                 Right t -> do GL.textureFilter GL.Texture2D $= ((GL.Nearest,Nothing), GL.Nearest)
                                               GLU.texture2DWrap $= (GL.Repeated, GL.ClampToEdge)
                                               return $ racc { textures = M.insert tf t (textures racc) }
+                                res <- GLU.readTexture ("resources" </> "textures" </> tf)
 
 loadShaders :: [String] -> ResourceMap -> IO ResourceMap
 loadShaders ss r = foldM loadShaderM r ss
