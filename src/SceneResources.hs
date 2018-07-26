@@ -97,13 +97,15 @@ loadBuffers vs r = foldM loadBufferM r vs
 loadTextures :: [String] -> ResourceMap -> IO ResourceMap
 loadTextures tfs r = foldM loadTextureM r tfs
   where
-    loadTextureM racc tf = do res <- GLU.readTexture ("resources" </> "textures" </> tf)
-                              case res of
-                                Left x -> error x
-                                Right t -> do GL.textureFilter GL.Texture2D $= ((GL.Nearest,Nothing), GL.Nearest)
-                                              GLU.texture2DWrap $= (GL.Repeated, GL.ClampToEdge)
-                                              return $ racc { textures = M.insert tf t (textures racc) }
+    loadTextureM racc tf = case (M.lookup tf (textures racc)) of
+                              Just _  -> return racc
+                              Nothing -> do
                                 res <- GLU.readTexture ("resources" </> "textures" </> tf)
+                                case res of
+                                  Left x -> error x
+                                  Right t -> do GL.textureFilter GL.Texture2D $= ((GL.Nearest,Nothing), GL.Nearest)
+                                                GLU.texture2DWrap $= (GL.Repeated, GL.ClampToEdge)
+                                                return $ racc { textures = M.insert tf t (textures racc) }
 
 loadShaders :: [String] -> ResourceMap -> IO ResourceMap
 loadShaders ss r = foldM loadShaderM r ss
