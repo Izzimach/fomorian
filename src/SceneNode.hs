@@ -26,10 +26,13 @@ import SceneResources
 -- |The 'SceneNode' class represents a single node of the scene graph,
 --  although operations apply to the node and all its children.
 class SceneNode s where
-  -- |'@nodeRsources@ returns a ResourceList of the resources this subtree requires
+  -- |'@nodeResources@ returns a ResourceList of the resources this subtree requires
   nodeResources :: s -> ResourceList
-  -- |@rp@ is a vinyl record containing
-  -- the set of render-time parameters getting passed to this node.
+  -- |In @render s rp rs@:
+  -- @s@ is the scenegraph to render
+  -- @rp@ is a vinyl record containing
+  -- the set of time-varying parameters getting passed to this node for this
+  -- specific frame
   -- @rs@ is the ResourceMap containing resources
   render :: s -> RenderParams -> ResourceMap -> IO ()
 
@@ -37,7 +40,7 @@ class SceneNode s where
 {-|
   A generic wrapper to represent any SceneNode. We need this since
   a given child scene node could be of any type, so the 'children'
-  field is just a list of SceneNodeBox things instead of a list
+  field is just a list of SceneNodeBox elements instead of a list
   containing a specific type.
 -}
 data SceneNodeBox = forall s . (SceneNode s) => SceneNodeBox s
@@ -68,7 +71,10 @@ instance SceneNode (SceneNodeR sp) where
                 }
   render s rp rs = renderNode s rp rs
 
-type RenderParams = FieldRec '[ '("transformMatrix", M44 GLfloat), '("tex", GLint) ]
+type RenderParams = FieldRec '[
+   '("transformMatrix", M44 GLfloat), 
+   '("tex", GLint)
+    ]
 
 renderNode :: SceneNodeR sp -> RenderParams -> ResourceMap -> IO ()
 renderNode scene renderparams resources = do
@@ -87,12 +93,23 @@ renderNode scene renderparams resources = do
   mapM (VGL.enableVertices' shaderdata . fst) v3Vertices
   mapM (VGL.bindVertices . fst) v3Vertices
   mapM (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) indexVertices
-  putStrLn $ show textureObjects
+  --putStrLn $ show textureObjects
   GLU.withTextures2D textureObjects $ do
+    --
+    -- if an index array exists, use it via drawElements,
+    -- otherwise just draw without an index array using drawArrays
+    --
     if (length indexVertices > 0) then
+      -- draw with drawElements
+      --
       -- index arrays are Word32 which maps to GL type UnsignedInt
+      -- need 'fromIntegral' to convert the count to GL.NumArrayIndices type
       GL.drawElements GL.Triangles (fromIntegral . snd . head $ indexVertices) GL.UnsignedInt GLU.offset0
-    else 
+    else
+      -- draw with drawArrays
+      --
+      -- we assume 2D drawing if 2d vertices are specified for this node,
+      -- otherwise use 3D drawing
       if (length v2Vertices > 0) then
         GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v2Vertices)
       else
@@ -100,21 +117,21 @@ renderNode scene renderparams resources = do
     GLU.printErrorMsg "drawArrays"
     return ()
 
-  
-
 
 data SceneGraph = forall s . (SceneNode s) => SG s
 
 renderScene :: SceneGraph -> RenderParams -> ResourceMap -> IO ()
 renderScene (SG s) rp rm = render s rp rm
 
-loadResourcesForGraph :: SceneGraph -> IO ResourceMap
-loadResourcesForGraph (SG s) = 
+loadResourcesForScene :: SceneGraph -> IO ResourceMap
+loadResourcesForScene sg = syncResourcesForScene sg emptyResourceMap
+
+syncResourcesForScene :: SceneGraph -> ResourceMap -> IO ResourceMap
+syncResourcesForScene (SG s) oldres =
   let
     rl = listResourcesInGraph s
   in
-    loadResources rl emptyResourceMap
-
+    loadResources rl oldres
 
 listResourcesInGraph :: (SceneNode s) => s -> ResourceList
 listResourcesInGraph s = listResources' s emptyResourceList
