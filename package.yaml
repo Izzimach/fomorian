@@ -1,8 +1,8 @@
-name:                remorhaz
+name:                fomorian
 version:             0.1.0.0
 #synopsis:
 #description:
-homepage:            https://github.com/Izzimach/remorhaz#readme
+homepage:            https://github.com/Izzimach/fomorian#readme
 license:             BSD3
 author:              Gary Haussmann
 maintainer:          gjhaussmann@gmail.com
@@ -26,6 +26,6 @@ dependencies:
   - containers
 
 executables:
-  remorhaz:
+  fomorian:
     source-dirs:      src
     main:             Main.hs
