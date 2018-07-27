@@ -1,7 +1,7 @@
-Remorhaz is a Haskell library that lets you produce OpenGL graphics by
+Fomorian is a Haskell library that lets you produce OpenGL graphics by
 manipulating a scene graph.
 
-current proof-of-concept code:
+current proof-of-concept data for a simple square:
 
 ```haskell
 buildScene :: IO (SceneNode)
