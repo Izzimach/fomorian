@@ -2,11 +2,21 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE UnicodeSyntax #-}
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module SceneNode where
+
 import Linear
+
+import Data.Kind (Constraint)
 
 -- qualify most of OpenGL stuff except for a few common types
 import qualified Graphics.Rendering.OpenGL as GL
@@ -14,8 +24,12 @@ import Graphics.Rendering.OpenGL (($=), GLfloat, GLint)
 import qualified Graphics.GLUtil as GLU
 
 import Data.Vinyl
+import Data.Vinyl.Lens
+import Data.Vinyl.TypeLevel (Nat(Z),Nat(S))
+
 import Data.Word (Word32)
 import qualified Graphics.VinylGL as VGL
+import Graphics.VinylGL.Uniforms (UniformFields)
 import Data.Maybe
 
 import qualified Data.Map as M
@@ -23,71 +37,61 @@ import qualified Data.Set as S
 
 import SceneResources
 
--- |The 'SceneNode' class represents a single node of the scene graph,
---  although operations apply to the node and all its children.
-class SceneNode s where
-  -- |'@nodeResources@ returns a ResourceList of the resources this subtree requires
-  nodeResources :: s -> ResourceList
-  -- |In @render s rp rs@:
+data PerFrameData ff = PerFrameData (FieldRec ff)
+--data ResourceMap rm = Resources rm
+
+-- |The 'Drawable' class represents a single node or subtree of the
+-- scene graph.
+class (Drawable s fr) where
+  type FrameConstraints s fr :: Constraint
+  -- |In @draw s rp rs@:
   -- @s@ is the scenegraph to render
   -- @rp@ is a vinyl record containing
   -- the set of time-varying parameters getting passed to this node for this
   -- specific frame
   -- @rs@ is the ResourceMap containing resources
-  render :: s -> RenderParams -> ResourceMap -> IO ()
+  draw :: (FrameConstraints s fr, fr ~ FieldRec ff) => s -> PerFrameData ff -> ResourceMap -> IO ()
 
+class (NeedsResources s) where
+  resources :: s -> ResourceList
   
-{-|
-  A generic wrapper to represent any SceneNode. We need this since
-  a given child scene node could be of any type, so the 'children'
-  field is just a list of SceneNodeBox elements instead of a list
-  containing a specific type.
--}
-data SceneNodeBox = forall s . (SceneNode s) => SceneNodeBox s
-
-instance SceneNode SceneNodeBox where
-  nodeResources (SceneNodeBox s) = nodeResources s
-  render (SceneNodeBox s) rp rs = render s rp rs
-
-
 --
 -- A scene node represented as a vinyl record.
 -- The type sp is a vinyl record generated for each node, representing
--- the staic shader parameters used by that node.
+-- the static shader parameters used by that node.
 --
-type SceneNodeR sp = FieldRec '[
-  '("shader", String),
-  '("shaderParameters", sp),
-  '("vertexBuffers", [VertexSourceData]),
-  '("textures", [String]),
-  '("children", [SceneNodeBox])
-  ]
+data InvokeNode sp = Invoke (FieldRec '[
+      '("shader", String),
+      '("shaderParameters", sp),
+      '("vertexBuffers", [VertexSourceData]),
+      '("textures", [String])
+    ])
 
-instance SceneNode (SceneNodeR sp) where
-  nodeResources s = ResourceList { 
-                  shaderfiles =  S.singleton (rvalf #shader s), 
-                  vertexfiles =  S.fromList (rvalf #vertexBuffers s),
-                  texturefiles = S.fromList (rvalf #textures s)
-                }
-  render s rp rs = renderNode s rp rs
 
-type RenderParams = FieldRec '[
-   '("transformMatrix", M44 GLfloat), 
-   '("tex", GLint)
-    ]
+instance Drawable (InvokeNode sp) fr where
+  type FrameConstraints (InvokeNode sp) fr = (UniformFields fr)
+  draw s d rm = renderNode s d rm
 
-renderNode :: SceneNodeR sp -> RenderParams -> ResourceMap -> IO ()
-renderNode scene renderparams resources = do
-  let vBufferValues = rvalf #vertexBuffers scene
+instance NeedsResources (InvokeNode sp) where
+  resources (Invoke s) = ResourceList { 
+      shaderfiles =  S.singleton (rvalf #shader s), 
+      vertexfiles =  S.fromList (rvalf #vertexBuffers s),
+      texturefiles = S.fromList (rvalf #textures s)
+    }
+
+renderNode :: forall sp fr . (UniformFields (FieldRec fr))
+           => InvokeNode sp -> PerFrameData fr -> ResourceMap -> IO ()
+renderNode (Invoke s) (PerFrameData d) resources = do
+  let vBufferValues = rvalf #vertexBuffers s
   let v2Vertices = mapMaybe (\x -> M.lookup x (v2Buffers resources)) vBufferValues
   let v3Vertices = mapMaybe (\x -> M.lookup x (v3Buffers resources)) vBufferValues
   let indexVertices = mapMaybe (\x -> M.lookup x (indexBuffers resources)) vBufferValues
-  let textureObjects = mapMaybe (\x -> M.lookup x (textures resources)) (rvalf #textures scene)
-  let (Just shaderdata) = M.lookup (rvalf #shader scene) (shaders resources)
+  let textureObjects = mapMaybe (\x -> M.lookup x (textures resources)) (rvalf #textures s)
+  let (Just shaderdata) = M.lookup (rvalf #shader s) (shaders resources)
   GL.currentProgram $= Just (GLU.program shaderdata)
   GLU.printErrorMsg "currentProgram"
   --VGL.setUniforms shaderdata ((#tex =: (0 :: GLint)) :& RNil)
-  VGL.setUniforms shaderdata renderparams
+  VGL.setUniforms shaderdata d
   mapM (VGL.enableVertices' shaderdata . fst) v2Vertices
   mapM (VGL.bindVertices . fst) v2Vertices
   mapM (VGL.enableVertices' shaderdata . fst) v3Vertices
@@ -118,25 +122,26 @@ renderNode scene renderparams resources = do
     return ()
 
 
-data SceneGraph = forall s . (SceneNode s) => SG s
+data SceneGraph dr fr = SG dr fr
 
-renderScene :: SceneGraph -> RenderParams -> ResourceMap -> IO ()
-renderScene (SG s) rp rm = render s rp rm
+renderScene :: (fr ~ FieldRec ff, Drawable dr fr, FrameConstraints dr fr) =>
+  SceneGraph dr fr -> PerFrameData ff -> ResourceMap -> IO ()
+renderScene (SG s _) d rm = draw s d rm
 
-loadResourcesForScene :: SceneGraph -> IO ResourceMap
+loadResourcesForScene :: (NeedsResources dr) => SceneGraph dr ff -> IO ResourceMap
 loadResourcesForScene sg = syncResourcesForScene sg emptyResourceMap
 
-syncResourcesForScene :: SceneGraph -> ResourceMap -> IO ResourceMap
-syncResourcesForScene (SG s) oldres =
+syncResourcesForScene :: (NeedsResources dr) => SceneGraph dr ff -> ResourceMap -> IO ResourceMap
+syncResourcesForScene (SG s _) oldres =
   let
     rl = listResourcesInGraph s
   in
     loadResources rl oldres
 
-listResourcesInGraph :: (SceneNode s) => s -> ResourceList
+listResourcesInGraph :: (NeedsResources s) => s -> ResourceList
 listResourcesInGraph s = listResources' s emptyResourceList
 
-listResources' :: (SceneNode s) => s -> ResourceList -> ResourceList
+listResources' :: (NeedsResources s) => s -> ResourceList -> ResourceList
 listResources' s acc =
-  let rl = nodeResources s
+  let rl = resources s
   in mergeResourceLists acc rl

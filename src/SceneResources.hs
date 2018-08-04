@@ -32,8 +32,8 @@ data VertexSourceData = V2Data [V2 GLfloat]
 
 
 -- types so that vinyl-gl can check attribute data
-type Pos2 = '("pos2", V2 GLfloat)
-type Pos3 = '("pos3", V3 GLfloat)
+type Pos2 = '("pos2", V2 Float)
+type Pos3 = '("pos3", V3 Float)
 type VertIndex = '("index", Int)
 
 

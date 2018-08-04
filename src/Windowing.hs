@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts, FlexibleInstances, NoMonomorphismRestriction #-}
 {-# LANGUAGE GADTs, TypeSynonymInstances, TemplateHaskell, StandaloneDeriving #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- \
 module Windowing where
@@ -24,55 +25,40 @@ import Control.Monad
 import Control.Lens ((^.), (.~))
 import Control.Exception
 
-type AppInfo = FieldRec '[  '("projectionMatrix", M44 GLfloat),
+type AppInfo = FieldRec '[  '("window", GLFW.Window),
+                            '("windowSize", (Int,Int)),
                             '("resources", ResourceMap)]
 
 
-setProjectionMatrix :: IORef AppInfo -> Int -> Int -> IO ()
-setProjectionMatrix s w h = do
-  modifyIORef' s f
-  GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
-  where
-    w1 = 1.0 / (fromIntegral w)
-    h1 = 1.0 / (fromIntegral h)
-    scaleMatrix x y z = V4 (V4 x 0 0 0)
-                           (V4 0 y 0 0)
-                           (V4 0 0 z 0)
-                           (V4 0 0 0 1)
-    translationMatrix x y z = V4 (V4 1 0 0 x)
-                                 (V4 0 1 0 y)
-                                 (V4 0 0 1 z)
-                                 (V4 0 0 0 1)
-    finalMatrix = ((translationMatrix (-1) (-1) 0) !*! (scaleMatrix (w1*2) (h1*2) 1))
-    f :: AppInfo -> AppInfo
-    f app = rputf #projectionMatrix finalMatrix app
-
 resizeWindow :: IORef AppInfo -> GLFW.WindowSizeCallback
-resizeWindow s = \_ w h -> setProjectionMatrix s w h
+resizeWindow s = \_ w h -> windowResizeEvent s w h
+    
+windowResizeEvent :: IORef AppInfo -> Int -> Int -> IO ()
+windowResizeEvent s w h = do
+  GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
+  modifyIORef' s $ rputf #windowSize (w,h)
 
-
-initWindow :: IO (GLFW.Window, IORef AppInfo)
-initWindow = do
+initWindow :: (Int,Int,String) -> IO GLFW.Window
+initWindow (w,h,title) = do
   GLFW.init
   GLFW.defaultWindowHints
   GLFW.windowHint (GLFW.WindowHint'ContextVersionMajor 4)
   GLFW.windowHint (GLFW.WindowHint'Resizable True)
   GLFW.windowHint (GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core)
-  Just win <- GLFW.createWindow 400 400 "Title" Nothing Nothing
+  Just win <- GLFW.createWindow w h title Nothing Nothing
   GLFW.makeContextCurrent (Just win)
-  appIORef <- initAppState
-  GLFW.setWindowSizeCallback win (Just $ resizeWindow appIORef)
-  setProjectionMatrix appIORef 400 400
-  return (win, appIORef)
+  return win
 
-initAppState :: IO (IORef AppInfo)
-initAppState = do
+initAppState :: (Int,Int,String) -> GLFW.Window -> IO (IORef AppInfo)
+initAppState (w,h,title) win = do
   defaultVAO <- fmap head (genObjectNames 1)
   bindVertexArrayObject $= Just defaultVAO
   GLU.printErrorMsg "bindVAO"
-  appIORef <- newIORef $ (#projectionMatrix =: identity)
+  appIORef <- newIORef $ (#window =: win)
+                      :& (#windowSize =: (w,h))
                       :& (#resources =: emptyResourceMap)
                       :& RNil
+  GLFW.setWindowSizeCallback win (Just $ resizeWindow appIORef)
   return appIORef
 
   
@@ -88,30 +74,30 @@ shouldEndProgram win = do
   windowKill <- GLFW.windowShouldClose win
   return (p == GLFW.KeyState'Pressed ||  windowKill)
 
-renderLoop :: GLFW.Window -> IORef AppInfo -> (AppInfo -> SceneGraph) -> IO ()
-renderLoop win appref buildScene = loop
+renderLoop :: (NeedsResources s, Drawable s (FieldRec fr), FrameConstraints s  (FieldRec fr)) => IORef AppInfo -> (AppInfo -> SceneGraph s (FieldRec fr)) -> (AppInfo -> PerFrameData fr) -> IO ()
+renderLoop appref buildScene genRP = loop
   where
     loop = do
         appstate <- readIORef appref
+        let win = rvalf #window appstate
         let scene = buildScene appstate
-        new_res <- syncResourcesForScene scene (rvalf #resources appstate)
-        let new_appstate = (rputf #resources new_res $ appstate)
-        renderApp new_appstate scene
+        let resources = rvalf #resources appstate
+        new_resources <- syncResourcesForScene scene resources
+        let new_appstate = (rputf #resources new_resources $ appstate)
+        let frame_data = genRP new_appstate
+        renderApp new_appstate scene frame_data
         writeIORef appref new_appstate
 
         GLFW.swapBuffers win
         shouldClose <- shouldEndProgram win
         unless shouldClose loop
 
-renderApp :: AppInfo -> SceneGraph -> IO ()
-renderApp appstate scene = do
+renderApp :: (Drawable s (FieldRec fr), FrameConstraints s (FieldRec fr)) => AppInfo -> SceneGraph s (FieldRec fr) -> PerFrameData fr -> IO ()
+renderApp appstate scene framedata = do
   GL.clearColor $= Color4 0 0 0 0
   GL.clear [GL.ColorBuffer]
   let resourceMap = rvalf #resources appstate
-  let renderparams = (#transformMatrix =: (rvalf #projectionMatrix appstate))
-                  :& (#tex =: 0)
-                  :& RNil
-  renderresult <- try $ renderScene scene renderparams resourceMap
+  renderresult <- try $ renderScene scene framedata resourceMap
   case renderresult of
     Left e -> do
       putStrLn $ displayException (e :: SomeException)
