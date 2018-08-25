@@ -1,10 +1,18 @@
-{-# LANGUAGE DataKinds, PolyKinds, TypeOperators, TypeFamilies #-}
-{-# LANGUAGE FlexibleContexts, FlexibleInstances, NoMonomorphismRestriction #-}
-{-# LANGUAGE GADTs, TypeSynonymInstances, TemplateHaskell, StandaloneDeriving #-}
-{-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE DataKinds, PolyKinds, 
 
--- \
+TypeOperators,
+TypeFamilies,
+FlexibleContexts, 
+FlexibleInstances, 
+NoMonomorphismRestriction,
+
+GADTs, TypeSynonymInstances, TemplateHaskell, OverloadedLabels,
+
+StandaloneDeriving,
+RankNTypes
+#-}
+
+-- 
 module Windowing where
 
 import Graphics.Rendering.OpenGL as GL
