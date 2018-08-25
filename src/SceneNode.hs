@@ -11,11 +11,12 @@
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module SceneNode where
 
 import Linear
-
+import Control.Lens ((%~),(.~),over,view)
 import Data.Kind (Constraint)
 
 -- qualify most of OpenGL stuff except for a few common types
@@ -145,3 +146,108 @@ listResources' :: (NeedsResources s) => s -> ResourceList -> ResourceList
 listResources' s acc =
   let rl = resources s
   in mergeResourceLists acc rl
+
+
+--
+-- Basic draw nodes commonly used.  Should probably move these to a separate file?
+--
+
+--
+-- applies a 4*4 transform to the current World transform matrix, and
+-- passes this modified set of data to the sub-node @n@
+--
+
+data TransformNode n = TransformNode (M44 GLfloat) n
+type TransformNodeFrameFields = '[ '("worldTransform", M44 GLfloat) ]
+type TransformNodeFrameData = FieldRec TransformNodeFrameFields
+
+--
+-- Given a matrix transform, applies that to the TransformNode vinyl record
+-- The types here help out type inference for 'rsubset' in the FrameConstraints below.
+--
+applyXform :: (M44 GLfloat -> M44 GLfloat) -> TransformNodeFrameData -> TransformNodeFrameData
+applyXform f d = over (rlensf #worldTransform) f d
+
+instance (Drawable n (FieldRec ff)) => Drawable (TransformNode n) (FieldRec ff) where
+  type FrameConstraints (TransformNode n) (FieldRec ff) = 
+    (TransformNodeFrameFields <: ff,    -- there needs to be a transform provided to the transform
+     Drawable n (FieldRec ff),          -- per frame data is passed down the sub-node
+     FrameConstraints n (FieldRec ff)   -- satisfy frame data constraints of the sub-node
+     )
+  draw (TransformNode m n) (PerFrameData fr) res =
+      let putM = applyXform (\m0 -> m !*! m0)
+          frX = over rsubset putM fr
+      in
+        draw n (PerFrameData frX) res
+
+instance (NeedsResources n) => NeedsResources (TransformNode n) where
+  resources (TransformNode _ n) = resources n
+
+translateNode :: V3 GLfloat -> n -> TransformNode n  
+translateNode (V3 x y z) n = 
+  let t = V4 (V4 1 0 0 x)
+             (V4 0 1 0 y)
+             (V4 0 0 1 z)
+             (V4 0 0 0 1)
+  in
+    TransformNode t n
+
+
+--
+-- Orthographic projection that projects x/y coordinates
+-- to window pixel coordinates. For example to fill a
+-- 400x400 pixel window you would draw a quad with coordinates
+-- (0,0) (400,0) (400,400) (0,400)
+-- 
+
+buildPixelOrthoMatrix :: (Integral a) => a -> a -> M44 GLfloat
+buildPixelOrthoMatrix w h =
+  let 
+    w1 = 1.0 / (fromIntegral w)
+    h1 = 1.0 / (fromIntegral h)
+    scaleMatrix x y z = V4 (V4 x 0 0 0)
+                            (V4 0 y 0 0)
+                            (V4 0 0 z 0)
+                            (V4 0 0 0 1)
+    translationMatrix x y z = V4 (V4 1 0 0 x)
+                                  (V4 0 1 0 y)
+                                  (V4 0 0 1 z)
+                                  (V4 0 0 0 1)
+    m1 = translationMatrix (-1) (-1) 0
+    m2 = scaleMatrix (w1*2) (h1*2) 1
+  in
+    m1 !*! m2
+
+data PixelOrthoNode n = PixelOrthoView n
+type PixelOrthoFrameFields = '[ '("windowX", Integer), '("windowY",Integer) ]
+type PixelOrthoFrameData = FieldRec PixelOrthoFrameFields
+
+orthize :: (fr ~ FieldRec ff, PixelOrthoFrameFields <: ff) => fr -> M44 GLfloat
+orthize d = let rf = (rcast d) :: PixelOrthoFrameData
+                w = rvalf #windowX rf
+                h = rvalf #windowY rf
+            in
+              buildPixelOrthoMatrix w h
+
+type OrthoParams = FieldRec '[ 
+  '("cameraProjection", M44 GLfloat),
+  '("worldTransform", M44 GLfloat)
+  ]
+
+instance (Drawable n (FieldRec ff)) => Drawable (PixelOrthoNode n) (FieldRec ff) where
+  type FrameConstraints (PixelOrthoNode n) (FieldRec ff) = 
+    (PixelOrthoFrameFields <: ff,    -- PixelOrthoNode needs windowX and windowY fields
+      Drawable n OrthoParams,         -- the subnode is provided a transformMatrix
+      FrameConstraints n OrthoParams  -- provide context for the subnode to get transformMatrix
+      )
+  draw (PixelOrthoView n) (PerFrameData fr) res =
+      let orthoM = orthize fr
+          frX = PerFrameData $    (#cameraProjection =: orthoM)
+                                :& (#worldTransform =: (identity :: M44 GLfloat) )
+                                :& RNil
+      in
+        draw n frX res
+
+instance (NeedsResources n) => NeedsResources (PixelOrthoNode n) where
+  resources (PixelOrthoView n) = resources n
+    
