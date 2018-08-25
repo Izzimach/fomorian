@@ -25,6 +25,7 @@ dependencies:
   - lens
   - containers
   - bifunctors
+  - mtl
 
 executables:
   fomorian:
