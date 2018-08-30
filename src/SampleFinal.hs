@@ -13,9 +13,12 @@ module SampleFinal where
 
 import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.GLUtil as GLU
+import qualified Graphics.UI.GLFW as GLFW
+
 import Linear
 import Data.Vinyl
 import Data.Word (Word32)
+import qualified Data.Constraint as DC
 import Graphics.VinylGL
 
 import Data.IORef
@@ -36,10 +39,12 @@ import SceneFinal
 import SceneResources
 
 
-squareRPProxy :: RenderParamsProxy (FieldRec '[
-                    '("cameraProjection", M44 GLfloat),
-                    '("worldTransform", M44 GLfloat)
-                  ])
+squareRPProxy :: RenderParamsProxy (InvokableFrameData repr 
+                    ('[
+                      '("cameraProjection", M44 GLfloat),
+                      '("worldTransform", M44 GLfloat)
+                    ])
+                  )
 squareRPProxy = RPProxy
 
 simpleSquare file = invoke $ Invocation $
@@ -56,23 +61,67 @@ simpleSquare file = invoke $ Invocation $
 
 
 
-testScene :: (SceneSYM repr) => repr (FieldRec PixelOrthoFrameFields)
+testScene :: (SceneSYM repr, InvokeConstraint repr OrthoParams) => repr (FieldRec PixelOrthoFrameFields)
 testScene = ortho2DView $
               simpleSquare "lollipopGreen.png"
          
-t2 :: (MonadIO m) => DrawGL m (FieldRec PixelOrthoFrameFields)
-t2 = testScene
-              
-genRenderParams :: W.AppInfo -> FieldRec PixelOrthoFrameFields
+genRenderParams :: W.AppInfo -> (FieldRec PixelOrthoFrameFields)
 genRenderParams appstate = let (w,h) = rvalf #windowSize appstate
   in   (#windowX =: fromIntegral w)
     :& (#windowY =: fromIntegral h)
     :& RNil
 
 
+
+--
+renderLoop ::
+  IORef W.AppInfo -> 
+  (forall scenerepr . (SceneSYM scenerepr, InvokeConstraint scenerepr OrthoParams) => W.AppInfo -> scenerepr (fr)) -> (W.AppInfo -> fr) ->
+  IO ()
+renderLoop appref buildScene genRP = loop
+  where
+    loop = do
+        appstate <- readIORef appref
+        let win = rvalf #window appstate
+        let resources = rvalf #resources appstate
+        let needresources = needsGLResources $ buildScene appstate
+        new_resources <- loadResources needresources resources
+        let new_appstate = (rputf #resources new_resources $ appstate)
+
+        let frame_data = genRP new_appstate
+        let scene = buildScene appstate
+        renderApp new_appstate scene frame_data
+        writeIORef appref new_appstate
+
+        GLFW.swapBuffers win
+        shouldClose <- W.shouldEndProgram win
+        unless shouldClose loop
+
+renderApp :: W.AppInfo -> DrawGL IO (fr) -> fr -> IO ()
+renderApp appstate scene framedata = do
+  GL.clearColor $= Color4 0 0 0 0
+  GL.clear [GL.ColorBuffer]
+  let resourceMap = rvalf #resources appstate
+  let drawGO = runDrawGL scene
+  renderresult <- try $ drawGO framedata resourceMap
+  case renderresult of
+    Left e -> do
+      putStrLn $ displayException (e :: SomeException)
+    Right () -> return ()
+      
+
 main :: IO ()
 main = do
-  let drawM = runDrawGL testScene
+  let needsResources = needsGLResources testScene
+  let drawGO = runDrawGL testScene
   let renderParams = (#windowX =: 100) :& (#windowY =: 100) :& RNil
-  drawM renderParams
+  drawGO renderParams emptyResourceMap
 
+main2 :: IO ()
+main2 = do
+  let scene = testScene
+  let windowConfig = (400,400,"Demo")
+  win <- W.initWindow windowConfig
+  appdata <- W.initAppState windowConfig win
+  renderLoop appdata (const scene) genRenderParams
+  W.terminateWindow win

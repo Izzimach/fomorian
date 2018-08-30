@@ -1,7 +1,7 @@
 -- experimental SceneNode implementation using a final embedding
 
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DataKinds, PolyKinds #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE UnicodeSyntax #-}
 {-# LANGUAGE TypeSynonymInstances #-}
@@ -20,6 +20,7 @@ module SceneFinal where
 import Linear
 import Control.Lens ((%~),(.~),over,view)
 import Data.Kind (Constraint)
+import Data.Proxy
 
 import Control.Monad.Trans
 
@@ -32,6 +33,7 @@ import Data.Vinyl
 import Data.Vinyl.Lens
 import Data.Vinyl.TypeLevel (Nat(Z),Nat(S), AllConstrained)
 import Data.Vinyl.Functor
+import qualified Data.Constraint as DC
 
 import Data.Word (Word32)
 import qualified Graphics.VinylGL as VGL
@@ -43,7 +45,11 @@ import qualified Data.Set as S
 
 import SceneResources
 
-data PerFrameData ff = PerFrameData (FieldRec ff)
+data PerFrameData ff c = PerFrameData (FieldRec ff) (DC.Dict c)
+
+class NoFrameConstraint a where
+
+instance NoFrameConstraint a where
 
 data RenderParamsProxy a = RPProxy
 
@@ -55,42 +61,14 @@ data InvokeRecord sp rp = Invocation (FieldRec '[
       '("rpProxy", RenderParamsProxy rp)
     ])
 
+newtype InvokableFrameData repr f = Invokable (PerFrameData f (InvokeConstraint repr (FieldRec f)))
+
 class SceneSYM repr where
-  invoke :: InvokeRecord sp rp -> repr rp
+  type InvokeConstraint repr ff :: Constraint
+  invoke :: InvokeRecord sp (InvokableFrameData repr f) -> repr (InvokableFrameData repr f)
+--  invokable :: FieldRec f -> repr (InvokableFrameData repr f)
   group  :: [repr rp] -> repr rp
   transformer :: (r1 -> r2) -> repr r2 -> repr r1
-
---
--- A monad that generates OpenGL commands. I guess
--- this is really just the ReaderT monad, where what we're
--- "reading" are the render parameters for the current frame
---
-
-data OpenGLM r m a = OpenGLM { runOpenGL :: r -> m a }
-
-instance (Monad m) => Functor (OpenGLM r m) where
-  fmap f m = OpenGLM $ \r -> do
-    a <- runOpenGL m r
-    return (f a)
-
-instance (Applicative m, Monad m) => Applicative (OpenGLM r m) where
-  pure a = OpenGLM (\_ -> pure a)
-  m1 <*> m2 = OpenGLM $ \r -> do
-      fa <- runOpenGL m1 r
-      a  <- runOpenGL m2 r
-      return (fa a)
-
-instance (Monad m) => Monad (OpenGLM r m) where
-  m >>= f = OpenGLM $ \r -> do
-    a <- runOpenGL m r
-    runOpenGL (f a) r
-
-instance MonadTrans (OpenGLM r) where
-  lift m = OpenGLM $ \_ -> m
-
-instance (MonadIO m) => MonadIO (OpenGLM r m) where
-  liftIO = lift . liftIO
-
 
 --
 -- DrawGL is a monad that takes in per-frame render parameters and draws the
@@ -98,49 +76,96 @@ instance (MonadIO m) => MonadIO (OpenGLM r m) where
 -- we can manipulate the required render parameters instead of the return type.
 --
 
-data DrawGL m rp = DrawGL { runDrawGL :: rp -> m () }
+data DrawGL m rp = DrawGL { runDrawGL :: rp -> ResourceMap -> m () }
 
 instance (MonadIO m) => SceneSYM (DrawGL m) where
-  invoke :: InvokeRecord sp rp -> DrawGL m rp
-  invoke (Invocation ir) = DrawGL (\rp -> liftIO $ do
-                                        putStrLn $ "argh " ++ (rvalf #shader ir)
-                                        let labels = recordToList (getLabels ir)
-                                        mapM_ putStrLn labels
-                                        return ()
-                           )
+  type InvokeConstraint (DrawGL m) ff = UniformFields ff
+  invoke :: InvokeRecord sp (InvokableFrameData (DrawGL m) f) ->
+     DrawGL m (InvokableFrameData (DrawGL m) f)
+  invoke (Invocation ir) = DrawGL $ \(Invokable (PerFrameData rp dc)) rr -> liftIO $ do
+      
+      let vBufferValues = rvalf #vertexBuffers ir
+      let v2Vertices = mapMaybe (\x -> M.lookup x (v2Buffers rr)) vBufferValues
+      let v3Vertices = mapMaybe (\x -> M.lookup x (v3Buffers rr)) vBufferValues
+      let indexVertices = mapMaybe (\x -> M.lookup x (indexBuffers rr)) vBufferValues
+      let textureObjects = mapMaybe (\x -> M.lookup x (textures rr)) (rvalf #textures ir)
+      let (Just shaderdata) = M.lookup (rvalf #shader ir) (shaders rr)
+      GL.currentProgram $= Just (GLU.program shaderdata)
+      GLU.printErrorMsg "currentProgram"
+      --VGL.setUniforms shaderdata ((#tex =: (0 :: GLint)) :& RNil)
+      (DC.withDict dc (VGL.setUniforms shaderdata rp)) :: IO ()
+      mapM (VGL.enableVertices' shaderdata . fst) v2Vertices
+      mapM (VGL.bindVertices . fst) v2Vertices
+      mapM (VGL.enableVertices' shaderdata . fst) v3Vertices
+      mapM (VGL.bindVertices . fst) v3Vertices
+      mapM (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) indexVertices
+      --putStrLn $ show textureObjects
+      GLU.withTextures2D textureObjects $ do
+      --
+      -- if an index array exists, use it via drawElements,
+      -- otherwise just draw without an index array using drawArrays
+      --
+      if (length indexVertices > 0) then
+        -- draw with drawElements
+        --
+        -- index arrays are Word32 which maps to GL type UnsignedInt
+        -- need 'fromIntegral' to convert the count to GL.NumArrayIndices type
+        GL.drawElements GL.Triangles (fromIntegral . snd . head $ indexVertices) GL.UnsignedInt GLU.offset0
+      else
+        -- draw with drawArrays
+        --
+        -- we assume 2D drawing if 2d vertices are specified for this node,
+        -- otherwise use 3D drawing
+        if (length v2Vertices > 0) then
+          GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v2Vertices)
+        else
+          GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v3Vertices)
+      GLU.printErrorMsg "drawArrays"
+      return ()
+    
+      --putStrLn $ "argh " ++ (rvalf #shader ir)
+      --let labels = recordToList (getLabels ir)
+      --mapM_ putStrLn labels
+      return ()
     where getLabels :: (AllFields ff) =>  FieldRec ff -> Rec (Data.Vinyl.Functor.Const String) ff
           getLabels _ = rlabels
 
   group  :: [DrawGL m rp] -> DrawGL m rp
-  group []         = DrawGL (\_ -> return ())
+  group []         = DrawGL (\_ _ -> return ())
   group (ig : igs) = ig
 
   transformer :: (rp1 -> rp2) -> DrawGL m rp2 -> DrawGL m rp1
-  transformer f ib = DrawGL $ \a -> let ob = runDrawGL ib
-                                      in ob (f a)
+  transformer f ib = DrawGL $ \a r -> let ob = runDrawGL ib
+                                      in ob (f a) r
 
-newtype OGLResources a = OGLResources ResourceMap
+newtype OGLResources a = OGLResources { needsGLResources :: ResourceList }
 
 instance SceneSYM OGLResources where
+  type InvokeConstraint OGLResources f  = NoFrameConstraint f
   invoke :: InvokeRecord sp rp -> OGLResources rp
-  invoke = undefined
-
+  invoke (Invocation ir) = OGLResources $ ResourceList { 
+        shaderfiles =  S.singleton (rvalf #shader ir), 
+        vertexfiles =  S.fromList (rvalf #vertexBuffers ir),
+        texturefiles = S.fromList (rvalf #textures ir)
+      }
+  
   group :: [OGLResources rp] -> OGLResources rp
-  group = undefined
+  group [] = OGLResources emptyResourceList
+  group (x:xs) = x
 
   transformer :: (rp1 -> rp2) -> OGLResources rp2 -> OGLResources rp1
-  transformer = undefined
+  transformer _ (OGLResources rl) = OGLResources rl
 
 --
 -- common scene nodes and transforms
 --
 
-buildPixelOrthoMatrix :: (Integral a) => a -> a -> M44 GLfloat
+buildPixelOrthoMatrix :: (Integral a, RealFrac b) => a -> a -> M44 b
 buildPixelOrthoMatrix w h =
   let 
     w1 = 1.0 / (fromIntegral w)
     h1 = 1.0 / (fromIntegral h)
-    scaleMatrix x y z = V4 (V4 x 0 0 0)
+    scaleMatrix x y z = V4  (V4 x 0 0 0)
                             (V4 0 y 0 0)
                             (V4 0 0 z 0)
                             (V4 0 0 0 1)
@@ -162,17 +187,23 @@ orthize d = let rf = (rcast d) :: FieldRec PixelOrthoFrameFields
             in
               buildPixelOrthoMatrix w h
 
-type OrthoParams = FieldRec '[ 
+type OrthoParamFields = '[
     '("cameraProjection", M44 GLfloat),
     '("worldTransform", M44 GLfloat)
   ]
+type OrthoParams = FieldRec OrthoParamFields
   
-orthoConvert :: (fr ~ FieldRec ff, PixelOrthoFrameFields <: ff) => fr -> OrthoParams
+orthoConvert :: (fr ~ FieldRec ff, PixelOrthoFrameFields <: ff,
+                 InvokeConstraint repr OrthoParams) => fr -> InvokableFrameData repr OrthoParamFields
 orthoConvert fr = 
         let orthoM = orthize fr
-        in   (#cameraProjection =: orthoM)
-          :& (#worldTransform =: (identity :: M44 GLfloat) )
-          :& RNil
+            frameData =      (#cameraProjection =: orthoM)
+                          :& (#worldTransform =: (identity :: M44 GLfloat) )
+                          :& RNil
+        in
+          Invokable (PerFrameData frameData DC.Dict)
 
-ortho2DView :: (SceneSYM repr, fr ~ FieldRec ff, PixelOrthoFrameFields <: ff) => repr OrthoParams -> repr fr
-ortho2DView  = transformer orthoConvert
+ortho2DView :: (SceneSYM repr, fr ~ FieldRec ff, PixelOrthoFrameFields <: ff,
+                InvokeConstraint repr OrthoParams) => 
+    repr (InvokableFrameData repr OrthoParamFields) -> repr fr
+ortho2DView = transformer orthoConvert

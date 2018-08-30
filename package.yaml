@@ -24,6 +24,7 @@ dependencies:
   - ghc-prim
   - lens
   - containers
+  - constraints
   - bifunctors
   - mtl
 
