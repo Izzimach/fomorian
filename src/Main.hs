@@ -1,7 +1,7 @@
 module Main where
 
-import qualified Sample (main)
+import qualified SampleFinal (main)
 
 main :: IO ()
 main = do
-  Sample.main
+  SampleFinal.main

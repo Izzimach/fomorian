@@ -26,6 +26,7 @@ import qualified Data.Map as M
 -- In a scene node the vertex data is specified as a VertexSourceData value.
 --
 data VertexSourceData = V2Data [V2 GLfloat]
+  | T2Data [V2 GLfloat]
   | V3Data [V3 GLfloat]
   | IndexData  [Int]
   deriving (Ord, Eq)
@@ -34,6 +35,7 @@ data VertexSourceData = V2Data [V2 GLfloat]
 -- types so that vinyl-gl can check attribute data
 type Pos2 = '("pos2", V2 Float)
 type Pos3 = '("pos3", V3 Float)
+type TexCoord = '("texCoord", V2 Float)
 type VertIndex = '("index", Int)
 
 
@@ -45,12 +47,13 @@ data ResourceMap = Resources {
     shaders :: (M.Map String GLU.ShaderProgram),
     v2Buffers :: (M.Map VertexSourceData (VGL.BufferedVertices '[Pos2], Word32)),
     v3Buffers :: (M.Map VertexSourceData (VGL.BufferedVertices '[Pos3], Word32)),
+    texCoordBuffers :: (M.Map VertexSourceData (VGL.BufferedVertices '[TexCoord], Word32)),
     indexBuffers :: (M.Map VertexSourceData (GL.BufferObject, Word32)),
     textures :: (M.Map String GL.TextureObject)
   }
 
 emptyResourceMap :: ResourceMap
-emptyResourceMap = Resources M.empty M.empty M.empty M.empty M.empty
+emptyResourceMap = Resources M.empty M.empty M.empty M.empty M.empty M.empty
 
 --
 -- Just a list of resources that need to be loaded or created.  The resource
@@ -73,6 +76,11 @@ mergeResourceLists r1 r2 = ResourceList
     texturefiles = S.union (texturefiles r1) (texturefiles r2)
   }
 
+instance Monoid ResourceList where
+  mempty = emptyResourceList
+  mappend = mergeResourceLists
+
+  
 --
 -- functions to load/create graphics resources
 --
@@ -86,6 +94,9 @@ buildVertices2 v2s = VGL.bufferVertices $ fmap (\x -> #pos2 =: x :& RNil) v2s
 buildVertices3 :: [V3 GLfloat] -> IO (VGL.BufferedVertices '[Pos3])
 buildVertices3 v3s = VGL.bufferVertices $ fmap (\x -> #pos3 =: x :& RNil) v3s
 
+buildTexCoords :: [V2 GLfloat] -> IO (VGL.BufferedVertices '[TexCoord])
+buildTexCoords t2s = VGL.bufferVertices $ fmap (\x -> #texCoord =: x :& RNil) t2s
+
 buildIndices :: [Int] -> IO (GL.BufferObject)
 buildIndices idxs = GLU.bufferIndices $ fmap (fromIntegral) idxs
 
@@ -96,10 +107,15 @@ loadBuffers :: [VertexSourceData] -> ResourceMap -> IO ResourceMap
 loadBuffers vs r = foldM loadBufferM r vs
   where
     loadBufferM racc vv@(V2Data v2) = case (M.lookup vv (v2Buffers racc)) of
-                                        Just _ -> return racc
-                                        Nothing -> do vb <- buildVertices2 v2
-                                                      let vblen = fromIntegral $ length v2
-                                                      return $ racc { v2Buffers = M.insert vv (vb, vblen) (v2Buffers r) }
+      Just _ -> return racc
+      Nothing -> do vb <- buildVertices2 v2
+                    let vblen = fromIntegral $ length v2
+                    return $ racc { v2Buffers = M.insert vv (vb, vblen) (v2Buffers r) }
+    loadBufferM racc vv@(T2Data v2) = case (M.lookup vv (texCoordBuffers racc)) of
+      Just _ -> return racc
+      Nothing -> do vb <- buildTexCoords v2
+                    let vblen = fromIntegral $ length v2
+                    return $ racc { texCoordBuffers = M.insert vv (vb, vblen) (texCoordBuffers r) }
     loadBufferM racc vv@(V3Data v3) = case (M.lookup vv (v3Buffers racc)) of
                                         Just _ -> return racc
                                         Nothing -> do vb <- buildVertices3 v3

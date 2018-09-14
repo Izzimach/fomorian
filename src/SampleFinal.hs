@@ -51,7 +51,8 @@ simpleSquare file = invoke $ Invocation $
           (#shader =: "linez")
       :&  (#shaderParameters =: ((#tex =: (0 :: GLint)) :& RNil) )
       :&  (#vertexBuffers =: [
-              V2Data [V2 10 10, V2 100 10, V2 10 100, V2 100 100],
+              V2Data [V2 0 0, V2 100 0, V2 0 100, V2 100 100],
+              T2Data [V2 0 1, V2 1 1, V2 0 0, V2 1 0],
               IndexData [0,1,2, 2,1,3]
             ]
           )
@@ -62,8 +63,10 @@ simpleSquare file = invoke $ Invocation $
 
 
 testScene :: (SceneSYM repr, InvokeConstraint repr OrthoParams) => repr (FieldRec PixelOrthoFrameFields)
-testScene = ortho2DView $
-              simpleSquare "lollipopGreen.png"
+testScene = ortho2DView $ group [
+              translate2d (0,0) $ simpleSquare "owl.png",
+              translate2d (100,100) $ simpleSquare "sad-crab.png"
+              ]
          
 genRenderParams :: W.AppInfo -> (FieldRec PixelOrthoFrameFields)
 genRenderParams appstate = let (w,h) = rvalf #windowSize appstate
@@ -112,13 +115,6 @@ renderApp appstate scene framedata = do
 
 main :: IO ()
 main = do
-  let needsResources = needsGLResources testScene
-  let drawGO = runDrawGL testScene
-  let renderParams = (#windowX =: 100) :& (#windowY =: 100) :& RNil
-  drawGO renderParams emptyResourceMap
-
-main2 :: IO ()
-main2 = do
   let scene = testScene
   let windowConfig = (400,400,"Demo")
   win <- W.initWindow windowConfig

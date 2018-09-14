@@ -29,6 +29,6 @@ dependencies:
   - mtl
 
 executables:
-  fomorian:
+  example:
     source-dirs:      src
     main:             Main.hs

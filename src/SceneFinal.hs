@@ -6,7 +6,6 @@
 {-# LANGUAGE UnicodeSyntax #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -53,7 +52,7 @@ instance NoFrameConstraint a where
 
 data RenderParamsProxy a = RPProxy
 
-data InvokeRecord sp rp = Invocation (FieldRec '[
+newtype InvokeRecord sp rp = Invocation (FieldRec '[
       '("shader", String),
       '("shaderParameters", sp),
       '("vertexBuffers", [VertexSourceData]),
@@ -76,16 +75,18 @@ class SceneSYM repr where
 -- we can manipulate the required render parameters instead of the return type.
 --
 
-data DrawGL m rp = DrawGL { runDrawGL :: rp -> ResourceMap -> m () }
+newtype DrawGL m rp = DrawGL { runDrawGL :: rp -> ResourceMap -> m () }
+
+
 
 instance (MonadIO m) => SceneSYM (DrawGL m) where
   type InvokeConstraint (DrawGL m) ff = UniformFields ff
   invoke :: InvokeRecord sp (InvokableFrameData (DrawGL m) f) ->
      DrawGL m (InvokableFrameData (DrawGL m) f)
   invoke (Invocation ir) = DrawGL $ \(Invokable (PerFrameData rp dc)) rr -> liftIO $ do
-      
       let vBufferValues = rvalf #vertexBuffers ir
       let v2Vertices = mapMaybe (\x -> M.lookup x (v2Buffers rr)) vBufferValues
+      let texCoords = mapMaybe (\x -> M.lookup x (texCoordBuffers rr))  vBufferValues
       let v3Vertices = mapMaybe (\x -> M.lookup x (v3Buffers rr)) vBufferValues
       let indexVertices = mapMaybe (\x -> M.lookup x (indexBuffers rr)) vBufferValues
       let textureObjects = mapMaybe (\x -> M.lookup x (textures rr)) (rvalf #textures ir)
@@ -93,46 +94,50 @@ instance (MonadIO m) => SceneSYM (DrawGL m) where
       GL.currentProgram $= Just (GLU.program shaderdata)
       GLU.printErrorMsg "currentProgram"
       --VGL.setUniforms shaderdata ((#tex =: (0 :: GLint)) :& RNil)
-      (DC.withDict dc (VGL.setUniforms shaderdata rp)) :: IO ()
-      mapM (VGL.enableVertices' shaderdata . fst) v2Vertices
-      mapM (VGL.bindVertices . fst) v2Vertices
-      mapM (VGL.enableVertices' shaderdata . fst) v3Vertices
-      mapM (VGL.bindVertices . fst) v3Vertices
-      mapM (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) indexVertices
+      DC.withDict dc (VGL.setUniforms shaderdata rp) :: IO ()
+      mapM_ (vmap shaderdata) v2Vertices
+      mapM_ (vmap shaderdata) texCoords
+      mapM_ (vmap shaderdata) v3Vertices
+      mapM_ (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) indexVertices
       --putStrLn $ show textureObjects
       GLU.withTextures2D textureObjects $ do
-      --
-      -- if an index array exists, use it via drawElements,
-      -- otherwise just draw without an index array using drawArrays
-      --
-      if (length indexVertices > 0) then
-        -- draw with drawElements
         --
-        -- index arrays are Word32 which maps to GL type UnsignedInt
-        -- need 'fromIntegral' to convert the count to GL.NumArrayIndices type
-        GL.drawElements GL.Triangles (fromIntegral . snd . head $ indexVertices) GL.UnsignedInt GLU.offset0
-      else
-        -- draw with drawArrays
+        -- if an index array exists, use it via drawElements,
+        -- otherwise just draw without an index array using drawArrays
         --
-        -- we assume 2D drawing if 2d vertices are specified for this node,
-        -- otherwise use 3D drawing
-        if (length v2Vertices > 0) then
-          GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v2Vertices)
+        if not (null indexVertices) then
+          -- draw with drawElements
+          --
+          -- index arrays are Word32 which maps to GL type UnsignedInt
+          -- need 'fromIntegral' to convert the count to GL.NumArrayIndices type
+          GL.drawElements GL.Triangles (fromIntegral . snd . head $ indexVertices) GL.UnsignedInt GLU.offset0
         else
-          GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v3Vertices)
-      GLU.printErrorMsg "drawArrays"
-      return ()
+          -- draw with drawArrays
+          --
+          -- we assume 2D drawing if 2d vertices are specified for this node,
+          -- otherwise use 3D drawing
+          if not (null v2Vertices) then
+            GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v2Vertices)
+          else
+            GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v3Vertices)
+        GLU.printErrorMsg "drawArrays"
+        return ()
     
       --putStrLn $ "argh " ++ (rvalf #shader ir)
       --let labels = recordToList (getLabels ir)
       --mapM_ putStrLn labels
-      return ()
     where getLabels :: (AllFields ff) =>  FieldRec ff -> Rec (Data.Vinyl.Functor.Const String) ff
           getLabels _ = rlabels
+          vmap shaderdata v = do
+            VGL.bindVertices $ fst v
+            VGL.enableVertexFields shaderdata $ fst v
 
+  -- should make a proper monad instance for DrawGL
   group  :: [DrawGL m rp] -> DrawGL m rp
-  group []         = DrawGL (\_ _ -> return ())
-  group (ig : igs) = ig
+  group []        = DrawGL $ \_ _ -> return ()
+  group (ig : igs) = DrawGL $ \a r -> do
+                                  runDrawGL ig a r
+                                  runDrawGL (group igs) a r
 
   transformer :: (rp1 -> rp2) -> DrawGL m rp2 -> DrawGL m rp1
   transformer f ib = DrawGL $ \a r -> let ob = runDrawGL ib
@@ -150,8 +155,7 @@ instance SceneSYM OGLResources where
       }
   
   group :: [OGLResources rp] -> OGLResources rp
-  group [] = OGLResources emptyResourceList
-  group (x:xs) = x
+  group xs = OGLResources $ foldMap needsGLResources xs
 
   transformer :: (rp1 -> rp2) -> OGLResources rp2 -> OGLResources rp1
   transformer _ (OGLResources rl) = OGLResources rl
@@ -163,8 +167,8 @@ instance SceneSYM OGLResources where
 buildPixelOrthoMatrix :: (Integral a, RealFrac b) => a -> a -> M44 b
 buildPixelOrthoMatrix w h =
   let 
-    w1 = 1.0 / (fromIntegral w)
-    h1 = 1.0 / (fromIntegral h)
+    w1 = 1.0 / fromIntegral w
+    h1 = 1.0 / fromIntegral h
     scaleMatrix x y z = V4  (V4 x 0 0 0)
                             (V4 0 y 0 0)
                             (V4 0 0 z 0)
@@ -181,7 +185,7 @@ buildPixelOrthoMatrix w h =
 type PixelOrthoFrameFields = '[ '("windowX", Integer), '("windowY",Integer) ]
 
 orthize :: (fr ~ FieldRec ff, PixelOrthoFrameFields <: ff) => fr -> M44 GLfloat
-orthize d = let rf = (rcast d) :: FieldRec PixelOrthoFrameFields
+orthize d = let rf = rcast d :: FieldRec PixelOrthoFrameFields
                 w = rvalf #windowX rf
                 h = rvalf #windowY rf
             in
@@ -207,3 +211,26 @@ ortho2DView :: (SceneSYM repr, fr ~ FieldRec ff, PixelOrthoFrameFields <: ff,
                 InvokeConstraint repr OrthoParams) => 
     repr (InvokableFrameData repr OrthoParamFields) -> repr fr
 ortho2DView = transformer orthoConvert
+
+translateWorld :: (InvokeConstraint repr OrthoParams) => 
+                  GLfloat -> GLfloat ->
+                  InvokableFrameData repr OrthoParamFields -> InvokableFrameData repr OrthoParamFields
+translateWorld tx ty (Invokable (PerFrameData rp dc)) =
+  let xform = rvalf #worldTransform rp
+      translationMatrix x y z = V4 (V4 1 0 0 x)
+                                   (V4 0 1 0 y)
+                                   (V4 0 0 1 z)
+                                   (V4 0 0 0 1)
+      xform' = translationMatrix tx ty 0 !*! xform
+      cproj = rvalf #cameraProjection rp
+      frameData =    (#cameraProjection =: cproj)
+                  :& (#worldTransform =: xform')
+                  :& RNil
+  in
+    Invokable (PerFrameData frameData DC.Dict)
+
+translate2d :: (SceneSYM repr,
+              InvokeConstraint repr OrthoParams) =>
+    (GLfloat, GLfloat) -> repr (InvokableFrameData repr OrthoParamFields) -> 
+                          repr (InvokableFrameData repr OrthoParamFields)
+translate2d (tx,ty) = transformer (translateWorld tx ty)
