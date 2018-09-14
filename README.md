@@ -1,24 +1,18 @@
 Fomorian is a Haskell library that lets you produce OpenGL graphics by
 manipulating a scene graph.
 
-current proof-of-concept data for a simple square:
+current proof-of-concept data for a simple scene:
 
 ```haskell
-buildScene :: IO (SceneNode)
-buildScene = do
-  return $   (#shader =: "linez")
-          :& (#shaderParameters =: RNil)
-          :& (#vertexBuffers =: [
-                                 V2Data [V2 10 10, V2 100 10, V2 10 100, V2 100 100],
-                                 IndexData [0,1,2, 2,1,3]
-                                ])
-          :& (#children =: ())
-          :& RNil
+testScene = ortho2DView $ group [
+              translate2d (0,0) $ simpleSquare "owl.png",
+              translate2d (100,100) $ simpleSquare "sad-crab.png"
+              ]
 ```
 
-to run install stack then:
+to run the exampleinstall stack then:
 
 ```
 stack build
-stack exec remorhaz
+stack exec example
 ```
