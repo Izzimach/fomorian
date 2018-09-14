@@ -10,6 +10,9 @@ testScene = ortho2DView $ group [
               ]
 ```
 
+This produces the display:
+!(fomorianpic1.jpg)
+
 to run the exampleinstall stack then:
 
 ```
