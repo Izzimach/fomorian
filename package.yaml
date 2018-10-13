@@ -24,9 +24,14 @@ dependencies:
   - ghc-prim
   - lens
   - containers
+  - unordered-containers
   - constraints
   - bifunctors
   - mtl
+  - wavefront
+  - vector
+
+ghc-options: -O2
 
 executables:
   example:
