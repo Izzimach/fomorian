@@ -30,12 +30,14 @@ import Graphics.VinylGL
 import Data.IORef
 import Data.Maybe (mapMaybe)
 import Control.Monad
-import Control.Lens ((^.), (.~))
+import Control.Monad.State
+import Control.Lens ((^.), (.~), (%~))
 import Control.Exception
 
 type AppInfo = FieldRec '[  '("window", GLFW.Window),
                             '("windowSize", (Int,Int)),
-                            '("resources", ResourceMap)]
+                            '("resources", ResourceMap),
+                            '("curTime",Float)]
 
 
 resizeWindow :: IORef AppInfo -> GLFW.WindowSizeCallback
@@ -65,6 +67,7 @@ initAppState (w,h,title) win = do
   appIORef <- newIORef $ (#window =: win)
                       :& (#windowSize =: (w,h))
                       :& (#resources =: emptyResourceMap)
+                      :& (#curTime =: (0 :: Float))
                       :& RNil
   GLFW.setWindowSizeCallback win (Just $ resizeWindow appIORef)
   return appIORef
@@ -89,23 +92,22 @@ renderLoop appref buildScene genRP = loop
         appstate <- readIORef appref
         let win = rvalf #window appstate
         let scene = buildScene appstate
-        let resources = rvalf #resources appstate
+        let resources = (rvalf #resources appstate)
         new_resources <- syncResourcesForScene scene resources
         let new_appstate = (rputf #resources new_resources $ appstate)
         let frame_data = genRP new_appstate
-        renderApp new_appstate scene frame_data
+        renderApp new_resources scene frame_data
         writeIORef appref new_appstate
 
         GLFW.swapBuffers win
         shouldClose <- shouldEndProgram win
         unless shouldClose loop
 
-renderApp :: (Drawable s (FieldRec fr), FrameConstraints s (FieldRec fr)) => AppInfo -> SceneGraph s (FieldRec fr) -> PerFrameData fr -> IO ()
-renderApp appstate scene framedata = do
+renderApp :: (Drawable s (FieldRec fr), FrameConstraints s (FieldRec fr)) => ResourceMap -> SceneGraph s (FieldRec fr) -> PerFrameData fr -> IO ()
+renderApp resources scene framedata = do
   GL.clearColor $= Color4 0 0 0 0
   GL.clear [GL.ColorBuffer]
-  let resourceMap = rvalf #resources appstate
-  renderresult <- try $ renderScene scene framedata resourceMap
+  renderresult <- try $ renderScene scene framedata resources
   case renderresult of
     Left e -> do
       putStrLn $ displayException (e :: SomeException)
