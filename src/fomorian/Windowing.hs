@@ -10,10 +10,11 @@ GADTs, TypeSynonymInstances, TemplateHaskell, OverloadedLabels,
 
 StandaloneDeriving,
 RankNTypes
+
 #-}
 
 -- 
-module Windowing where
+module Fomorian.Windowing where
 
 import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.GLUtil as GLU
@@ -31,13 +32,13 @@ import Data.IORef
 import Data.Maybe (mapMaybe)
 import Control.Monad
 import Control.Monad.State
-import Control.Lens ((^.), (.~), (%~))
+import Control.Lens ( (^.), (.~), (%~) )
 import Control.Exception
 
-type AppInfo = FieldRec '[  '("window", GLFW.Window),
-                            '("windowSize", (Int,Int)),
-                            '("resources", ResourceMap),
-                            '("curTime",Float)]
+type AppInfo = FieldRec '[ '("window", GLFW.Window),
+                           '("windowSize", (Int,Int)),
+                           '("resources", ResourceMap),
+                           '("curTime", Float) ]
 
 
 resizeWindow :: IORef AppInfo -> GLFW.WindowSizeCallback
@@ -57,6 +58,7 @@ initWindow (w,h,title) = do
   GLFW.windowHint (GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core)
   Just win <- GLFW.createWindow w h title Nothing Nothing
   GLFW.makeContextCurrent (Just win)
+  GLFW.swapInterval 1      -- should wait for vsync, set to 0 to not wait
   return win
 
 initAppState :: (Int,Int,String) -> GLFW.Window -> IO (IORef AppInfo)

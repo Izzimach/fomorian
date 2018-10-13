@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
 {-# LANGUAGE OverloadedLabels #-}
 
-module SceneResources 
+module Fomorian.SceneResources 
   (VertexSourceData(..),
    ResourceMap,
    -- get various resources from the resource map, used by a renderer invoke node

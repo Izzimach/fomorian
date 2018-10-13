@@ -8,7 +8,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Sample where
+module Fomorian.Sample where
 
 import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.GLUtil as GLU

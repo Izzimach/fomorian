@@ -1,4 +1,4 @@
-module Main where
+module Fomorian.Main where
 
 import qualified SampleFinal (main)
 

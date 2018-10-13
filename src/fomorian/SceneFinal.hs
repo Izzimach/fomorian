@@ -14,7 +14,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module SceneFinal where
+module Fomorian.SceneFinal where
 
 import Linear
 import Control.Lens ((%~),(.~),over,view)
@@ -56,13 +56,16 @@ instance NoFrameConstraint a where
 
 data RenderParamsProxy a = RPProxy
 
-newtype InvokeRecord sp rp = Invocation (FieldRec '[
+newtype InvokeRecord sp rp = 
+  Invocation (
+    FieldRec '[
       '("shader", String),
       '("shaderParameters", sp),
       '("vertexBuffers", [VertexSourceData]),
       '("textures", [String]),
       '("rpProxy", RenderParamsProxy rp)
-    ])
+    ]
+  )
 
 -- the InvokableFrameData for a given representation describes both the data and
 -- the constraints on the data specific to this representation
@@ -71,7 +74,6 @@ newtype InvokableFrameData repr f = Invokable (PerFrameData f (InvokeConstraint 
 class SceneSYM repr where
   type InvokeConstraint repr ff :: Constraint
   invoke :: InvokeRecord sp (InvokableFrameData repr f) -> repr (InvokableFrameData repr f)
---  invokable :: FieldRec f -> repr (InvokableFrameData repr f)
   group  :: [repr rp] -> repr rp
   transformer :: (r1 -> r2) -> repr r2 -> repr r1
 
@@ -157,7 +159,7 @@ instance (MonadIO m) => SceneSYM (DrawGL m) where
   -- basically contramap
   transformer :: (rp1 -> rp2) -> DrawGL m rp2 -> DrawGL m rp1
   transformer f ib = DrawGL $ \rp re -> let ob = runDrawGL ib
-                                      in ob (f rp) re
+                                        in ob (f rp) re
 
 newtype OGLResources a = OGLResources { needsGLResources :: ResourceList }
 

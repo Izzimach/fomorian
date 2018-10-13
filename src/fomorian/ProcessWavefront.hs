@@ -2,7 +2,7 @@
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
 {-# LANGUAGE OverloadedLabels #-}
 
-module ProcessWavefront 
+module Fomorian.ProcessWavefront 
   (OBJBufferRecord, 
    OBJBufferFormat, 
    loadWavefrontOBJFile)

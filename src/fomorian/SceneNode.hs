@@ -13,7 +13,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module SceneNode where
+module Fomorian.SceneNode where
 
 import Linear
 import Control.Lens ((%~),(.~),over,view)
