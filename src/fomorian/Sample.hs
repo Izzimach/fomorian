@@ -28,10 +28,10 @@ import qualified Data.Set as S
 
 import System.FilePath ((</>))
 
-import qualified Windowing as W
+import qualified Fomorian.Windowing as W
 
-import SceneNode
-import SceneResources
+import Fomorian.SceneNode
+import Fomorian.SceneResources
 
 
 sampleScene = let texturedSquare file = Invoke (  

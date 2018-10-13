@@ -31,7 +31,7 @@ import Control.Monad (foldM, (>=>))
 
 import qualified Data.Set as S
 import qualified Data.Map as M
-import ProcessWavefront (OBJBufferFormat, loadWavefrontOBJFile)
+import Fomorian.ProcessWavefront (OBJBufferFormat, loadWavefrontOBJFile)
 
 {- |
    Vertex buffer and index buffer resources are specified as a VertexSourceData.

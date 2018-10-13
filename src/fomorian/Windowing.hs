@@ -20,8 +20,8 @@ import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.GLUtil as GLU
 import qualified Graphics.UI.GLFW as GLFW
 
-import SceneResources
-import SceneNode
+import Fomorian.SceneResources
+import Fomorian.SceneNode
 
 import Linear
 import Data.Vinyl

@@ -33,10 +33,10 @@ import qualified Data.Set as S
 
 import System.FilePath ((</>))
 
-import qualified Windowing as W
+import qualified Fomorian.Windowing as W
 
-import SceneFinal
-import SceneResources
+import Fomorian.SceneFinal
+import Fomorian.SceneResources
 
 
 squareRPProxy :: RenderParamsProxy (InvokableFrameData repr 

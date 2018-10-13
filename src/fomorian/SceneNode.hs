@@ -36,7 +36,7 @@ import Data.Maybe
 import qualified Data.Map as M
 import qualified Data.Set as S
 
-import SceneResources
+import Fomorian.SceneResources
 
 data PerFrameData ff = PerFrameData (FieldRec ff)
 --data ResourceMap rm = Resources rm

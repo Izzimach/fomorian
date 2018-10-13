@@ -42,7 +42,7 @@ import Data.Maybe
 import qualified Data.Map as M
 import qualified Data.Set as S
 
-import SceneResources
+import Fomorian.SceneResources
 
 -- @PerFrameData type represents not only the shape of the data but
 -- include a Data.Constraint Dict that holds any constraints on the per-frame data.
