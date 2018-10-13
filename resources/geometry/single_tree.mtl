@@ -1,0 +1,12 @@
+# Blender MTL File: 'single_tree.blend'
+# Material Count: 1
+
+newmtl Tree_Materal
+Ns 96.078431
+Ka 0.000000 0.000000 0.000000
+Kd 0.640000 0.640000 0.640000
+Ks 0.073248 0.073248 0.073248
+Ni 1.000000
+d 1.000000
+illum 2
+map_Kd Tree_Diffuse.png
