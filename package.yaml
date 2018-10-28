@@ -26,14 +26,19 @@ dependencies:
   - containers
   - unordered-containers
   - constraints
+  - contravariant
   - bifunctors
   - mtl
   - wavefront
   - vector
+  - recursion-schemes
 
 ghc-options: -O2
+
+library:
+  
 
 executables:
   example:
     source-dirs:      src
-    main:             Main.hs
+    main:             fomorian/Main.hs

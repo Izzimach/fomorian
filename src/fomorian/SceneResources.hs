@@ -44,7 +44,7 @@ data VertexSourceData =
   | V3Data [V3 GLfloat]
   | OBJFile String
   | IndexData  [Int]
-  deriving (Ord, Eq)
+  deriving (Ord, Eq, Show)
 
 
 -- types so that vinyl-gl can check attribute data
@@ -86,7 +86,7 @@ data ResourceList = ResourceList {
     shaderfiles :: S.Set String,
     vertexfiles :: S.Set VertexSourceData,
     texturefiles :: S.Set String
-  }
+  } deriving (Show, Eq)
 
 emptyResourceList :: ResourceList
 emptyResourceList = ResourceList S.empty S.empty S.empty

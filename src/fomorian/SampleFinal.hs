@@ -135,7 +135,7 @@ renderApp resources scene framedata = do
 
 main :: IO ()
 main = do
-  let scene = test3DScene
+  let scene = testScene
   let windowConfig = (600,400,"Demo")
   let initfunc = W.initWindow windowConfig >>= return
   let endfunc  = \win -> W.terminateWindow win

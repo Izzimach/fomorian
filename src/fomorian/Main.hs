@@ -1,7 +1,7 @@
 module Fomorian.Main where
 
-import qualified SampleFinal (main)
+import qualified Fomorian.SampleFAlgebra (main)
 
 main :: IO ()
 main = do
-  SampleFinal.main
+  Fomorian.SampleFAlgebra.main

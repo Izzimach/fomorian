@@ -112,10 +112,10 @@ instance (MonadIO m) => SceneSYM (DrawGL m) where
       mapM_ (vmap shaderdata) texCoords
       mapM_ (vmap shaderdata) v3Vertices
       -- objVertices are tuples, the first element is the vertex buffer we want to vmap
-      mapM_ ((vmap shaderdata) . fst) objVertices
+      --mapM_ ((vmap shaderdata) . fst) objVertices
       mapM_ (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) indexVertices
       --putStrLn $ show textureObjects
-      let allIndexBuffers =  mappend indexVertices (map snd objVertices)
+      let allIndexBuffers = mappend indexVertices (map snd objVertices)
       GLU.withTextures2D textureObjects $ do
         --
         -- if an index array exists, use it via drawElements,
