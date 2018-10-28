@@ -41,7 +41,7 @@ import Fomorian.SceneFAlgebra
 import Fomorian.SceneResources
 
 --simpleSquare :: String -> Invocation sp
-simpleSquare file = Invoke $ 
+simpleSquare file = Fix $ Invoke $ 
           (#shader =: "linez")
       :&  (#staticParameters =: ((#tex =: (0 :: GLint)) :& RNil) )
       :&  (#frameParameters  =: (
@@ -53,17 +53,17 @@ simpleSquare file = Invoke $
       :&  (#vertexBuffers =: [
               V2Data [V2 0 0, V2 100 0, V2 0 100, V2 100 100],
               T2Data [V2 0 1, V2 1 1, V2 0 0, V2 1 0],
-              IndexData [0,1,2, 2,1,3]
+              IndexData [0,2,1, 2,3,1]
             ]
           )
       :&  (#textures =: [file])
       :&  RNil
 
-testScene = Fix $ pixelOrtho2DView $
-              Fix $ Group
+testScene = pixelOrtho2DView $
+              group
               [
-                Fix $ (simpleSquare "owl.png"),
-                Fix $ (simpleSquare "sad-crab.png")
+                translate2d (V2 150 50) $ (simpleSquare "owl.png"),
+                (simpleSquare "sad-crab.png")
               ]
 
 

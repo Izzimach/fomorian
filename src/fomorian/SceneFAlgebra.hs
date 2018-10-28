@@ -334,9 +334,7 @@ type StandardShaderFrameFields = '[
   ]
 type StandardShaderFrameParams = FieldRec StandardShaderFrameFields
   
-orthoConvert :: (fr ~ FieldRec ff,
-                 StandardShaderFrameFields ~ ff,
-                 ShaderReady cmd StandardShaderFrameParams) =>
+orthoConvert :: (ShaderReady cmd StandardShaderFrameParams) =>
   FrameData sp TopWindowFrameParams cmd ->
   FrameData StandardShaderFrameParams (FieldRec '[]) cmd
 orthoConvert (FrameData sp np dc) = 
@@ -362,5 +360,47 @@ pixelOrtho2DView :: (fr ~ FieldRec ff,
                      ShaderReady cmd StandardShaderFrameParams,
                      np ~ FieldRec nf) =>
   SceneGraph StandardShaderFrameParams (FieldRec '[]) cmd ->
-  SceneNode sp TopWindowFrameParams cmd x
-pixelOrtho2DView sg = Transformer orthoConvert sg
+  Fix (SceneNode sp TopWindowFrameParams cmd)
+pixelOrtho2DView sg = Fix $ Transformer orthoConvert sg
+
+
+--
+--
+--
+translateWorld :: (ShaderReady cmd StandardShaderFrameParams) => 
+  V3 GLfloat ->
+  FrameData StandardShaderFrameParams np cmd ->
+  FrameData StandardShaderFrameParams np cmd
+translateWorld (V3 tx ty tz) (FrameData sp np dc) =
+  let xform = rvalf #worldTransform sp
+      t     = rvalf #curTime sp
+      translationMatrix x y z = V4 (V4 1 0 0 x)
+                                   (V4 0 1 0 y)
+                                   (V4 0 0 1 z)
+                                   (V4 0 0 0 1)
+      xform' = xform !*! translationMatrix tx ty tz
+      cproj = rvalf #cameraProjection sp
+      frameData =    (#cameraProjection =: cproj)
+                  :& (#worldTransform =: xform')
+                  :& (#curTime =: t)
+                  :& RNil
+  in
+    FrameData frameData np DC.Dict
+
+translate2d :: (ShaderReady cmd StandardShaderFrameParams, np ~ FieldRec nf) =>
+  V2 GLfloat ->
+  SceneGraph StandardShaderFrameParams np cmd ->
+  Fix (SceneNode StandardShaderFrameParams np cmd)
+translate2d (V2 tx ty) sg = Fix $ Transformer (translateWorld (V3 tx ty 0)) sg
+
+translate3d :: (ShaderReady cmd StandardShaderFrameParams, np ~ FieldRec nf) =>
+  V3 GLfloat ->
+  SceneGraph StandardShaderFrameParams np cmd ->
+  Fix (SceneNode StandardShaderFrameParams np cmd)
+translate3d tr sg = Fix $ Transformer (translateWorld tr) sg
+
+
+
+group :: [Fix (SceneNode sp np cmd)] -> Fix (SceneNode sp np cmd)
+group xs = Fix $ Group xs
+
