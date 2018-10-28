@@ -9,203 +9,303 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
+
+--
+-- Scene node description as an F-algebra, which may open up some
+-- useful functionality over Initial or Final encodings.
+--
 
 module Fomorian.SceneNode where
 
 import Linear
 import Control.Lens ((%~),(.~),over,view)
 import Data.Kind (Constraint)
+import Data.Proxy
+import Data.Functor.Foldable
+import Data.Functor.Contravariant
+import Data.Semigroup
+import Data.Foldable
+import Data.Maybe
+
+import qualified Data.Map as M
+import qualified Data.Set as S
+
+import Control.Monad
+import Control.Monad.Reader
+import Control.Applicative
+
 
 -- qualify most of OpenGL stuff except for a few common types
 import qualified Graphics.Rendering.OpenGL as GL
 import Graphics.Rendering.OpenGL (($=), GLfloat, GLint)
 import qualified Graphics.GLUtil as GLU
 
+-- vinyl
 import Data.Vinyl
 import Data.Vinyl.Lens
-import Data.Vinyl.TypeLevel (Nat(Z),Nat(S))
+import Data.Vinyl.TypeLevel (Nat(Z),Nat(S), AllConstrained)
+import Data.Vinyl.Functor
+import qualified Data.Constraint as DC
 
+-- vinyl-gl
 import Data.Word (Word32)
 import qualified Graphics.VinylGL as VGL
 import Graphics.VinylGL.Uniforms (UniformFields)
-import Data.Maybe
-
-import qualified Data.Map as M
-import qualified Data.Set as S
 
 import Fomorian.SceneResources
 
-data PerFrameData ff = PerFrameData (FieldRec ff)
---data ResourceMap rm = Resources rm
+type Invocation tp sp =
+  FieldRec '[
+  '("shader", String),
+  '("staticParameters", tp),
+  '("frameParameters", sp),
+  '("vertexBuffers", [VertexSourceData]),
+  '("textures", [String])
+  ]
 
--- |The 'Drawable' class represents a single node or subtree of the
--- scene graph.
-class (Drawable s fr) where
-  type FrameConstraints s fr :: Constraint
-  -- |In @draw s rp rs@:
-  -- @s@ is the scenegraph to render
-  -- @rp@ is a vinyl record containing
-  -- the set of time-varying parameters getting passed to this node for this
-  -- specific frame
-  -- @rs@ is the ResourceMap containing resources
-  draw :: (FrameConstraints s fr, fr ~ FieldRec ff) => s -> PerFrameData ff -> ResourceMap -> IO ()
+--
+-- @FrameData@ has two row types of parameters:
+-- @sp@ is a set of "shader-ready" parameters. The types of these
+-- values are those that can be passed into the shader for the given
+-- renderer. Typically these are floats, ints, or vectors/matrices.
+-- @np@ are not shader-ready, so they can be anything such as strings
+-- or GADTs or f-algebras or whatever
+--
+data FrameData sp np cmd = FrameData sp np (DC.Dict (ShaderReady cmd sp))
 
-class (NeedsResources s) where
-  resources :: s -> ResourceList
+class DrawMethod cmd where
+  type ShaderReady cmd sp :: Constraint
+
+data SceneNode sp np cmd x =
+    forall tp . (Show tp, ShaderReady cmd tp) => Invoke (Invocation tp sp)
+  | Group [x]
+  | forall sp2 np2 c2 sf2 nf2. (sp2 ~ FieldRec sf2, np2 ~ FieldRec nf2) => Transformer (FrameData sp np cmd -> FrameData sp2 np2 cmd) (SceneGraph sp2 np2 cmd)
+
+instance (Show x, Show sp) => Show (SceneNode sp np cmd x) where
+  show (Invoke iv) = "[Invoke:" ++ show iv ++ "]"
+  show (Group cmds) = "[Group:" ++ show cmds ++ "]"
+  show (Transformer t gr) = "[Transformer]"
+
+instance Functor (SceneNode sp np cmd) where
+  fmap f (Invoke x) = Invoke x
+  fmap f (Group cmds) = Group (fmap f cmds)
+  fmap f (Transformer t gr) = Transformer t gr
   
---
--- A scene node represented as a vinyl record.
--- The type sp is a vinyl record generated for each node, representing
--- the static shader parameters used by that node.
---
-data InvokeNode sp = Invoke (FieldRec '[
-      '("shader", String),
-      '("shaderParameters", sp),
-      '("vertexBuffers", [VertexSourceData]),
-      '("textures", [String])
-    ])
 
 
-instance Drawable (InvokeNode sp) fr where
-  type FrameConstraints (InvokeNode sp) fr = (UniformFields fr)
-  draw s d rm = renderNode s d rm
-
-instance NeedsResources (InvokeNode sp) where
-  resources (Invoke s) = ResourceList { 
-      shaderfiles =  S.singleton (rvalf #shader s), 
-      vertexfiles =  S.fromList (rvalf #vertexBuffers s),
-      texturefiles = S.fromList (rvalf #textures s)
-    }
-
-renderNode :: forall sp fr . (UniformFields (FieldRec fr))
-           => InvokeNode sp -> PerFrameData fr -> ResourceMap -> IO ()
-renderNode (Invoke s) (PerFrameData d) resources = do
-  let vBufferValues = rvalf #vertexBuffers s
-  let v2Vertices = mapMaybe (\x -> M.lookup x (v2Buffers resources)) vBufferValues
-  let v3Vertices = mapMaybe (\x -> M.lookup x (v3Buffers resources)) vBufferValues
-  let indexVertices = mapMaybe (\x -> M.lookup x (indexBuffers resources)) vBufferValues
-  let textureObjects = mapMaybe (\x -> M.lookup x (textures resources)) (rvalf #textures s)
-  let (Just shaderdata) = M.lookup (rvalf #shader s) (shaders resources)
-  GL.currentProgram $= Just (GLU.program shaderdata)
-  GLU.printErrorMsg "currentProgram"
-  --VGL.setUniforms shaderdata ((#tex =: (0 :: GLint)) :& RNil)
-  VGL.setUniforms shaderdata d
-  mapM (VGL.enableVertices' shaderdata . fst) v2Vertices
-  mapM (VGL.bindVertices . fst) v2Vertices
-  mapM (VGL.enableVertices' shaderdata . fst) v3Vertices
-  mapM (VGL.bindVertices . fst) v3Vertices
-  mapM (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) indexVertices
-  --putStrLn $ show textureObjects
-  GLU.withTextures2D textureObjects $ do
-    --
-    -- if an index array exists, use it via drawElements,
-    -- otherwise just draw without an index array using drawArrays
-    --
-    if (length indexVertices > 0) then
-      -- draw with drawElements
-      --
-      -- index arrays are Word32 which maps to GL type UnsignedInt
-      -- need 'fromIntegral' to convert the count to GL.NumArrayIndices type
-      GL.drawElements GL.Triangles (fromIntegral . snd . head $ indexVertices) GL.UnsignedInt GLU.offset0
-    else
-      -- draw with drawArrays
-      --
-      -- we assume 2D drawing if 2d vertices are specified for this node,
-      -- otherwise use 3D drawing
-      if (length v2Vertices > 0) then
-        GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v2Vertices)
-      else
-        GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v3Vertices)
-    GLU.printErrorMsg "drawArrays"
-    return ()
+type SceneGraph sp np cmd = Fix (SceneNode sp np cmd)
 
 
-data SceneGraph dr fr = SG dr fr
 
-renderScene :: (fr ~ FieldRec ff, Drawable dr fr, FrameConstraints dr fr) =>
-  SceneGraph dr fr -> PerFrameData ff -> ResourceMap -> IO ()
-renderScene (SG s _) d rm = draw s d rm
+foldAlgebra :: (Monoid m) => SceneNode sp np cmd m -> m
+foldAlgebra (Invoke x)         = mempty
+foldAlgebra (Group cmds)       = foldr mappend mempty cmds
+foldAlgebra (Transformer t gr) = cata foldAlgebra gr
 
-loadResourcesForScene :: (NeedsResources dr) => SceneGraph dr ff -> IO ResourceMap
-loadResourcesForScene sg = syncResourcesForScene sg emptyResourceMap
 
-syncResourcesForScene :: (NeedsResources dr) => SceneGraph dr ff -> ResourceMap -> IO ResourceMap
-syncResourcesForScene (SG s _) oldres =
-  let
-    rl = listResourcesInGraph s
-  in
-    loadResources rl oldres
-
-listResourcesInGraph :: (NeedsResources s) => s -> ResourceList
-listResourcesInGraph s = listResources' s emptyResourceList
-
-listResources' :: (NeedsResources s) => s -> ResourceList -> ResourceList
-listResources' s acc =
-  let rl = resources s
-  in mergeResourceLists acc rl
+foldSceneGraph :: (Monoid m) => SceneGraph sp np cmd -> m
+foldSceneGraph g = cata foldAlgebra g
 
 
 --
--- Basic draw nodes commonly used.  Should probably move these to a separate file?
+-- DrawCmd is basically a ReaderT monad, where the input @r@
+-- is the set of render parameters for the scene graph.
 --
 
---
--- applies a 4*4 transform to the current World transform matrix, and
--- passes this modified set of data to the sub-node @n@
---
 
-data TransformNode n = TransformNode (M44 GLfloat) n
-type TransformNodeFrameFields = '[ '("worldTransform", M44 GLfloat) ]
-type TransformNodeFrameData = FieldRec TransformNodeFrameFields
+newtype DrawCmd r m a = DC { runDC :: r -> m a }
 
---
--- Given a matrix transform, applies that to the TransformNode vinyl record
--- The types here help out type inference for 'rsubset' in the FrameConstraints below.
---
-applyXform :: (M44 GLfloat -> M44 GLfloat) -> TransformNodeFrameData -> TransformNodeFrameData
-applyXform f d = over (rlensf #worldTransform) f d
+noopDraw :: (Monad m) => a -> DrawCmd r m a
+noopDraw x = return x
 
-instance (Drawable n (FieldRec ff)) => Drawable (TransformNode n) (FieldRec ff) where
-  type FrameConstraints (TransformNode n) (FieldRec ff) = 
-    (TransformNodeFrameFields <: ff,    -- there needs to be a transform provided to the transform
-     Drawable n (FieldRec ff),          -- per frame data is passed down the sub-node
-     FrameConstraints n (FieldRec ff)   -- satisfy frame data constraints of the sub-node
-     )
-  draw (TransformNode m n) (PerFrameData fr) res =
-      let putM = applyXform (\m0 -> m !*! m0)
-          frX = over rsubset putM fr
-      in
-        draw n (PerFrameData frX) res
+instance (Functor m) => Functor (DrawCmd r m) where
+  fmap f dc = DC $ \r -> fmap f (runDC dc r)
 
-instance (NeedsResources n) => NeedsResources (TransformNode n) where
-  resources (TransformNode _ n) = resources n
+instance (Applicative m) => Applicative (DrawCmd r m) where
+  pure x             = DC $ \_ -> pure x
+  (DC fa) <*> (DC b) = DC $ \r -> (fa r) <*> (b r)
 
-translateNode :: V3 GLfloat -> n -> TransformNode n  
-translateNode (V3 x y z) n = 
-  let t = V4 (V4 1 0 0 x)
-             (V4 0 1 0 y)
-             (V4 0 0 1 z)
-             (V4 0 0 0 1)
-  in
-    TransformNode t n
+instance (Monad m) => Monad (DrawCmd r m) where
+  return     = pure
+  a >>= b    = DC $ \r -> do a' <- runDC a r
+                             runDC (b a') r
+
+instance (MonadIO m) => MonadIO (DrawCmd r m) where
+  liftIO x = DC $ \r -> liftIO x
+  
+instance (Alternative m) => Alternative (DrawCmd r m) where
+  empty             = DC $ \r -> empty
+  (DC a) <|> (DC b) = DC $ \r -> (a r) <|> (b r)
+
+instance (MonadPlus m) => MonadPlus (DrawCmd r m) where
+  mzero     = DC $ \r -> mzero
+  mplus m n = DC $ \r -> mplus (runDC m r) (runDC n r)
+
+
 
 
 --
--- Orthographic projection that projects x/y coordinates
--- to window pixel coordinates. For example to fill a
--- 400x400 pixel window you would draw a quad with coordinates
--- (0,0) (400,0) (400,400) (0,400)
--- 
+-- The Transformer switches from a (SceneNode r) to a (SceneNode s) so we're
+-- going to need to switch the (Invoker r) to a (Invoker s). This
+-- is why 'iv' needs to a higher rank type.
+--
 
-buildPixelOrthoMatrix :: (Integral a) => a -> a -> M44 GLfloat
+data DumpScene
+
+instance DrawMethod DumpScene where
+  type ShaderReady DumpScene sp = (Show sp)
+
+
+dumpAlgebra :: (MonadIO m) => SceneNode sp np DumpScene (DrawCmd (FrameData sp np DumpScene) m ()) -> DrawCmd (FrameData sp np DumpScene) m ()
+dumpAlgebra (Invoke x)     = liftIO $ do putStrLn $ show (rvalf #shader x)
+                                         return ()
+dumpAlgebra (Group cmds)   = foldl (>>) (DC $ \_ -> return ()) cmds
+dumpAlgebra (Transformer t gr) = DC $ \r ->
+  let s = t r
+      scmd = cata dumpAlgebra gr
+  in runDC scmd s
+
+dumpScene :: (MonadIO m) => SceneGraph sp np DumpScene-> DrawCmd (FrameData sp np DumpScene) m ()
+dumpScene sg = cata dumpAlgebra sg
+
+--
+-- Find resources for a scene
+--
+
+
+newtype OGLResources a = OGLResources { needsGLResources :: ResourceList }
+
+oglResourcesAlgebra :: SceneNode sp np cmd ResourceList -> ResourceList
+oglResourcesAlgebra (Invoke x) = ResourceList {
+        shaderfiles =  S.singleton (rvalf #shader x), 
+        vertexfiles =  S.fromList (rvalf #vertexBuffers x),
+        texturefiles = S.fromList (rvalf #textures x)
+      }
+oglResourcesAlgebra (Group cmds) = foldl mergeResourceLists emptyResourceList cmds
+oglResourcesAlgebra (Transformer t gr) = oglResourcesScene gr
+
+oglResourcesScene :: SceneGraph sp np cmd -> ResourceList
+oglResourcesScene sg = cata oglResourcesAlgebra sg
+
+
+--
+-- Drawing with OpenGL - shader parameters must be Uniform-valid, which
+-- means they are GLfloat, GLint, or vectors (V2,V3,V4) or matrices
+--
+
+data DrawGL
+
+instance DrawMethod DrawGL where
+  type ShaderReady DrawGL sp = (VGL.UniformFields sp)
+
+
+invokeGL :: (sp ~ FieldRec sf) =>
+  Invocation tp sp ->
+  ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ()
+invokeGL ir = ReaderT $ \rm -> DC $ \fd -> goInvoke ir rm fd
+  where
+    goInvoke :: (sp ~ FieldRec sf) =>
+      Invocation tp sp ->
+      ResourceMap -> FrameData sp np DrawGL -> IO ()
+    goInvoke ir rm (FrameData sp np dc) = liftIO $ do
+     let vBufferValues = rvalf #vertexBuffers ir
+     let v2Vertices = mapMaybe (\x -> M.lookup x (v2Buffers rm)) vBufferValues
+     let texCoords = mapMaybe (\x -> M.lookup x (texCoordBuffers rm))  vBufferValues
+     let v3Vertices = mapMaybe (\x -> M.lookup x (v3Buffers rm)) vBufferValues
+     let textureObjects = mapMaybe (\x -> M.lookup x (textures rm)) (rvalf #textures ir)
+     let indexVertices = mapMaybe (\x -> M.lookup x (indexBuffers rm)) vBufferValues
+     let objVertices = mapMaybe (\x -> M.lookup x (objFileBuffers rm)) vBufferValues
+     let (Just shaderdata) = M.lookup (rvalf #shader ir) (shaders rm)
+     GL.currentProgram $= Just (GLU.program shaderdata)
+     GLU.printErrorMsg "currentProgram"
+     --VGL.setUniforms shaderdata (rvalf #staticParameters ir)
+     DC.withDict dc (VGL.setSomeUniforms shaderdata sp) :: IO ()
+     mapM_ (vmap shaderdata) v2Vertices
+     GLU.printErrorMsg "v2Vertices"
+     mapM_ (vmap shaderdata) texCoords
+     GLU.printErrorMsg "texCoords"
+     mapM_ (vmap shaderdata) v3Vertices
+     GLU.printErrorMsg "v3Vertices"
+     -- objVertices are tuples, the first element is the
+     -- vertex buffer we want to vmap
+     mapM_ ((vmap shaderdata) . fst) objVertices
+     mapM_ (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) indexVertices
+     GLU.printErrorMsg "indexVertices"
+     --putStrLn $ show textureObjects
+     let allIndexBuffers =  mappend indexVertices (map snd objVertices)
+     GLU.withTextures2D textureObjects $ do
+       --
+       -- if an index array exists, use it via drawElements,
+       -- otherwise just draw without an index array using drawArrays
+       --
+       if not (null allIndexBuffers) then do
+         -- draw with drawElements
+         --
+         -- index arrays are Word32 which maps to GL type UnsignedInt
+         -- need 'fromIntegral' to convert the count to GL.NumArrayIndices type
+         let drawCount = (fromIntegral . snd . head $ allIndexBuffers)
+         GL.drawElements GL.Triangles drawCount GL.UnsignedInt GLU.offset0
+       else do
+         -- draw with drawArrays
+         --
+         -- we assume 2D drawing if 2d vertices are specified for this node,
+         -- otherwise use 3D drawing
+         if not (null v2Vertices) then
+           GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v2Vertices)
+         else
+           GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v3Vertices)
+       GLU.printErrorMsg "drawArrays"
+       return ()
+    
+     --putStrLn $ "argh " ++ (rvalf #shader ir)
+     --let labels = recordToList (getLabels ir)
+     --mapM_ putStrLn labels
+    getLabels :: (AllFields ff) =>  FieldRec ff -> Rec (Data.Vinyl.Functor.Const String) ff
+    getLabels _ = rlabels
+    vmap shaderdata v = do
+           VGL.bindVertices $ fst v
+           VGL.enableVertexFields shaderdata $ fst v
+
+
+openGLAlgebra :: (sp ~ FieldRec sf) =>
+  SceneNode sp np DrawGL (ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ()) ->
+  (ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ())
+openGLAlgebra (Invoke x)     = invokeGL x
+openGLAlgebra (Group cmds)   = foldl (>>) (ReaderT $ \rm -> DC $ \fd -> return ()) cmds
+openGLAlgebra (Transformer t gr) = ReaderT $ \rm ->
+  DC $ \fd ->
+         let fd2  = t fd
+             (FrameData sp2 c2 dc2) = fd2
+             scmd = DC.withDict dc2 (cata openGLAlgebra gr)
+             in runDC (runReaderT scmd rm) fd2
+  
+openGLgo :: SceneGraph (FieldRec sf) np DrawGL ->
+  FrameData (FieldRec sf) np DrawGL ->
+  ResourceMap ->
+  IO ()
+openGLgo sg sp rm = let sm = runReaderT (cata openGLAlgebra sg) rm
+                    in runDC sm sp
+                  
+
+
+--
+-- transformers
+--
+
+type TopWindowFrameFields = '[ '("windowX", Integer), '("windowY",Integer), '("curTime",Float) ]
+type TopWindowFrameParams = FieldRec TopWindowFrameFields
+
+buildPixelOrthoMatrix :: (Integral a, RealFrac b) => a -> a -> M44 b
 buildPixelOrthoMatrix w h =
   let 
-    w1 = 1.0 / (fromIntegral w)
-    h1 = 1.0 / (fromIntegral h)
-    scaleMatrix x y z = V4 (V4 x 0 0 0)
+    w1 = 1.0 / fromIntegral w
+    h1 = 1.0 / fromIntegral h
+    scaleMatrix x y z = V4  (V4 x 0 0 0)
                             (V4 0 y 0 0)
                             (V4 0 0 z 0)
                             (V4 0 0 0 1)
@@ -218,36 +318,89 @@ buildPixelOrthoMatrix w h =
   in
     m1 !*! m2
 
-data PixelOrthoNode n = PixelOrthoView n
-type PixelOrthoFrameFields = '[ '("windowX", Integer), '("windowY",Integer) ]
-type PixelOrthoFrameData = FieldRec PixelOrthoFrameFields
 
-orthize :: (fr ~ FieldRec ff, PixelOrthoFrameFields <: ff) => fr -> M44 GLfloat
-orthize d = let rf = (rcast d) :: PixelOrthoFrameData
+
+orthize :: (fr ~ FieldRec ff, TopWindowFrameFields <: ff) => fr -> M44 GLfloat
+orthize d = let rf = rcast d :: FieldRec TopWindowFrameFields
                 w = rvalf #windowX rf
                 h = rvalf #windowY rf
             in
               buildPixelOrthoMatrix w h
 
-type OrthoParams = FieldRec '[ 
-  '("cameraProjection", M44 GLfloat),
-  '("worldTransform", M44 GLfloat)
+type StandardShaderFrameFields = '[
+    '("cameraProjection", M44 GLfloat),
+    '("worldTransform", M44 GLfloat),
+    '("curTime", Float)
   ]
+type StandardShaderFrameParams = FieldRec StandardShaderFrameFields
+  
+orthoConvert :: (ShaderReady cmd StandardShaderFrameParams) =>
+  FrameData sp TopWindowFrameParams cmd ->
+  FrameData StandardShaderFrameParams (FieldRec '[]) cmd
+orthoConvert (FrameData sp np dc) = 
+        let orthoM = orthize np
+            t = rvalf #curTime np
+            frameData =      (#cameraProjection =: orthoM)
+                          :& (#worldTransform =: (identity :: M44 GLfloat) )
+                          :& (#curTime =: t)
+                          :& RNil
+        in
+          DC.withDict dc $ FrameData frameData RNil DC.Dict
 
-instance (Drawable n (FieldRec ff)) => Drawable (PixelOrthoNode n) (FieldRec ff) where
-  type FrameConstraints (PixelOrthoNode n) (FieldRec ff) = 
-    (PixelOrthoFrameFields <: ff,    -- PixelOrthoNode needs windowX and windowY fields
-      Drawable n OrthoParams,         -- the subnode is provided a transformMatrix
-      FrameConstraints n OrthoParams  -- provide context for the subnode to get transformMatrix
-      )
-  draw (PixelOrthoView n) (PerFrameData fr) res =
-      let orthoM = orthize fr
-          frX = PerFrameData $    (#cameraProjection =: orthoM)
-                                :& (#worldTransform =: (identity :: M44 GLfloat) )
-                                :& RNil
-      in
-        draw n frX res
+--
+-- | Generate an orthographic projection where OpenGL coordinates
+-- | are mapped onto window pixels. For a window of width $w$ and
+-- | height $h$ the coordinates (0,0) are the lower-left corner of the
+-- | window and (w,h) refer to the upper-right corner of the window.
+-- | Resizing the window will change these values; if you want some sort
+-- | of auto-scaling with the window use $ortho2DView$ or $fitOrtho2DView$
+--
+pixelOrtho2DView :: (fr ~ FieldRec ff,
+                     StandardShaderFrameFields ~ ff,
+                     ShaderReady cmd StandardShaderFrameParams,
+                     np ~ FieldRec nf) =>
+  SceneGraph StandardShaderFrameParams (FieldRec '[]) cmd ->
+  Fix (SceneNode sp TopWindowFrameParams cmd)
+pixelOrtho2DView sg = Fix $ Transformer orthoConvert sg
 
-instance (NeedsResources n) => NeedsResources (PixelOrthoNode n) where
-  resources (PixelOrthoView n) = resources n
-    
+
+--
+--
+--
+translateWorld :: (ShaderReady cmd StandardShaderFrameParams) => 
+  V3 GLfloat ->
+  FrameData StandardShaderFrameParams np cmd ->
+  FrameData StandardShaderFrameParams np cmd
+translateWorld (V3 tx ty tz) (FrameData sp np dc) =
+  let xform = rvalf #worldTransform sp
+      t     = rvalf #curTime sp
+      translationMatrix x y z = V4 (V4 1 0 0 x)
+                                   (V4 0 1 0 y)
+                                   (V4 0 0 1 z)
+                                   (V4 0 0 0 1)
+      xform' = xform !*! translationMatrix tx ty tz
+      cproj = rvalf #cameraProjection sp
+      frameData =    (#cameraProjection =: cproj)
+                  :& (#worldTransform =: xform')
+                  :& (#curTime =: t)
+                  :& RNil
+  in
+    FrameData frameData np DC.Dict
+
+translate2d :: (ShaderReady cmd StandardShaderFrameParams, np ~ FieldRec nf) =>
+  V2 GLfloat ->
+  SceneGraph StandardShaderFrameParams np cmd ->
+  Fix (SceneNode StandardShaderFrameParams np cmd)
+translate2d (V2 tx ty) sg = Fix $ Transformer (translateWorld (V3 tx ty 0)) sg
+
+translate3d :: (ShaderReady cmd StandardShaderFrameParams, np ~ FieldRec nf) =>
+  V3 GLfloat ->
+  SceneGraph StandardShaderFrameParams np cmd ->
+  Fix (SceneNode StandardShaderFrameParams np cmd)
+translate3d tr sg = Fix $ Transformer (translateWorld tr) sg
+
+
+
+group :: [Fix (SceneNode sp np cmd)] -> Fix (SceneNode sp np cmd)
+group xs = Fix $ Group xs
+

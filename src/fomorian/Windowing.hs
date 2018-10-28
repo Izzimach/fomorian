@@ -26,6 +26,7 @@ import Fomorian.SceneNode
 import Linear
 import Data.Vinyl
 import Data.Word (Word32)
+import qualified Data.Constraint as DC
 import Graphics.VinylGL
 
 import Data.IORef
@@ -87,17 +88,42 @@ shouldEndProgram win = do
   windowKill <- GLFW.windowShouldClose win
   return (p == GLFW.KeyState'Pressed ||  windowKill)
 
-renderLoop :: (NeedsResources s, Drawable s (FieldRec fr), FrameConstraints s  (FieldRec fr)) => IORef AppInfo -> (AppInfo -> SceneGraph s (FieldRec fr)) -> (AppInfo -> PerFrameData fr) -> IO ()
+renderApp ::
+  ResourceMap ->
+  SceneGraph (FieldRec '[]) TopWindowFrameParams DrawGL ->
+  TopWindowFrameParams ->
+  IO ()
+renderApp resources scene windowparams = do
+  let framedata = FrameData RNil windowparams DC.Dict
+  GL.clearColor $= Color4 0.1 0.1 0.1 0
+  GL.clear [GL.ColorBuffer, GL.DepthBuffer]
+  depthFunc $= Just Less
+  cullFace $= Just Front
+  renderresult <- try $ openGLgo scene framedata resources
+  case renderresult of
+    Left e   -> putStrLn $ displayException (e :: SomeException)
+    Right () -> return ()
+      
+
+
+renderLoop ::
+  IORef AppInfo -> 
+  (AppInfo -> SceneGraph (FieldRec '[]) TopWindowFrameParams DrawGL) ->
+  (AppInfo -> TopWindowFrameParams) ->
+  IO ()
 renderLoop appref buildScene genRP = loop
   where
     loop = do
         appstate <- readIORef appref
         let win = rvalf #window appstate
-        let scene = buildScene appstate
-        let resources = (rvalf #resources appstate)
-        new_resources <- syncResourcesForScene scene resources
-        let new_appstate = (rputf #resources new_resources $ appstate)
+        let resources = rvalf #resources appstate
+        let needresources = oglResourcesScene $ buildScene appstate
+        new_resources <- loadResources needresources resources
+        let bumpTime = (rlensf #curTime) %~ (+0.016)
+        let new_appstate = bumpTime . (rputf #resources new_resources) $ appstate
+
         let frame_data = genRP new_appstate
+        let scene = buildScene appstate
         renderApp new_resources scene frame_data
         writeIORef appref new_appstate
 
@@ -105,13 +131,3 @@ renderLoop appref buildScene genRP = loop
         shouldClose <- shouldEndProgram win
         unless shouldClose loop
 
-renderApp :: (Drawable s (FieldRec fr), FrameConstraints s (FieldRec fr)) => ResourceMap -> SceneGraph s (FieldRec fr) -> PerFrameData fr -> IO ()
-renderApp resources scene framedata = do
-  GL.clearColor $= Color4 0 0 0 0
-  GL.clear [GL.ColorBuffer]
-  renderresult <- try $ renderScene scene framedata resources
-  case renderresult of
-    Left e -> do
-      putStrLn $ displayException (e :: SomeException)
-    Right () -> return ()
-  
