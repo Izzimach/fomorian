@@ -234,10 +234,10 @@ invokeGL ir = ReaderT $ \rm -> DC $ \fd -> goInvoke ir rm fd
      -- objVertices are tuples, the first element is the
      -- vertex buffer we want to vmap
      mapM_ ((vmap shaderdata) . fst) objVertices
-     mapM_ (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) indexVertices
+     let allIndexBuffers =  mappend indexVertices (map snd objVertices)
+     mapM_ (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) allIndexBuffers
      GLU.printErrorMsg "indexVertices"
      --putStrLn $ show textureObjects
-     let allIndexBuffers =  mappend indexVertices (map snd objVertices)
      GLU.withTextures2D textureObjects $ do
        --
        -- if an index array exists, use it via drawElements,
@@ -269,7 +269,7 @@ invokeGL ir = ReaderT $ \rm -> DC $ \fd -> goInvoke ir rm fd
     getLabels _ = rlabels
     vmap shaderdata v = do
            VGL.bindVertices $ fst v
-           VGL.enableVertexFields shaderdata $ fst v
+           VGL.enableVertices shaderdata $ fst v
 
 
 openGLAlgebra :: (sp ~ FieldRec sf) =>
