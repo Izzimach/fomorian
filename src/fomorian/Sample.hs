@@ -41,6 +41,10 @@ import Fomorian.SceneNode
 import Fomorian.SceneResources
 import Fomorian.Common
 
+--
+-- 2d draw test
+--
+
 simpleSquare file = Fix $ Invoke $ 
           (#shader =: "linez")
       :&  (#staticParameters =: ((#tex =: (0 :: GLint)) :& RNil) )
@@ -67,6 +71,32 @@ testScene = pixelOrtho2DView $
               ]
 
 
+--
+-- 3d draw test
+--
+
+simpleOBJFile file texturefile = Fix $ Invoke $
+          (#shader =: "unlit3d")
+      :&  (#staticParameters =: ((#tex =: (0 :: GLint)) :& RNil) )
+      :&  (#frameParameters =: (
+                                    (#cameraProjection =: (identity :: M44 GLfloat))
+                                 :& (#worldTransform =: (identity :: M44 GLfloat))
+                                 :& (#curTime =: (0 :: GLfloat))
+                                 :& RNil )
+          )
+      :&  (#vertexBuffers =: [ OBJFile file ]
+          )
+      :&  (#textures =: [texturefile])
+      :&  RNil
+    
+
+test3DScene = perspective3DView (1,20) $ 
+                translate3d (V3 (0.5) (-0.5) (-4)) $
+                  rotate3dDynamic (V3 0 1 1) 0.3 $
+                    translate3d (V3 (-0.5) (-0.5) (-0.5)) $
+                      simpleOBJFile "testcube.obj" "salamander.png"
+
+
 genRenderParams :: W.AppInfo -> TopWindowFrameParams
 genRenderParams appstate =
   let (w,h) = rvalf #windowSize appstate
@@ -80,7 +110,7 @@ genRenderParams appstate =
 
 main :: IO ()
 main = do
-  let scene = testScene
+  let scene = test3DScene
   let windowConfig = (600,400,"Demo")
   let initfunc = W.initWindow windowConfig >>= return
   let endfunc  = \win -> W.terminateWindow win

@@ -100,13 +100,33 @@ orthoConvert (FrameData sp np dc) =
 -- | Resizing the window will change these values; if you want some sort
 -- | of auto-scaling with the window use $ortho2DView$ or $fitOrtho2DView$
 --
-pixelOrtho2DView :: (fr ~ FieldRec ff,
-                     StandardShaderFrameFields ~ ff,
-                     ShaderReady cmd StandardShaderFrameParams,
-                     np ~ FieldRec nf) =>
+pixelOrtho2DView :: (ShaderReady cmd StandardShaderFrameParams,
+                     sp ~ FieldRec sf) =>
   SceneGraph StandardShaderFrameParams (FieldRec '[]) cmd ->
   Fix (SceneNode sp TopWindowFrameParams cmd)
-pixelOrtho2DView sg = Fix $ Transformer orthoConvert sg
+pixelOrtho2DView sg = transformer orthoConvert sg
+
+
+perspectiveProject :: (ShaderReady cmd StandardShaderFrameParams,
+                       sp ~ FieldRec sf) =>
+  GLfloat -> GLfloat -> GLfloat -> GLfloat ->
+  FrameData sp TopWindowFrameParams cmd ->
+  FrameData StandardShaderFrameParams (FieldRec '[]) cmd
+perspectiveProject fov aspect near far (FrameData sp np dc) =
+          let t = rvalf #curTime np
+              frameData =    (#cameraProjection =: perspective fov aspect near far)
+                          :& (#worldTransform   =: (identity :: M44 GLfloat) )
+                          :& (#curTime =: t)
+                          :& RNil
+          in
+            DC.withDict dc $ FrameData frameData RNil DC.Dict
+
+perspective3DView :: (ShaderReady cmd StandardShaderFrameParams,
+                      sp ~ FieldRec sf) => 
+    (Float, Float) ->
+    SceneGraph StandardShaderFrameParams (FieldRec '[]) cmd ->
+    Fix (SceneNode sp TopWindowFrameParams cmd)
+perspective3DView (near, far)= transformer (perspectiveProject 1 1 near far)
 
 
 --
@@ -144,4 +164,34 @@ translate3d :: (ShaderReady cmd StandardShaderFrameParams, np ~ FieldRec nf) =>
   Fix (SceneNode StandardShaderFrameParams np cmd)
 translate3d tr sg = Fix $ Transformer (translateWorld tr) sg
 
+
+
+
+rotateAxisAngle :: (ShaderReady cmd StandardShaderFrameParams, np ~ FieldRec nf) =>
+  V3 GLfloat ->
+  Float ->
+  FrameData StandardShaderFrameParams np cmd ->
+  FrameData StandardShaderFrameParams np cmd
+rotateAxisAngle axis angle (FrameData sp np dc) =
+  let xform = rvalf #worldTransform sp
+      cproj = rvalf #cameraProjection sp
+      t = rvalf #curTime sp
+      -- first build a quaterion, then convert to a matrix
+      quat = axisAngle axis angle
+      rotationMatrix = mkTransformation quat (V3 0 0 0)
+      xform' = xform !*! rotationMatrix
+      frameData =    (#cameraProjection =: cproj)
+                  :& (#worldTransform =: xform')
+                  :& (#curTime =: t)
+                  :& RNil
+  in
+    FrameData frameData np DC.Dict
+
+rotate3d axis angle = transformer (rotateAxisAngle axis angle)
+
+rotate3dDynamic axis spinspeed = transformer (spinAxis axis spinspeed)
+  where
+    spinAxis axis spin x@(FrameData sp np dc) =
+      let angle = spin * realToFrac (rvalf #curTime sp)
+      in rotateAxisAngle axis angle x
 

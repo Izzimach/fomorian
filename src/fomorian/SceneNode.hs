@@ -292,7 +292,11 @@ openGLgo sg sp rm = let sm = runReaderT (cata openGLAlgebra sg) rm
                     in runDC sm sp
                   
 
-
+transformer :: forall sp np sf nf sp2 np2 sf2 nf2 cmd. (sp ~ FieldRec sf, np ~ FieldRec nf, sp2 ~ FieldRec sf2, np2 ~ FieldRec nf2) =>
+  (FrameData sp np cmd -> FrameData sp2 np2 cmd) ->
+  (SceneGraph sp2 np2 cmd) ->
+  Fix (SceneNode sp np cmd)
+transformer t sg = Fix $ Transformer t sg
 
 group :: [Fix (SceneNode sp np cmd)] -> Fix (SceneNode sp np cmd)
 group xs = Fix $ Group xs
