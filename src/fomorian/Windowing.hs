@@ -22,6 +22,7 @@ import qualified Graphics.UI.GLFW as GLFW
 
 import Fomorian.SceneResources
 import Fomorian.SceneNode
+import Fomorian.Common
 
 import Linear
 import Data.Vinyl
@@ -95,7 +96,7 @@ renderApp ::
   IO ()
 renderApp resources scene windowparams = do
   let framedata = FrameData RNil windowparams DC.Dict
-  GL.clearColor $= Color4 0.1 0.1 0.1 0
+  GL.clearColor $= Color4 0.1 0.1 0.1 1
   GL.clear [GL.ColorBuffer, GL.DepthBuffer]
   depthFunc $= Just Less
   cullFace $= Just Front

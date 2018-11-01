@@ -39,6 +39,7 @@ import qualified Fomorian.Windowing as W
 
 import Fomorian.SceneNode
 import Fomorian.SceneResources
+import Fomorian.Common
 
 simpleSquare file = Fix $ Invoke $ 
           (#shader =: "linez")
