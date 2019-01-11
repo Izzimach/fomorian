@@ -5,7 +5,8 @@
 module Fomorian.ProcessWavefront 
   (OBJBufferRecord, 
    OBJBufferFormat, 
-   loadWavefrontOBJFile)
+   loadWavefrontOBJFile,
+   emptyOBJ)
     where
 
 
@@ -23,6 +24,7 @@ import Data.Maybe (fromMaybe)
 -- empty wavefront object
 --
 
+emptyOBJ :: WavefrontOBJ
 emptyOBJ = WavefrontOBJ V.empty V.empty V.empty V.empty V.empty V.empty V.empty
 
 {- |
@@ -92,13 +94,13 @@ genOBJVertexRecord obj (VD v) =
       locLookup = (objLocations obj) !? (l - 1)
       -- use monad Maybe to shortcut Nothing values in t or n
       texLookup = do t' <- t; objTexCoords obj !? (t' - 1)
-      normLookup = do n' <- n; objNormals obj !? (n' - 1)
+      normalLookup = do n' <- n; objNormals obj !? (n' - 1)
 
       loc = maybe  (V3 0 0 0) (V3 <$> locX <*> locY <*> locZ) locLookup
       tex = maybe  (V2 0 0)   (V2 <$> texcoordR <*> texcoordS) texLookup
-      norm = maybe (V3 0 0 1) (V3 <$> norX <*> norY <*> norZ) normLookup
+      normal = maybe (V3 0 0 1) (V3 <$> norX <*> norY <*> norZ) normalLookup
   in
-      (#pos3 =: loc) :& (#texCoord =: tex) :& (#normal =: norm) :& RNil
+      (#pos3 =: loc) :& (#texCoord =: tex) :& (#normal =: normal) :& RNil
 
 -- |Generate a full list of vertex buffer data
 genOBJVertexData :: WavefrontOBJ -> S.Set OBJVertex -> [OBJBufferRecord]
@@ -147,7 +149,8 @@ loadTestOBJ = do
   x <- fromFile "resources/geometry/testcube.obj"
   return $ E.fromRight emptyOBJ x
 
--- |Build the vertex and index lists, used for testing
+-- | Build the vertex and index lists, used for testing
+loadVals :: IO (WavefrontOBJ, S.Set OBJVertex, OBJFaceIndexLookup, Element Face)
 loadVals = do
   a <- loadTestOBJ
   let uniqueVerts = buildOBJVertexSet a

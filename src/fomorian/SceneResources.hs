@@ -99,6 +99,9 @@ mergeResourceLists r1 r2 = ResourceList
     texturefiles = S.union (texturefiles r1) (texturefiles r2)
   }
 
+instance Semigroup ResourceList where
+  (<>) = mergeResourceLists
+
 instance Monoid ResourceList where
   mempty = emptyResourceList
   mappend = mergeResourceLists

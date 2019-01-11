@@ -8,7 +8,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Fomorian.Sample where
+module Fomorian.Sample (main) where
 
 
 import Linear
@@ -114,8 +114,11 @@ main = do
   let windowConfig = (600,400,"Demo")
   let initfunc = W.initWindow windowConfig >>= return
   let endfunc  = \win -> W.terminateWindow win
+  let runForOneSecond = \appinfo -> let t = rgetf #curTime appinfo
+                                    in
+                                      if t < 1.0 then W.NextFrame else W.EndApp
   let loopfunc = \win -> do
                            appdata <- W.initAppState windowConfig win
-                           W.renderLoop appdata (const scene) genRenderParams
+                           W.renderLoop appdata (const scene) genRenderParams runForOneSecond
   bracket initfunc endfunc loopfunc
 

@@ -14,7 +14,13 @@ RankNTypes
 #-}
 
 -- 
-module Fomorian.Windowing where
+module Fomorian.Windowing 
+(initWindow,
+ initAppState,
+ terminateWindow,
+ renderLoop,
+ AppInfo(..),
+ AppAction(..)) where
 
 import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.GLUtil as GLU
@@ -41,6 +47,9 @@ type AppInfo = FieldRec '[ '("window", GLFW.Window),
                            '("windowSize", (Int,Int)),
                            '("resources", ResourceMap),
                            '("curTime", Float) ]
+
+data AppAction = NextFrame | EndApp 
+  deriving (Eq, Show)
 
 
 resizeWindow :: IORef AppInfo -> GLFW.WindowSizeCallback
@@ -100,19 +109,17 @@ renderApp resources scene windowparams = do
   GL.clear [GL.ColorBuffer, GL.DepthBuffer]
   depthFunc $= Just Less
   cullFace $= Just Front
-  renderresult <- try $ openGLgo scene framedata resources
-  case renderresult of
-    Left e   -> putStrLn $ displayException (e :: SomeException)
-    Right () -> return ()
-      
+  openGLgo scene framedata resources
+  return ()      
 
 
 renderLoop ::
   IORef AppInfo -> 
   (AppInfo -> SceneGraph (FieldRec '[]) TopWindowFrameParams DrawGL) ->
   (AppInfo -> TopWindowFrameParams) ->
+  (AppInfo -> AppAction) -> 
   IO ()
-renderLoop appref buildScene genRP = loop
+renderLoop appref buildScene genRP doNext = loop
   where
     loop = do
         appstate <- readIORef appref
@@ -129,6 +136,7 @@ renderLoop appref buildScene genRP = loop
         writeIORef appref new_appstate
 
         GLFW.swapBuffers win
-        shouldClose <- shouldEndProgram win
+        externalClose <- shouldEndProgram win
+        let shouldClose = (doNext new_appstate == EndApp) || externalClose
         unless shouldClose loop
 
