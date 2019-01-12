@@ -4,9 +4,11 @@ manipulating a scene graph.
 current proof-of-concept data for a simple scene:
 
 ```haskell
-testScene = ortho2DView $ group [
-              translate2d (0,0) $ simpleSquare "owl.png",
-              translate2d (100,100) $ simpleSquare "sad-crab.png"
+testScene = pixelOrtho2DView $
+              group
+              [
+                translate2d (V2 0 0)    $ simpleSquare "sad-crab.png",
+                translate2d (V2 150 50) $ simpleSquare "owl.png"
               ]
 ```
 
