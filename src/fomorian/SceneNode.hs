@@ -22,15 +22,10 @@
 
 module Fomorian.SceneNode where
 
-import Linear
-import Control.Lens ( (%~), (.~), over, view)
 import Data.Kind (Constraint)
-import Data.Proxy
 import Data.Functor.Foldable
-import Data.Functor.Contravariant
-import Data.Semigroup
-import Data.Foldable
 import Data.Maybe
+import qualified Data.Text as T
 
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -42,20 +37,15 @@ import Control.Applicative
 
 -- qualify most of OpenGL stuff except for a few common types
 import qualified Graphics.Rendering.OpenGL as GL
-import Graphics.Rendering.OpenGL (($=), GLfloat, GLint)
+import Graphics.Rendering.OpenGL (($=))
 import qualified Graphics.GLUtil as GLU
 
 -- vinyl
 import Data.Vinyl
-import Data.Vinyl.Lens
-import Data.Vinyl.TypeLevel (Nat(Z),Nat(S), AllConstrained)
-import Data.Vinyl.Functor
 import qualified Data.Constraint as DC
 
 -- vinyl-gl
-import Data.Word (Word32)
 import qualified Graphics.VinylGL as VGL
-import Graphics.VinylGL.Uniforms (UniformFields)
 
 import Fomorian.SceneResources
 
@@ -84,17 +74,17 @@ class DrawMethod cmd where
 data SceneNode sp np cmd x =
     forall tp . (Show tp, ShaderReady cmd tp) => Invoke (Invocation tp sp)
   | Group [x]
-  | forall sp2 np2 c2 sf2 nf2. (sp2 ~ FieldRec sf2, np2 ~ FieldRec nf2) => Transformer (FrameData sp np cmd -> FrameData sp2 np2 cmd) (SceneGraph sp2 np2 cmd)
+  | forall sp2 np2 sf2 nf2. (sp2 ~ FieldRec sf2, np2 ~ FieldRec nf2) => Transformer (FrameData sp np cmd -> FrameData sp2 np2 cmd) (SceneGraph sp2 np2 cmd)
 
 instance (Show x, Show sp) => Show (SceneNode sp np cmd x) where
   show (Invoke iv) = "[Invoke:" ++ show iv ++ "]"
   show (Group cmds) = "[Group:" ++ show cmds ++ "]"
-  show (Transformer t gr) = "[Transformer]"
+  show (Transformer _t _gr) = "[Transformer]"
 
 instance Functor (SceneNode sp np cmd) where
-  fmap f (Invoke x) = Invoke x
+  fmap _f (Invoke x) = Invoke x
   fmap f (Group cmds) = Group (fmap f cmds)
-  fmap f (Transformer t gr) = Transformer t gr
+  fmap _f (Transformer t gr) = Transformer t gr
   
 
 
@@ -103,10 +93,9 @@ type SceneGraph sp np cmd = Fix (SceneNode sp np cmd)
 
 
 foldAlgebra :: (Monoid m) => SceneNode sp np cmd m -> m
-foldAlgebra (Invoke x)         = mempty
+foldAlgebra (Invoke _x)         = mempty
 foldAlgebra (Group cmds)       = foldr mappend mempty cmds
-foldAlgebra (Transformer t gr) = cata foldAlgebra gr
-
+foldAlgebra (Transformer _t gr) = cata foldAlgebra gr
 
 foldSceneGraph :: (Monoid m) => SceneGraph sp np cmd -> m
 foldSceneGraph g = cata foldAlgebra g
@@ -136,23 +125,21 @@ instance (Monad m) => Monad (DrawCmd r m) where
                              runDC (b a') r
 
 instance (MonadIO m) => MonadIO (DrawCmd r m) where
-  liftIO x = DC $ \r -> liftIO x
+  liftIO x = DC $ \_ -> liftIO x
   
 instance (Alternative m) => Alternative (DrawCmd r m) where
-  empty             = DC $ \r -> empty
+  empty             = DC $ \_ -> empty
   (DC a) <|> (DC b) = DC $ \r -> (a r) <|> (b r)
 
 instance (MonadPlus m) => MonadPlus (DrawCmd r m) where
-  mzero     = DC $ \r -> mzero
+  mzero     = DC $ \_ -> mzero
   mplus m n = DC $ \r -> mplus (runDC m r) (runDC n r)
 
 
 
 
 --
--- The Transformer switches from a (SceneNode r) to a (SceneNode s) so we're
--- going to need to switch the (Invoker r) to a (Invoker s). This
--- is why 'iv' needs to a higher rank type.
+-- Dump out text representation of a scene
 --
 
 data DumpScene
@@ -177,8 +164,7 @@ dumpScene sg = cata dumpAlgebra sg
 -- Find resources for a scene
 --
 
-
-newtype OGLResources a = OGLResources { needsGLResources :: ResourceList }
+--newtype OGLResources a = OGLResources { needsGLResources :: ResourceList }
 
 oglResourcesAlgebra :: SceneNode sp np cmd ResourceList -> ResourceList
 oglResourcesAlgebra (Invoke x) = ResourceList {
@@ -187,15 +173,29 @@ oglResourcesAlgebra (Invoke x) = ResourceList {
         texturefiles = S.fromList (rvalf #textures x)
       }
 oglResourcesAlgebra (Group cmds) = foldl mergeResourceLists emptyResourceList cmds
-oglResourcesAlgebra (Transformer t gr) = oglResourcesScene gr
+oglResourcesAlgebra (Transformer _t gr) = oglResourcesScene gr
 
 oglResourcesScene :: SceneGraph sp np cmd -> ResourceList
 oglResourcesScene sg = cata oglResourcesAlgebra sg
 
+--
+-- Generate graphviz compatible text output
+--
+
+newtype VizText a = GViz { vizText :: T.Text }
+
+
+graphVizAlgebra :: SceneNode sp np cmd T.Text -> T.Text
+graphVizAlgebra (Invoke _x) = T.pack "[invoke]"
+graphVizAlgebra (Group cmds) = T.concat cmds
+graphVizAlgebra (Transformer _t gr) = graphVizScene gr
+
+graphVizScene :: SceneGraph sp np cmd -> T.Text
+graphVizScene sg = cata graphVizAlgebra sg
 
 --
 -- Drawing with OpenGL - shader parameters must be Uniform-valid, which
--- means they are GLfloat, GLint, or vectors (V2,V3,V4) or matrices
+-- means they are GLfloat, GLint, vectors (V2,V3,V4) or matrices
 --
 
 data DrawGL
@@ -207,80 +207,86 @@ instance DrawMethod DrawGL where
 invokeGL :: (sp ~ FieldRec sf) =>
   Invocation tp sp ->
   ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ()
-invokeGL ir = ReaderT $ \rm -> DC $ \fd -> goInvoke ir rm fd
+invokeGL ivk = ReaderT $ \rm -> DC $ \fd -> goInvoke ivk rm fd
   where
     goInvoke :: (sp ~ FieldRec sf) =>
       Invocation tp sp ->
-      ResourceMap -> FrameData sp np DrawGL -> IO ()
-    goInvoke ir rm (FrameData sp np dc) = liftIO $ do
-     let vBufferValues = rvalf #vertexBuffers ir
-     let v2Vertices = mapMaybe (\x -> M.lookup x (v2Buffers rm)) vBufferValues
-     let texCoords = mapMaybe (\x -> M.lookup x (texCoordBuffers rm))  vBufferValues
-     let v3Vertices = mapMaybe (\x -> M.lookup x (v3Buffers rm)) vBufferValues
-     let textureObjects = mapMaybe (\x -> M.lookup x (textures rm)) (rvalf #textures ir)
-     let indexVertices = mapMaybe (\x -> M.lookup x (indexBuffers rm)) vBufferValues
-     let objVertices = mapMaybe (\x -> M.lookup x (objFileBuffers rm)) vBufferValues
-     let (Just shaderdata) = M.lookup (rvalf #shader ir) (shaders rm)
-     GL.currentProgram $= Just (GLU.program shaderdata)
-     GLU.printErrorMsg "currentProgram"
-     --VGL.setUniforms shaderdata (rvalf #staticParameters ir)
-     DC.withDict dc (VGL.setSomeUniforms shaderdata sp) :: IO ()
-     mapM_ (vmap shaderdata) v2Vertices
-     GLU.printErrorMsg "v2Vertices"
-     mapM_ (vmap shaderdata) texCoords
-     GLU.printErrorMsg "texCoords"
-     mapM_ (vmap shaderdata) v3Vertices
-     GLU.printErrorMsg "v3Vertices"
-     -- objVertices are tuples, the first element is the
-     -- vertex buffer we want to vmap
-     mapM_ ((vmap shaderdata) . fst) objVertices
-     let allIndexBuffers =  mappend indexVertices (map snd objVertices)
-     mapM_ (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) allIndexBuffers
-     GLU.printErrorMsg "indexVertices"
-     --putStrLn $ show textureObjects
-     GLU.withTextures2D textureObjects $ do
-       --
-       -- if an index array exists, use it via drawElements,
-       -- otherwise just draw without an index array using drawArrays
-       --
-       if not (null allIndexBuffers) then do
-         -- draw with drawElements
-         --
-         -- index arrays are Word32 which maps to GL type UnsignedInt
-         -- need 'fromIntegral' to convert the count to GL.NumArrayIndices type
-         let drawCount = (fromIntegral . snd . head $ allIndexBuffers)
-         GL.drawElements GL.Triangles drawCount GL.UnsignedInt GLU.offset0
-       else do
-         -- draw with drawArrays
-         --
-         -- we assume 2D drawing if 2d vertices are specified for this node,
-         -- otherwise use 3D drawing
-         if not (null v2Vertices) then
-           GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v2Vertices)
-         else
-           GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v3Vertices)
-       GLU.printErrorMsg "drawArrays"
-       return ()
-    
-     --putStrLn $ "argh " ++ (rvalf #shader ir)
-     --let labels = recordToList (getLabels ir)
-     --mapM_ putStrLn labels
-    getLabels :: (AllFields ff) =>  FieldRec ff -> Rec (Data.Vinyl.Functor.Const String) ff
-    getLabels _ = rlabels
-    vmap shaderdata v = do
-           VGL.bindVertices $ fst v
-           VGL.enableVertices shaderdata $ fst v
+      ResourceMap ->
+      FrameData sp np DrawGL ->
+      IO ()
+    goInvoke ir rm (FrameData sp _np dc) = liftIO $ do
+      let shaderdata = M.lookup (rvalf #shader ir) (shaders rm)
+      case shaderdata of
+        Nothing -> error "No shader loaded"
+        Just shaderinstance -> do 
+          GL.currentProgram $= Just (GLU.program shaderinstance)
+          GLU.printErrorMsg "currentProgram"
+          let vBufferValues = rvalf #vertexBuffers ir
+          let v2Vertices = mapMaybe (\x -> M.lookup x (v2Buffers rm)) vBufferValues
+          let texCoords = mapMaybe (\x -> M.lookup x (texCoordBuffers rm))  vBufferValues
+          let v3Vertices = mapMaybe (\x -> M.lookup x (v3Buffers rm)) vBufferValues
+          let indexVertices = mapMaybe (\x -> M.lookup x (indexBuffers rm)) vBufferValues
+          let objVertices = mapMaybe (\x -> M.lookup x (objFileBuffers rm)) vBufferValues
+          let textureObjects = mapMaybe (\x -> M.lookup x (textures rm)) (rvalf #textures ir)
+          --VGL.setUniforms shaderinstance (rvalf #staticParameters ir)
+          DC.withDict dc (VGL.setSomeUniforms shaderinstance sp) :: IO ()
+          mapM_ (vertbind shaderinstance) v2Vertices
+          GLU.printErrorMsg "v2Vertices"
+          mapM_ (vertbind shaderinstance) texCoords
+          GLU.printErrorMsg "texCoords"
+          mapM_ (vertbind shaderinstance) v3Vertices
+          GLU.printErrorMsg "v3Vertices"
+          -- objVertices are tuples, the first element is the
+          -- vertex buffer we want to vmap
+          mapM_ ((vertbind shaderinstance) . fst) objVertices
+          let allIndexBuffers =  mappend indexVertices (map snd objVertices)
+          mapM_ (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) allIndexBuffers
+          GLU.printErrorMsg "indexVertices"
+          --putStrLn $ show textureObjects
+          GLU.withTextures2D textureObjects $ do
+            --
+            -- if an index array exists, use it via drawElements,
+            -- otherwise just draw without an index array using drawArrays
+            --
+            if not (null allIndexBuffers) then do
+              -- draw with drawElements
+              --
+              -- index arrays are Word32 which maps to GL type UnsignedInt
+              -- need 'fromIntegral' to convert the count to GL.NumArrayIndices type
+              let drawCount = (fromIntegral . snd . head $ allIndexBuffers)
+              GL.drawElements GL.Triangles drawCount GL.UnsignedInt GLU.offset0
+              GLU.printErrorMsg "drawElements"
+            else do
+              -- draw with drawArrays
+              --
+              -- we assume 2D drawing if 2d vertices are specified for this node,
+              -- otherwise use 3D drawing
+              if not (null v2Vertices) then
+                GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v2Vertices)
+              else
+                GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v3Vertices)
+              GLU.printErrorMsg "drawArrays"
+            return ()
 
+    --putStrLn $ "argh " ++ (rvalf #shader ir)
+    --let labels = recordToList (getLabels ir)
+    --mapM_ putStrLn labels
+    --getLabels :: (AllFields ff) =>  FieldRec ff -> Rec (Data.Vinyl.Functor.Const String) ff
+    --getLabels _ = rlabels
+
+    vertbind shaderinstance v = do
+      VGL.bindVertices $ fst v
+      VGL.enableVertices shaderinstance $ fst v
 
 openGLAlgebra :: (sp ~ FieldRec sf) =>
   SceneNode sp np DrawGL (ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ()) ->
   (ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ())
 openGLAlgebra (Invoke x)     = invokeGL x
-openGLAlgebra (Group cmds)   = foldl (>>) (ReaderT $ \rm -> DC $ \fd -> return ()) cmds
+openGLAlgebra (Group cmds)   = foldl (>>) (ReaderT $ \_ -> noopDraw ()) cmds
 openGLAlgebra (Transformer t gr) = ReaderT $ \rm ->
   DC $ \fd ->
          let fd2  = t fd
-             (FrameData sp2 c2 dc2) = fd2
+             (FrameData _sp2 _c2 dc2) = fd2 -- need the new set of constraints
              scmd = DC.withDict dc2 (cata openGLAlgebra gr)
              in runDC (runReaderT scmd rm) fd2
   
@@ -292,7 +298,7 @@ openGLgo sg sp rm = let sm = runReaderT (cata openGLAlgebra sg) rm
                     in runDC sm sp
                   
 
-transformer :: forall sp np sf nf sp2 np2 sf2 nf2 cmd. (sp ~ FieldRec sf, np ~ FieldRec nf, sp2 ~ FieldRec sf2, np2 ~ FieldRec nf2) =>
+transformer :: forall sp np sp2 np2 sf2 nf2 cmd. (sp2 ~ FieldRec sf2, np2 ~ FieldRec nf2) =>
   (FrameData sp np cmd -> FrameData sp2 np2 cmd) ->
   (SceneGraph sp2 np2 cmd) ->
   Fix (SceneNode sp np cmd)

@@ -17,7 +17,6 @@ import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
 import Data.Vector ((!?))
-import qualified Data.Either as E
 import Data.Maybe (fromMaybe)
 
 --
@@ -102,11 +101,11 @@ genOBJVertexRecord obj (VD v) =
   in
       (#pos3 =: loc) :& (#texCoord =: tex) :& (#normal =: normal) :& RNil
 
--- |Generate a full list of vertex buffer data
+-- | Generate a full list of vertex buffer data
 genOBJVertexData :: WavefrontOBJ -> S.Set OBJVertex -> [OBJBufferRecord]
 genOBJVertexData obj faceverts = fmap (genOBJVertexRecord obj) (S.toList faceverts)
 
--- |Generate index list from Face data
+-- | Generate index list from Face data
 genOBJFaceIndexData :: WavefrontOBJ -> OBJFaceIndexLookup -> [Int]
 genOBJFaceIndexData obj (faceindexlookup) = concatMap (faceixs faceindexlookup) (objFaces obj)
   where
@@ -124,7 +123,7 @@ genOBJFaceIndexData obj (faceindexlookup) = concatMap (faceixs faceindexlookup) 
                                (drop 2 verts)
       in fmap (\x -> M.findWithDefault 0 x vertlookup) (concat vertexfan)
 
--- |Given a WavefrontOBJ generate the vertex buffer data and index buffer data
+-- | Given a WavefrontOBJ generate the vertex buffer data and index buffer data
 genWavefrontBuffers :: WavefrontOBJ -> ([OBJBufferRecord],[Int])
 genWavefrontBuffers obj = let uniqueVerts = buildOBJVertexSet obj
                               faceIndexLookup = buildFaceIndexLookup uniqueVerts
@@ -138,21 +137,3 @@ loadWavefrontOBJFile f = do
   case x of
     Left s -> return $ Left s
     Right obj -> return $ Right (genWavefrontBuffers obj)
-
-
-{-|
-   In ghci run 'x <- loadTestOBJ' to put the wavefont data into x
-   This will produce an empty object if the file load fails.
--}
-loadTestOBJ :: IO WavefrontOBJ
-loadTestOBJ = do
-  x <- fromFile "resources/geometry/testcube.obj"
-  return $ E.fromRight emptyOBJ x
-
--- | Build the vertex and index lists, used for testing
-loadVals :: IO (WavefrontOBJ, S.Set OBJVertex, OBJFaceIndexLookup, Element Face)
-loadVals = do
-  a <- loadTestOBJ
-  let uniqueVerts = buildOBJVertexSet a
-  let faceIndexLookup = buildFaceIndexLookup uniqueVerts
-  return (a, uniqueVerts, faceIndexLookup, head $ V.toList $ objFaces a)

@@ -19,7 +19,7 @@ module Fomorian.Windowing
  initAppState,
  terminateWindow,
  renderLoop,
- AppInfo(..),
+ AppInfo,
  AppAction(..)) where
 
 import Graphics.Rendering.OpenGL as GL
@@ -30,18 +30,12 @@ import Fomorian.SceneResources
 import Fomorian.SceneNode
 import Fomorian.Common
 
-import Linear
 import Data.Vinyl
-import Data.Word (Word32)
 import qualified Data.Constraint as DC
-import Graphics.VinylGL
 
 import Data.IORef
-import Data.Maybe (mapMaybe)
 import Control.Monad
-import Control.Monad.State
-import Control.Lens ( (^.), (.~), (%~) )
-import Control.Exception
+import Control.Lens ( (%~) )
 
 type AppInfo = FieldRec '[ '("window", GLFW.Window),
                            '("windowSize", (Int,Int)),
@@ -62,18 +56,21 @@ windowResizeEvent s w h = do
 
 initWindow :: (Int,Int,String) -> IO GLFW.Window
 initWindow (w,h,title) = do
-  GLFW.init
-  GLFW.defaultWindowHints
-  GLFW.windowHint (GLFW.WindowHint'ContextVersionMajor 4)
-  GLFW.windowHint (GLFW.WindowHint'Resizable True)
-  GLFW.windowHint (GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core)
-  Just win <- GLFW.createWindow w h title Nothing Nothing
-  GLFW.makeContextCurrent (Just win)
-  GLFW.swapInterval 1      -- should wait for vsync, set to 0 to not wait
-  return win
+  result <- GLFW.init
+  if (result == False)
+  then error "GLFW init failed"
+  else do
+    GLFW.defaultWindowHints
+    GLFW.windowHint (GLFW.WindowHint'ContextVersionMajor 4)
+    GLFW.windowHint (GLFW.WindowHint'Resizable True)
+    GLFW.windowHint (GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core)
+    Just win <- GLFW.createWindow w h title Nothing Nothing
+    GLFW.makeContextCurrent (Just win)
+    GLFW.swapInterval 1      -- should wait for vsync, set to 0 to not wait
+    return win
 
 initAppState :: (Int,Int,String) -> GLFW.Window -> IO (IORef AppInfo)
-initAppState (w,h,title) win = do
+initAppState (w,h,_title) win = do
   defaultVAO <- fmap head (genObjectNames 1)
   bindVertexArrayObject $= Just defaultVAO
   GLU.printErrorMsg "bindVAO"

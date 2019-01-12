@@ -51,8 +51,8 @@ data VertexSourceData =
 type Pos2 = '("pos2", V2 Float)
 type Pos3 = '("pos3", V3 Float)
 type TexCoord = '("texCoord", V2 Float)
-type Normal = '("normal", V3 Float)
-type VertIndex = '("index", Int)
+--type Normal = '("normal", V3 Float)
+--type VertIndex = '("index", Int)
 
 
 {- |
@@ -104,7 +104,7 @@ instance Semigroup ResourceList where
 
 instance Monoid ResourceList where
   mempty = emptyResourceList
-  mappend = mergeResourceLists
+  mappend = (<>)
 
   
 --
@@ -206,8 +206,8 @@ loadShaders ss r = foldM loadShaderM r ss
 
 
 loadResources :: ResourceList -> ResourceMap -> IO ResourceMap
-loadResources neededresources loadedresources = do
+loadResources neededresources oldresources = do
   let lb = loadBuffers (S.toList . vertexfiles $ neededresources)
   let lt = loadTextures (S.toList . texturefiles $ neededresources)
   let ls = loadShaders (S.toList . shaderfiles $ neededresources)
-  (lb >=> lt >=> ls) loadedresources
+  (lb >=> lt >=> ls) oldresources
