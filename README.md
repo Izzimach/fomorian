@@ -15,7 +15,7 @@ testScene = pixelOrtho2DView $
 This produces the display:
 ![Sample pic](fomorianpic1.jpg)
 
-to run the exampleinstall stack then:
+to run the example, make sure stack is installed and:
 
 ```
 stack build
