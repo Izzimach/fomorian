@@ -239,7 +239,7 @@ invokeGL ivk = ReaderT $ \rm -> DC $ \fd -> goInvoke ivk rm fd
           -- objVertices are tuples, the first element is the
           -- vertex buffer we want to vmap
           mapM_ ((vertbind shaderinstance) . fst) objVertices
-          let allIndexBuffers =  mappend indexVertices (map snd objVertices)
+          let allIndexBuffers = mappend indexVertices (map snd objVertices)
           mapM_ (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) allIndexBuffers
           GLU.printErrorMsg "indexVertices"
           --putStrLn $ show textureObjects
@@ -248,7 +248,8 @@ invokeGL ivk = ReaderT $ \rm -> DC $ \fd -> goInvoke ivk rm fd
             -- if an index array exists, use it via drawElements,
             -- otherwise just draw without an index array using drawArrays
             --
-            if not (null allIndexBuffers) then do
+            if not (null allIndexBuffers)
+            then do
               -- draw with drawElements
               --
               -- index arrays are Word32 which maps to GL type UnsignedInt
@@ -273,10 +274,10 @@ invokeGL ivk = ReaderT $ \rm -> DC $ \fd -> goInvoke ivk rm fd
     --mapM_ putStrLn labels
     --getLabels :: (AllFields ff) =>  FieldRec ff -> Rec (Data.Vinyl.Functor.Const String) ff
     --getLabels _ = rlabels
-
-    vertbind shaderinstance v = do
-      VGL.bindVertices $ fst v
-      VGL.enableVertices shaderinstance $ fst v
+    --vertbind :: forall f a b. f ~ FieldRec a => GLU.ShaderProgram -> (f, b) -> IO ()
+    vertbind shader v = do
+        VGL.bindVertices $ fst v
+        VGL.enableVertexFields shader (fst v)
 
 openGLAlgebra :: (sp ~ FieldRec sf) =>
   SceneNode sp np DrawGL (ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ()) ->
