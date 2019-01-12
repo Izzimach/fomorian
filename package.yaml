@@ -49,7 +49,7 @@ library:
 executables:
   example:
     source-dirs: src
-    main:             fomorian/Main.hs
+    main: fomorian/Main.hs
     ghc-options: -threaded -O2
     other-modules:
     - Fomorian.Common
