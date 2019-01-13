@@ -19,5 +19,5 @@ to run the example, make sure stack is installed and:
 
 ```
 stack build
-stack exec example
+stack exec exe:example
 ```
