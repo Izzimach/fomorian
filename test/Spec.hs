@@ -10,7 +10,6 @@ import Control.Exception
 
 import Data.Vinyl
 
-
 --
 -- basic test code to open a window, run/render it for one second, then close
 --

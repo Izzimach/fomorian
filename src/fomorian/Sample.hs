@@ -51,17 +51,6 @@ simpleSquare file = Fix $ Invoke $
       :&  (#textures =: [file])
       :&  RNil
 
-testScene :: forall k (cmd :: k) sp.
-  (ShaderReady cmd StandardShaderFrameParams,
-   ShaderReady cmd (FieldRec '["tex" ::: GLint])) =>
-    SceneGraph sp TopWindowFrameParams cmd
-testScene = pixelOrtho2DView $
-              group
-              [
-                translate2d (V2 0 0)    $ simpleSquare "sad-crab.png",
-                translate2d (V2 150 50) $ simpleSquare "owl.png"
-              ]
-
 
 --
 -- 3d draw test
@@ -87,17 +76,6 @@ simpleOBJFile file texturefile = Fix $ Invoke $
       :&  RNil
     
 
-test3DScene :: forall k (cmd :: k) sp sf.
-  (ShaderReady cmd StandardShaderFrameParams,
-   ShaderReady cmd (FieldRec '["tex" ::: GLint]),
-   sp ~ FieldRec sf) =>
-     SceneGraph sp TopWindowFrameParams cmd
-test3DScene = perspective3DView (1,20) $ 
-                translate3d (V3 (0.5) (-0.5) (-4)) $
-                  rotate3dDynamic (V3 0 1 1) 0.3 $
-                    translate3d (V3 (-0.5) (-0.5) (-0.5)) $
-                      simpleOBJFile "testcube.obj" "salamander.png"
-
 
 genRenderParams :: W.AppInfo -> TopWindowFrameParams
 genRenderParams appstate =
@@ -111,10 +89,23 @@ genRenderParams appstate =
 
 
 main2d :: IO ()
-main2d = oneSceneApp testScene
+main2d = let testScene = pixelOrtho2DView $
+                group
+                [
+                  translate2d (V2 0 0)    $ simpleSquare "sad-crab.png",
+                  translate2d (V2 150 50) $ simpleSquare "owl.png"
+                ]
+          in
+            oneSceneApp testScene
 
 main3d :: IO ()
-main3d = oneSceneApp test3DScene
+main3d = let test3DScene = perspective3DView (1,20) $ 
+                translate3d (V3 (0.5) (-0.5) (-4)) $
+                  rotate3dDynamic (V3 0 1 1) 0.3 $
+                    translate3d (V3 (-0.5) (-0.5) (-0.5)) $
+                      simpleOBJFile "testcube.obj" "salamander.png"
+          in
+            oneSceneApp test3DScene
 
 oneSceneApp :: SceneGraph (FieldRec '[]) TopWindowFrameParams DrawGL -> IO ()
 oneSceneApp scene = do
