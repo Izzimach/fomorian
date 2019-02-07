@@ -77,10 +77,10 @@ simpleOBJFile file texturefile = Fix $ Invoke $
     
 
 
-genRenderParams :: W.AppInfo -> TopWindowFrameParams
-genRenderParams appstate =
-  let (w,h) = rvalf #windowSize appstate
-      t     = rvalf #curTime appstate
+genRenderParams :: W.AppInfo s -> TopWindowFrameParams
+genRenderParams appInfo =
+  let (w,h) = rvalf #windowSize appInfo
+      t     = rvalf #curTime appInfo
   in   (#windowX =: fromIntegral w)
     :& (#windowY =: fromIntegral h)
     :& (#curTime =: t)
@@ -93,7 +93,7 @@ main2d = let testScene = pixelOrtho2DView $
                 group
                 [
                   translate2d (V2 0 0)    $ simpleSquare "sad-crab.png",
-                  translate2d (V2 150 50) $ simpleSquare "owl.png"
+                  translate2d (V2 250 50) $ simpleSquare "owl.png"
                 ]
           in
             oneSceneApp testScene
@@ -107,6 +107,8 @@ main3d = let test3DScene = perspective3DView (1,20) $
           in
             oneSceneApp test3DScene
 
+data EmptyAppState = EmptyAppState
+
 oneSceneApp :: SceneGraph (FieldRec '[]) TopWindowFrameParams DrawGL -> IO ()
 oneSceneApp scene = do
   let windowConfig = (600,400,"Demo")
@@ -115,9 +117,9 @@ oneSceneApp scene = do
   {- let runForOneSecond = \appinfo -> let t = rgetf #curTime appinfo
                                     in
                                       if t < 1.0 then W.NextFrame else W.EndApp -}
-  let runForever = \_ -> W.NextFrame
+  let runForever = \_ -> (EmptyAppState, W.NextFrame)
   let loopfunc = \win -> do
-                           appdata <- W.initAppState windowConfig win
+                           appdata <- W.initAppState windowConfig win EmptyAppState
                            W.renderLoop appdata (const scene) genRenderParams runForever
   bracket initfunc endfunc loopfunc
 
