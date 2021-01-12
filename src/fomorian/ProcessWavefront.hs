@@ -23,6 +23,7 @@ import Data.Maybe (fromMaybe)
 -- empty wavefront object
 --
 
+emptyOBJ :: WavefrontOBJ
 emptyOBJ = WavefrontOBJ V.empty V.empty V.empty V.empty V.empty V.empty V.empty
 
 {- |
@@ -37,7 +38,7 @@ emptyOBJ = WavefrontOBJ V.empty V.empty V.empty V.empty V.empty V.empty V.empty
 newtype OBJVertex = VD FaceIndex deriving (Eq, Show)
 
 instance Ord OBJVertex where
-  -- compare elements left-to-right, give Nothing a value of 0
+  -- compare elements left-to-right, give 'Nothing' a value of 0
   compare (VD x) (VD y) = let (FaceIndex l0 t0 n0) = x
                               (FaceIndex l1 t1 n1) = y
                           in case compare l0 l1 of
@@ -83,9 +84,8 @@ type OBJBufferRecord = FieldRec OBJBufferFormat
    Generate actual vinyl record for a given OBJVertex
  
    this is kind of a mess since the texture and normal data may be
-   nonexistant (Nothing values) and the lookups are 1-indexed instead of 0-indexed
+   nonexistant ('Nothing' values) and the lookups are 1-indexed instead of 0-indexed
 -}
-
 genOBJVertexRecord :: WavefrontOBJ -> OBJVertex -> OBJBufferRecord
 genOBJVertexRecord obj (VD v) =
   let (FaceIndex l t n) = v
@@ -139,7 +139,7 @@ loadWavefrontOBJFile f = do
 
 
 {-|
-   In ghci run 'x <- loadTestOBJ' to put the wavefont data into x
+   In ghci you can run 'x <- loadTestOBJ' to put the wavefront data into x
    This will produce an empty object if the file load fails.
 -}
 loadTestOBJ :: IO WavefrontOBJ
@@ -148,6 +148,7 @@ loadTestOBJ = do
   return $ E.fromRight emptyOBJ x
 
 -- |Build the vertex and index lists, used for testing
+loadVals :: IO (WavefrontOBJ, S.Set OBJVertex, OBJFaceIndexLookup, Element Face)
 loadVals = do
   a <- loadTestOBJ
   let uniqueVerts = buildOBJVertexSet a

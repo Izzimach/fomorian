@@ -13,7 +13,7 @@ RankNTypes
 
 #-}
 
--- | Commonly used nodes you might use to quickly rendering some
+-- | Commonly used nodes you might use to quickly render some
 -- | 2d or 3d objects.  This covers the typical cases of rendering
 -- | 2d 'sprites' or unlit 3d meshes, along with common spatial
 -- | transforms like translation or rotation.

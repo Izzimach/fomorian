@@ -112,7 +112,7 @@ main :: IO ()
 main = do
   let scene = test3DScene
   let windowConfig = (600,400,"Demo")
-  let initfunc = W.initWindow windowConfig >>= return
+  let initfunc = W.initWindow windowConfig
   let endfunc  = \win -> W.terminateWindow win
   let loopfunc = \win -> do
                            appdata <- W.initAppState windowConfig win

@@ -67,7 +67,6 @@ initAppState :: (Int,Int,String) -> GLFW.Window -> IO (IORef AppInfo)
 initAppState (w,h,title) win = do
   defaultVAO <- fmap head (genObjectNames 1)
   bindVertexArrayObject $= Just defaultVAO
-  GLU.printErrorMsg "bindVAO"
   appIORef <- newIORef $ (#window =: win)
                       :& (#windowSize =: (w,h))
                       :& (#resources =: emptyResourceMap)
@@ -115,20 +114,20 @@ renderLoop ::
 renderLoop appref buildScene genRP = loop
   where
     loop = do
-        appstate <- readIORef appref
-        let win = rvalf #window appstate
-        let resources = rvalf #resources appstate
-        let needresources = oglResourcesScene $ buildScene appstate
-        new_resources <- loadResources needresources resources
-        let bumpTime = (rlensf #curTime) %~ (+0.016)
-        let new_appstate = bumpTime . (rputf #resources new_resources) $ appstate
+      appstate <- readIORef appref
+      let win = rvalf #window appstate
+      let resources = rvalf #resources appstate
+      let needresources = oglResourcesScene $ buildScene appstate
+      new_resources <- loadResources needresources resources
+      let bumpTime = (rlensf #curTime) %~ (+0.016)
+      let new_appstate = bumpTime . (rputf #resources new_resources) $ appstate
 
-        let frame_data = genRP new_appstate
-        let scene = buildScene appstate
-        renderApp new_resources scene frame_data
-        writeIORef appref new_appstate
+      let frame_data = genRP new_appstate
+      let scene = buildScene appstate
+      renderApp new_resources scene frame_data
+      writeIORef appref new_appstate
 
-        GLFW.swapBuffers win
-        shouldClose <- shouldEndProgram win
-        unless shouldClose loop
+      GLFW.swapBuffers win
+      shouldClose <- shouldEndProgram win
+      unless shouldClose loop
 
