@@ -1,17 +1,18 @@
-{-# LANGUAGE DataKinds, PolyKinds, 
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 
-TypeOperators,
-TypeFamilies,
-FlexibleContexts, 
-FlexibleInstances, 
-NoMonomorphismRestriction,
 
-GADTs, TypeSynonymInstances, TemplateHaskell, OverloadedLabels,
-
-StandaloneDeriving,
-RankNTypes
-
-#-}
 
 -- 
 module Fomorian.Windowing where
@@ -20,114 +21,66 @@ import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.GLUtil as GLU
 import qualified Graphics.UI.GLFW as GLFW
 
-import Fomorian.SceneResources
-import Fomorian.SceneNode
-import Fomorian.Common
-
 import Linear
-import Data.Vinyl
+import Data.Row
 import Data.Word (Word32)
 import qualified Data.Constraint as DC
-import Graphics.VinylGL
 
 import Data.IORef
-import Data.Maybe (mapMaybe)
+import Data.Maybe
 import Control.Monad
 import Control.Monad.State
-import Control.Lens ( (^.), (.~), (%~) )
 import Control.Exception
 
-type AppInfo = FieldRec '[ '("window", GLFW.Window),
-                           '("windowSize", (Int,Int)),
-                           '("resources", ResourceMap),
-                           '("curTime", Float) ]
 
 
-resizeWindow :: IORef AppInfo -> GLFW.WindowSizeCallback
-resizeWindow s = \_ w h -> windowResizeEvent s w h
-    
-windowResizeEvent :: IORef AppInfo -> Int -> Int -> IO ()
-windowResizeEvent s w h = do
-  GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
-  modifyIORef' s $ rputf #windowSize (w,h)
+data WindowInitData = WindowInitData
+  {
+    width :: Int,
+    height:: Int,
+    title :: String
+  } deriving (Eq, Show)
 
-initWindow :: (Int,Int,String) -> IO GLFW.Window
-initWindow (w,h,title) = do
+
+-- | Create a window and bind an OpenGL context to that window. Returns the window handle
+initWindowGL :: WindowInitData -> IO GLFW.Window
+initWindowGL (WindowInitData w h t) = do
   GLFW.init
   GLFW.defaultWindowHints
   GLFW.windowHint (GLFW.WindowHint'ContextVersionMajor 4)
   GLFW.windowHint (GLFW.WindowHint'Resizable True)
   GLFW.windowHint (GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core)
-  Just win <- GLFW.createWindow w h title Nothing Nothing
-  GLFW.makeContextCurrent (Just win)
-  GLFW.swapInterval 1      -- should wait for vsync, set to 0 to not wait
-  return win
+  win <- GLFW.createWindow w h t Nothing Nothing
+  case win of
+    Nothing -> fail "Error initializing window"
+    Just windowID ->
+      do GLFW.makeContextCurrent win
+         GLFW.swapInterval 1      -- should wait for vsync, set to 0 to not wait
+         return windowID
 
-initAppState :: (Int,Int,String) -> GLFW.Window -> IO (IORef AppInfo)
-initAppState (w,h,title) win = do
-  defaultVAO <- fmap head (genObjectNames 1)
-  bindVertexArrayObject $= Just defaultVAO
-  appIORef <- newIORef $ (#window =: win)
-                      :& (#windowSize =: (w,h))
-                      :& (#resources =: emptyResourceMap)
-                      :& (#curTime =: (0 :: Float))
-                      :& RNil
-  GLFW.setWindowSizeCallback win (Just $ resizeWindow appIORef)
-  return appIORef
-
-  
-terminateWindow :: GLFW.Window -> IO ()
-terminateWindow win = do
-  GLFW.destroyWindow win
+-- | Close a currently-active window.
+terminateWindowGL :: GLFW.Window -> IO ()
+terminateWindowGL windowID = do
+  GLFW.destroyWindow windowID
   GLFW.terminate
 
-shouldEndProgram :: GLFW.Window -> IO Bool
-shouldEndProgram win = do
-  p <- GLFW.getKey win GLFW.Key'Escape
-  GLFW.pollEvents
-  windowKill <- GLFW.windowShouldClose win
-  return (p == GLFW.KeyState'Pressed ||  windowKill)
 
-renderApp ::
-  ResourceMap ->
-  SceneGraph (FieldRec '[]) TopWindowFrameParams DrawGL ->
-  TopWindowFrameParams ->
-  IO ()
-renderApp resources scene windowparams = do
-  let framedata = FrameData RNil windowparams DC.Dict
-  GL.clearColor $= Color4 0.1 0.1 0.1 1
-  GL.clear [GL.ColorBuffer, GL.DepthBuffer]
-  depthFunc $= Just Less
-  cullFace $= Just Front
-  renderresult <- try $ openGLgo scene framedata resources
-  case renderresult of
-    Left e   -> putStrLn $ displayException (e :: SomeException)
-    Right () -> return ()
-      
-
-
-renderLoop ::
-  IORef AppInfo -> 
-  (AppInfo -> SceneGraph (FieldRec '[]) TopWindowFrameParams DrawGL) ->
-  (AppInfo -> TopWindowFrameParams) ->
-  IO ()
-renderLoop appref buildScene genRP = loop
-  where
-    loop = do
-      appstate <- readIORef appref
-      let win = rvalf #window appstate
-      let resources = rvalf #resources appstate
-      let needresources = oglResourcesScene $ buildScene appstate
-      new_resources <- loadResources needresources resources
-      let bumpTime = (rlensf #curTime) %~ (+0.016)
-      let new_appstate = bumpTime . (rputf #resources new_resources) $ appstate
-
-      let frame_data = genRP new_appstate
-      let scene = buildScene appstate
-      renderApp new_resources scene frame_data
-      writeIORef appref new_appstate
-
-      GLFW.swapBuffers win
-      shouldClose <- shouldEndProgram win
-      unless shouldClose loop
+-- | A quick utility function to test code in GHCI. This wraps your code with a proper setup/teardown of a valid OpenGL context.
+--   Sometimes it is useful to test OpenGL code by running it in the GHCI REPL. However, just calling random OpenGL functions in GHCI will fail
+--   because you need an active and bound OpenGL context. This functions provides that: @runWithGL <your OpenGL code>@
+--   You pass in a monad that represents your the OpenGL code.
+--   Them 'runWithGL' opens a window, binds an OpenGL context, and runs your code. The window is then terminated and whatever your code returned is
+--   passed out of the monad.
+--
+--   example :: You want to run 'genObjectNames' to see what it returns. Wrap it in 'runWithGL':
+--              @runWithGL $ ((genObjectNames 1) :: IO [BufferObject])@. This creates a 'BufferObject' and returns the id. Note that the actual 'BufferObject' tracked
+--              by OpenGL will have
+--              been destroyed by the time you see it, since the window is killed after your code is run. What you will see is the ID that was used while the window was open.
+--
+runWithGL :: (IO a) -> IO a
+runWithGL go =
+  do w <- initWindowGL (WindowInitData 600 400 "Test")
+     ret <- go
+     terminateWindowGL w
+     return ret
 

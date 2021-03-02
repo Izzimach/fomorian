@@ -1,17 +1,16 @@
-{-# LANGUAGE DataKinds, PolyKinds, 
-
-TypeOperators,
-TypeFamilies,
-FlexibleContexts, 
-FlexibleInstances, 
-NoMonomorphismRestriction,
-
-GADTs, TypeSynonymInstances, TemplateHaskell, OverloadedLabels,
-
-StandaloneDeriving,
-RankNTypes
-
-#-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 
 -- | Commonly used nodes you might use to quickly render some
 -- | 2d or 3d objects.  This covers the typical cases of rendering
@@ -20,7 +19,7 @@ RankNTypes
 -- |
 
 
-module Fomorian.Common where
+module Fomorian.CommonSceneNodes where
 
 import Linear
 
@@ -29,11 +28,8 @@ import Graphics.Rendering.OpenGL (GLfloat, GLint)
 import Data.Kind (Constraint)
 import Data.Functor.Foldable
 
--- vinyl
-import Data.Vinyl
-import Data.Vinyl.Lens
-import Data.Vinyl.TypeLevel (Nat(Z),Nat(S), AllConstrained)
-import Data.Vinyl.Functor
+import Data.Row
+
 import qualified Data.Constraint as DC
 
 import Fomorian.SceneNode
@@ -42,8 +38,8 @@ import Fomorian.SceneNode
 -- transformers
 --
 
-type TopWindowFrameFields = '[ '("windowX", Integer), '("windowY",Integer), '("curTime",Float) ]
-type TopWindowFrameParams = FieldRec TopWindowFrameFields
+type TopWindowFrameFields = ("windowX" .== Integer) .+ ("windowY" .== Integer) .+ ("curTime" .== Float)
+type TopWindowFrameParams = Rec TopWindowFrameFields
 
 buildPixelOrthoMatrix :: (Integral a, RealFrac b) => a -> a -> M44 b
 buildPixelOrthoMatrix w h =
@@ -65,22 +61,22 @@ buildPixelOrthoMatrix w h =
 
 
 
-orthize :: (fr ~ FieldRec ff, TopWindowFrameFields <: ff) => fr -> M44 GLfloat
-orthize d = let rf = rcast d :: FieldRec TopWindowFrameFields
-                w = rvalf #windowX rf
-                h = rvalf #windowY rf
-            in
-              buildPixelOrthoMatrix w h
+orthoForWindowSize :: (HasType "windowX" Integer r, HasType "windowY" Integer r) => Rec r -> M44 GLfloat
+orthoForWindowSize rf =
+  let w = rf .! #windowX
+      h = rf .! #windowY
+  in
+      buildPixelOrthoMatrix w h
 
-type StandardShaderFrameFields = '[
-    '("cameraProjection", M44 GLfloat),
-    '("worldTransform", M44 GLfloat),
-    '("curTime", Float)
-  ]
-type StandardShaderFrameParams = FieldRec StandardShaderFrameFields
+type StandardShaderFrameFields = 
+    ("cameraProjection" .== M44 GLfloat) .+
+    ("worldTransform" .== M44 GLfloat) .+
+    ("curTime" .== Float)
   
-orthoConvert :: (ShaderReady cmd StandardShaderFrameParams) =>
-  FrameData sp TopWindowFrameParams cmd ->
+type StandardShaderFrameParams = Rec StandardShaderFrameFields
+  
+orthoConvert :: (HasType "windowX" Integer r, HasType "windowY" Integer r) =>
+  Rec r ->
   FrameData StandardShaderFrameParams (FieldRec '[]) cmd
 orthoConvert (FrameData sp np dc) = 
         let orthoM = orthize np

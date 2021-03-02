@@ -1,5 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE UnicodeSyntax #-}
 {-# LANGUAGE TypeSynonymInstances #-}
@@ -15,110 +17,100 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
---
--- Scene node description as an F-algebra, which may open up some
--- useful functionality over Initial or Final encodings.
---
-
+{-|
+Description: Scene node description as a recursive datatype.
+-}
 module Fomorian.SceneNode where
 
-import Linear
-import Control.Lens ( (%~), (.~), over, view)
-import Data.Kind (Constraint)
-import Data.Proxy
-import Data.Functor.Foldable
-import Data.Functor.Contravariant
-import Data.Semigroup
-import Data.Foldable
-import Data.Maybe
+import qualified GHC.Generics as GHC
 
-import qualified Data.Map as M
-import qualified Data.Set as S
+import Linear
+
+import Data.Kind (Constraint)
+import Data.Functor.Foldable
 
 import Control.Monad
 import Control.Monad.Reader
+import Control.Monad.State.Strict
 import Control.Applicative
 
+-- row-types
+import Data.Row
+import Data.Row.Records
 
--- qualify most of OpenGL stuff except for a few common types
-import qualified Graphics.Rendering.OpenGL as GL
-import Graphics.Rendering.OpenGL (($=), GLfloat, GLint)
-import qualified Graphics.GLUtil as GLU
 
--- vinyl
-import Data.Vinyl
-import Data.Vinyl.Lens
-import Data.Vinyl.TypeLevel (Nat(Z),Nat(S), AllConstrained)
-import Data.Vinyl.Functor
-import qualified Data.Constraint as DC
+-- | The type 'a' is a draw command type. The kind 'r' is a type-level list
+--   of the values needed to draw things in the draw command 'a'.
+--   Specifically, to create an 'Invvoke' node with the draw commmand 'cmd'
+--   you need to provide data parameters of type @InvokeReq cmd@.
 
--- vinyl-gl
-import Data.Word (Word32)
-import qualified Graphics.VinylGL as VGL
-import Graphics.VinylGL.Uniforms (UniformFields)
+--   Some examples:
+--   - 'NoDraw' has an empty list of requrements 'Empty'
+--   - 'DebugDump' just prints out the labels on invoke nodes, so it requires a string label on invoke nodes.
+type family InvokeReq a (sreq :: Row r) :: Constraint
 
-import Fomorian.SceneResources
+type family FrameReq a (dreq :: Row r) :: Constraint
 
-type Invocation tp sp =
-  FieldRec '[
-  '("shader", String),
-  '("staticParameters", tp),
-  '("frameParameters", sp),
-  '("vertexBuffers", [VertexSourceData]),
-  '("textures", [String])
-  ]
 
+-- | NoDraw is a draw command that does nothing, used for testing/empty folds
+data NoDraw
+type instance (InvokeReq NoDraw sreq) = ()
+type instance (FrameReq NoDraw dreq) = ()
+
+-- | DebugDumpDraw is a draw command for dumping out text to view the tree structure. See 'dumpScene'. Each node has a label.
+data DebugDump
+type instance (InvokeReq DebugDump sreq) = (HasType "label" String sreq)
+type instance (FrameReq DebugDump dreq) = ()
+
+
+
+
+-- | A node of a scene graph. Parameters are sadly not intuitive:
+--   - 'dreq' is basically a type signature of the inputs needed by this node/graph. 'dreq' is a 'Row' that
+--     lists the parameters needed by this node. So when you "call" this graph using
+--     some sort of draw command you will need to provide a record holding all the parameters listed in 'dreq'
+--   - 'cmd' is the draw command which indirectly represents the thing you are rendering to. Different render
+--     backends would use different 'cmd' types. There are also commands like 'NoDraw' or 'DebugDump' that "render"
+--     nothing or produce a string as output.
+--   - The final parameter 'x' holds node children. You make this a recursive type using 'Fix'
 --
--- @FrameData@ has two row types of parameters:
--- @sp@ is a set of "shader-ready" parameters. The types of these
--- values are those that can be passed into the shader for the given
--- renderer. Typically these are floats, ints, or vectors/matrices.
--- @np@ are not shader-ready, so they can be anything such as strings
--- or GADTs or f-algebras or whatever
---
-data FrameData sp np cmd = FrameData sp np (DC.Dict (ShaderReady cmd sp))
+data SceneNode dreq cmd x where
+  -- | Here is where the actual drawing happens. Static parameters in the scene graph are combined with
+  --   dynamic parameters provided by the caller to produce output. Typically this is a monad that runs draw commands.
+  Invoke :: (InvokeReq cmd sreq, FrameReq cmd dreq) => Rec sreq -> SceneNode dreq cmd x
+  -- | Translates the dynamic data, adding or removing elements from the dynamic record that is
+  --   per-frame data. Use this to compute per-frame values or override defaults that were passed in at the top.
+  Transformer :: (Rec dreq -> Rec dreq2) -> SceneGraph dreq2 cmd -> SceneNode dreq cmd x
+  -- | Holds a bunch of children nodes. All children need to be of the same type.
+  Group :: [x] -> SceneNode dreq cmd x
 
-class DrawMethod cmd where
-  type ShaderReady cmd sp :: Constraint
+instance Functor (SceneNode dreq cmd) where
+  fmap _ (Invoke r) = Invoke r
+  fmap _ (Transformer t s) = Transformer t s
+  fmap f (Group xs) = Group (fmap f xs)
 
-data SceneNode sp np cmd x =
-    forall tp . (Show tp, ShaderReady cmd tp) => Invoke (Invocation tp sp)
-  | Group [x]
-  | forall sp2 np2 c2 sf2 nf2. (sp2 ~ FieldRec sf2, np2 ~ FieldRec nf2) => Transformer (FrameData sp np cmd -> FrameData sp2 np2 cmd) (SceneGraph sp2 np2 cmd)
+type SceneGraph r cmd = Fix (SceneNode r cmd)
 
-instance (Show x, Show sp) => Show (SceneNode sp np cmd x) where
-  show (Invoke iv) = "[Invoke:" ++ show iv ++ "]"
-  show (Group cmds) = "[Group:" ++ show cmds ++ "]"
-  show (Transformer t gr) = "[Transformer]"
+modifyFields :: (Rec rowin -> Rec rowadd) -> Rec rowin -> Rec (rowadd .// rowin)
+modifyFields f x = (f x) .// x
 
-instance Functor (SceneNode sp np cmd) where
-  fmap f (Invoke x) = Invoke x
-  fmap f (Group cmds) = Group (fmap f cmds)
-  fmap f (Transformer t gr) = Transformer t gr
-  
+setFields :: (Rec rowin -> Rec rowmodify) -> SceneGraph (rowmodify .// rowin) cmd -> SceneNode (rowin) cmd x
+setFields f m = Transformer (modifyFields f) m
 
+setViewMatrix :: (HasType "x" (V3 Float) r) => Rec r -> Rec ("viewMatrix" .== Float)
+setViewMatrix r =
+  let (V3 x _ _) = r .! #x
+  in (#viewMatrix .== x)
 
-type SceneGraph sp np cmd = Fix (SceneNode sp np cmd)
-
-
-
-foldAlgebra :: (Monoid m) => SceneNode sp np cmd m -> m
-foldAlgebra (Invoke x)         = mempty
-foldAlgebra (Group cmds)       = foldr mappend mempty cmds
-foldAlgebra (Transformer t gr) = cata foldAlgebra gr
-
-
-foldSceneGraph :: (Monoid m) => SceneGraph sp np cmd -> m
-foldSceneGraph g = cata foldAlgebra g
+viewMatrixNode :: (HasType "x" (V3 Float) r) => SceneGraph (("viewMatrix" .== Float) .// r) cmd -> SceneNode r cmd x
+viewMatrixNode p = setFields setViewMatrix p
 
 
 --
 -- DrawCmd is basically a ReaderT monad, where the input @r@
 -- is the set of render parameters for the scene graph.
 --
-
-
-newtype DrawCmd r m a = DC { runDC :: r -> m a }
+newtype DrawCmd r m a = DC { runDC :: Rec r -> m a }
 
 noopDraw :: (Monad m) => a -> DrawCmd r m a
 noopDraw x = return x
@@ -139,165 +131,88 @@ instance (MonadIO m) => MonadIO (DrawCmd r m) where
   liftIO x = DC $ \r -> liftIO x
   
 instance (Alternative m) => Alternative (DrawCmd r m) where
-  empty             = DC $ \r -> empty
+  empty             = DC $ \r -> Control.Applicative.empty
   (DC a) <|> (DC b) = DC $ \r -> (a r) <|> (b r)
 
 instance (MonadPlus m) => MonadPlus (DrawCmd r m) where
   mzero     = DC $ \r -> mzero
   mplus m n = DC $ \r -> mplus (runDC m r) (runDC n r)
 
+type DrawCmdAlgebra   r cmd m = SceneNode r cmd (DrawCmd r m ()) -> DrawCmd r m ()
+type DrawCmdAlgebraIO r cmd m = (MonadIO m) => SceneNode r cmd (DrawCmd r m ()) -> DrawCmd r m ()
+
+cataDrawCmd :: Fix (SceneNode r cmd) -> DrawCmdAlgebra r cmd m -> DrawCmd r m ()
+cataDrawCmd sg alg = cata alg sg
+
+cataDrawCmdIO :: (MonadIO m) => Fix (SceneNode r cmd) -> DrawCmdAlgebraIO r cmd m -> DrawCmd r m ()
+cataDrawCmdIO sg alg = cata alg sg
 
 
-
---
--- The Transformer switches from a (SceneNode r) to a (SceneNode s) so we're
--- going to need to switch the (Invoker r) to a (Invoker s). This
--- is why 'iv' needs to a higher rank type.
---
-
-data DumpScene
-
-instance DrawMethod DumpScene where
-  type ShaderReady DumpScene sp = (Show sp)
-
-
-dumpAlgebra :: (MonadIO m) => SceneNode sp np DumpScene (DrawCmd (FrameData sp np DumpScene) m ()) -> DrawCmd (FrameData sp np DumpScene) m ()
-dumpAlgebra (Invoke x)     = liftIO $ do putStrLn $ show (rvalf #shader x)
+dumpAlgebra :: (MonadIO m) => SceneNode r DebugDump (DrawCmd r m ()) -> DrawCmd r m ()
+dumpAlgebra (Invoke x)     = liftIO $ do putStrLn $ show (x .! #label)
                                          return ()
 dumpAlgebra (Group cmds)   = foldl (>>) (DC $ \_ -> return ()) cmds
-dumpAlgebra (Transformer t gr) = DC $ \r ->
-  let s = t r
+dumpAlgebra (Transformer f gr) = DC $ \r ->
+  let s = f r
       scmd = cata dumpAlgebra gr
   in runDC scmd s
 
-dumpScene :: (MonadIO m) => SceneGraph sp np DumpScene-> DrawCmd (FrameData sp np DumpScene) m ()
+-- | Just dumps out labels of the node in order to stdout
+dumpScene :: (MonadIO m) => Fix (SceneNode r DebugDump) -> DrawCmd r m ()
 dumpScene sg = cata dumpAlgebra sg
 
---
--- Find resources for a scene
---
+sceneLabels :: (MonadIO m) => Fix (SceneNode Empty DebugDump) -> m ()
+sceneLabels sg = let cmd = dumpScene sg
+                 in (runDC cmd) Data.Row.Records.empty
+                 
 
 
-newtype OGLResources a = OGLResources { needsGLResources :: ResourceList }
+-- | Dot/graphviz data for a particular node. The first field is the lable for that node as a string.
+--   The second field is a list of edgestrings, or strings where each element is an edge (in dot format) of the subtree.
+data NodeVizData = NodeVizData { vizLabel ::String, edgeStrings :: [String] }
+  deriving (Eq, Show, GHC.Generic)
 
-oglResourcesAlgebra :: SceneNode sp np cmd ResourceList -> ResourceList
-oglResourcesAlgebra (Invoke x) = ResourceList {
-        shaderfiles =  S.singleton (rvalf #shader x), 
-        vertexfiles =  S.fromList (rvalf #vertexBuffers x),
-        texturefiles = S.fromList (rvalf #textures x)
-      }
-oglResourcesAlgebra (Group cmds) = foldl mergeResourceLists emptyResourceList cmds
-oglResourcesAlgebra (Transformer t gr) = oglResourcesScene gr
+-- | Given a label for the current node and 'NodeVizData' of all children, combine together to
+--   form a 'NodeVizData' for this node
+combineNodeViz :: String -> [NodeVizData] -> NodeVizData
+combineNodeViz nodelabel childrenvizdata =
+  let child_labels = fmap vizLabel childrenvizdata
+      my_edgestrings = fmap (\x -> nodelabel ++ " -> " ++ x ++ "\n") child_labels
+      child_edgestrings = concat (fmap edgeStrings childrenvizdata)
+  in NodeVizData nodelabel ([nodelabel ++ "\n"] ++ my_edgestrings ++ child_edgestrings)
 
-oglResourcesScene :: SceneGraph sp np cmd -> ResourceList
-oglResourcesScene sg = cata oglResourcesAlgebra sg
+dumpDotAlgebra :: SceneNode r DebugDump (State Integer NodeVizData) -> State Integer NodeVizData
+dumpDotAlgebra (Invoke x) = let label = x .! #label
+                             in return $ NodeVizData label [label ++ "\n"]
+dumpDotAlgebra (Group cmds) = do i <- get
+                                 let foldedcmds = sequenceA cmds
+                                 let (x,i') = runState foldedcmds (i+1) 
+                                 put i'
+                                 let my_label = "node" ++ show i
+                                 let my_vizdata = combineNodeViz my_label x
+                                 return my_vizdata
+dumpDotAlgebra (Transformer f gr) = do i <- get
+                                       let (d, i') = runState (dumpDotScene (gr)) i
+                                       put i'
+                                       return d
 
-
---
--- Drawing with OpenGL - shader parameters must be Uniform-valid, which
--- means they are GLfloat, GLint, or vectors (V2,V3,V4) or matrices
---
-
-data DrawGL
-
-instance DrawMethod DrawGL where
-  type ShaderReady DrawGL sp = (VGL.UniformFields sp)
-
-
-invokeGL :: (sp ~ FieldRec sf) =>
-  Invocation tp sp ->
-  ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ()
-invokeGL ir = ReaderT $ \rm -> DC $ \fd -> goInvoke ir rm fd
-  where
-    goInvoke :: (sp ~ FieldRec sf) =>
-      Invocation tp sp ->
-      ResourceMap -> FrameData sp np DrawGL -> IO ()
-    goInvoke ir rm (FrameData sp np dc) = liftIO $ do
-     let vBufferValues = rvalf #vertexBuffers ir
-     let v2Vertices = mapMaybe (\x -> M.lookup x (v2Buffers rm)) vBufferValues
-     let texCoords = mapMaybe (\x -> M.lookup x (texCoordBuffers rm))  vBufferValues
-     let v3Vertices = mapMaybe (\x -> M.lookup x (v3Buffers rm)) vBufferValues
-     let textureObjects = mapMaybe (\x -> M.lookup x (textures rm)) (rvalf #textures ir)
-     let indexVertices = mapMaybe (\x -> M.lookup x (indexBuffers rm)) vBufferValues
-     let objVertices = mapMaybe (\x -> M.lookup x (objFileBuffers rm)) vBufferValues
-     let (Just shaderdata) = M.lookup (rvalf #shader ir) (shaders rm)
-     GL.currentProgram $= Just (GLU.program shaderdata)
-     GLU.printErrorMsg "currentProgram"
-     --VGL.setUniforms shaderdata (rvalf #staticParameters ir)
-     DC.withDict dc (VGL.setSomeUniforms shaderdata sp) :: IO ()
-     mapM_ (vmap shaderdata) v2Vertices
-     GLU.printErrorMsg "v2Vertices"
-     mapM_ (vmap shaderdata) texCoords
-     GLU.printErrorMsg "texCoords"
-     mapM_ (vmap shaderdata) v3Vertices
-     GLU.printErrorMsg "v3Vertices"
-     -- objVertices are tuples, the first element is the
-     -- vertex buffer we want to vmap
-     mapM_ ((vmap shaderdata) . fst) objVertices
-     let allIndexBuffers =  mappend indexVertices (map snd objVertices)
-     mapM_ (\x -> GL.bindBuffer GL.ElementArrayBuffer $= Just (fst x)) allIndexBuffers
-     GLU.printErrorMsg "indexVertices"
-     --putStrLn $ show textureObjects
-     GLU.withTextures2D textureObjects $ do
-       --
-       -- if an index array exists, use it via drawElements,
-       -- otherwise just draw without an index array using drawArrays
-       --
-       if not (null allIndexBuffers) then do
-         -- draw with drawElements
-         --
-         -- index arrays are Word32 which maps to GL type UnsignedInt
-         -- need 'fromIntegral' to convert the count to GL.NumArrayIndices type
-         let drawCount = (fromIntegral . snd . head $ allIndexBuffers)
-         GL.drawElements GL.Triangles drawCount GL.UnsignedInt GLU.offset0
-       else do
-         -- draw with drawArrays
-         --
-         -- we assume 2D drawing if 2d vertices are specified for this node,
-         -- otherwise use 3D drawing
-         if not (null v2Vertices) then
-           GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v2Vertices)
-         else
-           GL.drawArrays GL.Triangles 0 (fromIntegral . snd . head $ v3Vertices)
-       GLU.printErrorMsg "drawArrays"
-       return ()
-    
-     --putStrLn $ "argh " ++ (rvalf #shader ir)
-     --let labels = recordToList (getLabels ir)
-     --mapM_ putStrLn labels
-    getLabels :: (AllFields ff) =>  FieldRec ff -> Rec (Data.Vinyl.Functor.Const String) ff
-    getLabels _ = rlabels
-    vmap shaderdata v = do
-           VGL.bindVertices $ fst v
-           VGL.enableVertices shaderdata $ fst v
+dumpDotScene :: Fix (SceneNode r DebugDump) -> State Integer NodeVizData
+dumpDotScene sg = cata dumpDotAlgebra sg
+                      
+dotStringScene :: Fix (SceneNode r DebugDump) -> String
+dotStringScene sg =
+  let ((NodeVizData _ edges),_) = runState (dumpDotScene sg) 0
+  in "digraph {\n" ++ (concat edges) ++ "}"
 
 
-openGLAlgebra :: (sp ~ FieldRec sf) =>
-  SceneNode sp np DrawGL (ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ()) ->
-  (ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ())
-openGLAlgebra (Invoke x)     = invokeGL x
-openGLAlgebra (Group cmds)   = foldl (>>) (ReaderT $ \rm -> DC $ \fd -> return ()) cmds
-openGLAlgebra (Transformer t gr) = ReaderT $ \rm ->
-  DC $ \fd ->
-         let fd2  = t fd
-             (FrameData sp2 c2 dc2) = fd2
-             scmd = DC.withDict dc2 (cata openGLAlgebra gr)
-             in runDC (runReaderT scmd rm) fd2
-  
-openGLgo :: SceneGraph (FieldRec sf) np DrawGL ->
-  FrameData (FieldRec sf) np DrawGL ->
-  ResourceMap ->
-  IO ()
-openGLgo sg sp rm = let sm = runReaderT (cata openGLAlgebra sg) rm
-                    in runDC sm sp
-                  
 
-transformer :: forall sp np sf nf sp2 np2 sf2 nf2 cmd. (sp ~ FieldRec sf, np ~ FieldRec nf, sp2 ~ FieldRec sf2, np2 ~ FieldRec nf2) =>
-  (FrameData sp np cmd -> FrameData sp2 np2 cmd) ->
-  (SceneGraph sp2 np2 cmd) ->
-  Fix (SceneNode sp np cmd)
+-- | Shortcut you can use instead of calling constructors and 'Fix' directly
+transformer :: (Rec r1 -> Rec r2) -> (SceneGraph r2 cmd) -> Fix (SceneNode r1 cmd)
 transformer t sg = Fix $ Transformer t sg
 
-group :: [Fix (SceneNode sp np cmd)] -> Fix (SceneNode sp np cmd)
+group :: [Fix (SceneNode r cmd)] -> SceneGraph r cmd
 group xs = Fix $ Group xs
+
+invoke :: (InvokeReq cmd r, FrameReq cmd r) => Rec r -> SceneGraph r cmd
+invoke r = Fix $ Invoke r
 

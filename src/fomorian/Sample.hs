@@ -12,7 +12,7 @@ module Fomorian.Sample where
 
 
 import Linear
-import Data.Vinyl
+import Data.Row
 import Data.Word (Word32)
 import qualified Data.Constraint as DC
 
@@ -32,19 +32,19 @@ import System.FilePath ((</>))
 import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.GLUtil as GLU
 import qualified Graphics.UI.GLFW as GLFW
-import Graphics.VinylGL
 
 
-import qualified Fomorian.Windowing as W
+--import qualified Fomorian.Windowing as W
 
 import Fomorian.SceneNode
-import Fomorian.SceneResources
-import Fomorian.Common
+import Fomorian.Windowing
+--import Fomorian.SceneResources
+--import Fomorian.CommonSceneNodes
 
 --
 -- 2d draw test
 --
-
+{-
 simpleSquare file = Fix $ Invoke $ 
           (#shader =: "linez")
       :&  (#staticParameters =: ((#tex =: (0 :: GLint)) :& RNil) )
@@ -119,3 +119,9 @@ main = do
                            W.renderLoop appdata (const scene) genRenderParams
   bracket initfunc endfunc loopfunc
 
+-}
+
+y :: IO BufferObject
+y = GLU.makeBuffer ArrayBuffer ([1,2,3] :: [Int])
+
+       

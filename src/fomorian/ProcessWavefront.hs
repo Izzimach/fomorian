@@ -1,5 +1,7 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE OverloadedLabels #-}
 
 module Fomorian.ProcessWavefront 
@@ -9,15 +11,20 @@ module Fomorian.ProcessWavefront
     where
 
 
-import Codec.Wavefront
-import Data.Vinyl
-import Linear
+import qualified Data.Either as E
+import Data.Maybe (fromMaybe)
+
 import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
 import Data.Vector ((!?))
-import qualified Data.Either as E
-import Data.Maybe (fromMaybe)
+import Data.Row
+import qualified Data.Row.Records as Rec
+
+import Linear
+
+import Codec.Wavefront
+
 
 --
 -- empty wavefront object
@@ -77,8 +84,8 @@ newtype OBJFaceIndexLookup = VI (M.Map OBJVertex Int) deriving (Eq, Show)
 buildFaceIndexLookup :: S.Set OBJVertex -> OBJFaceIndexLookup
 buildFaceIndexLookup faceverts = VI $ M.fromList $ zip (S.toList faceverts) [0..]
 
-type OBJBufferFormat = ['("pos3", V3 Float), '("texCoord", V2 Float), '("normal", V3 Float)]
-type OBJBufferRecord = FieldRec OBJBufferFormat
+type OBJBufferFormat = ("pos3" .== (V3 Float) .+ "texCoord" .== (V2 Float) .+ "normal" .== (V3 Float))
+type OBJBufferRecord = Rec OBJBufferFormat
 
 {-| 
    Generate actual vinyl record for a given OBJVertex
@@ -98,7 +105,7 @@ genOBJVertexRecord obj (VD v) =
       tex = maybe  (V2 0 0)   (V2 <$> texcoordR <*> texcoordS) texLookup
       norm = maybe (V3 0 0 1) (V3 <$> norX <*> norY <*> norZ) normLookup
   in
-      (#pos3 =: loc) :& (#texCoord =: tex) :& (#normal =: norm) :& RNil
+      (#pos3 .== loc) .+ (#texCoord .== tex) .+ (#normal .== norm)
 
 -- |Generate a full list of vertex buffer data
 genOBJVertexData :: WavefrontOBJ -> S.Set OBJVertex -> [OBJBufferRecord]
@@ -147,10 +154,3 @@ loadTestOBJ = do
   x <- fromFile "resources/geometry/testcube.obj"
   return $ E.fromRight emptyOBJ x
 
--- |Build the vertex and index lists, used for testing
-loadVals :: IO (WavefrontOBJ, S.Set OBJVertex, OBJFaceIndexLookup, Element Face)
-loadVals = do
-  a <- loadTestOBJ
-  let uniqueVerts = buildOBJVertexSet a
-  let faceIndexLookup = buildFaceIndexLookup uniqueVerts
-  return (a, uniqueVerts, faceIndexLookup, head $ V.toList $ objFaces a)

@@ -1,5 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE UnicodeSyntax #-}
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
@@ -7,31 +8,114 @@
 
 module Fomorian.SceneResources 
   (VertexSourceData(..),
-   ResourceMap,
+   --ResourceMap,
    -- get various resources from the resource map, used by a renderer invoke node
-   shaders, v2Buffers, v3Buffers, indexBuffers, textures, texCoordBuffers, objFileBuffers,
-   emptyResourceMap,
-   loadResources,
-   mergeResourceLists,
-   ResourceList(..),
-   emptyResourceList
+   --shaders, v2Buffers, v3Buffers, indexBuffers, textures, texCoordBuffers, objFileBuffers,
+   --emptyResourceMap,
+   --loadResources,
+   GLDataSource(..),
+   
   )
   where
 
+import Data.Row
+import Data.Row.Records
+
+import Data.Word (Word32)
+import Data.Hashable
+
+import qualified Data.Set as S
+import qualified Data.HashMap.Strict as H
+
+import GHC.Generics
+import System.FilePath ((</>))
+
+import Control.Monad (foldM, (>=>))
+
 import Linear
+
 import qualified Graphics.Rendering.OpenGL as GL
 import Graphics.Rendering.OpenGL (GLfloat, ($=))
 import qualified Graphics.GLUtil as GLU
+import qualified Graphics.GLUtil.Shaders (loadShader)
 
-import Data.Vinyl
-import qualified Graphics.VinylGL as VGL
-import Data.Word (Word32)
-import System.FilePath ((</>))
-import Control.Monad (foldM, (>=>))
-
-import qualified Data.Set as S
-import qualified Data.Map as M
 import Fomorian.ProcessWavefront (OBJBufferFormat, loadWavefrontOBJFile)
+import Foreign.Storable (Storable)
+
+data GLDataSource =
+    RawV2 [V2 Float]
+  | RawV3 [V3 Float]
+  | RawIndex [Int]
+  | ShaderFiles String String
+  | TextureFile String
+  deriving (Eq, Show, Generic)
+
+instance Hashable GLDataSource
+
+
+data GLResourceType =
+    GLBufferV2
+  | GLBufferV3
+  | GLBufferIndex
+  | GLShader
+  | GLTexture
+  deriving (Eq, Show, Generic)
+
+data GLResourceRecord =
+    GLResourceBO GL.BufferObject
+  | GLShaderProgram GLU.ShaderProgram
+  | GLTextureObject GL.TextureObject
+
+newtype Resources d r = Resources (H.HashMap d r)
+
+
+syncLoadResource :: (GLDataSource -> IO GLResourceRecord) -> GLDataSource -> Resources GLDataSource GLResourceRecord -> IO (Resources GLDataSource GLResourceRecord)
+syncLoadResource loader d rm@(Resources m) =
+  case (H.lookup d m) of
+    Just _ -> return rm    -- ^ if already loaded do nothing
+    Nothing ->             -- ^ resource not found so we must load it
+      do
+        r <- loader d
+        let m' = H.insert d r m
+        return (Resources m')
+
+syncUnloadResource :: (GLResourceRecord -> IO ()) -> GLDataSource -> Resources GLDataSource GLResourceRecord -> IO (Resources GLDataSource GLResourceRecord)
+syncUnloadResource unloader d rm@(Resources m) =
+  case (H.lookup d m) of
+    Nothing -> return rm
+    Just r ->
+      do
+        unloader r
+        let m' = H.delete d m
+        return (Resources m')
+
+syncUnloadAll :: (GLResourceRecord -> IO ()) -> Resources GLDataSource GLResourceRecord -> IO ()
+syncUnloadAll unloader (Resources m) =
+  do mapM_ unloader m
+     return ()
+
+loadBuffer :: (Storable a) => GL.BufferTarget -> [a] -> IO GLResourceRecord
+loadBuffer t d = do r <- GLU.makeBuffer t d
+                    return (GLResourceBO r)
+
+loadGLResource :: GLDataSource -> IO GLResourceRecord
+loadGLResource (RawV2 v2data) = loadBuffer GL.ArrayBuffer v2data
+loadGLResource (RawV3 v3data) = loadBuffer GL.ArrayBuffer v3data
+loadGLResource (RawIndex ixdata) = loadBuffer GL.ElementArrayBuffer ixdata
+-- for shaders we need seperate files for vertex and fragment shaders
+loadGLResource (ShaderFiles vert frag) = do s <- GLU.simpleShaderProgram vert frag
+                                            return (GLShaderProgram s)
+loadGLResource (TextureFile filePath) = do v <- GLU.readTexture filePath
+                                           case v of
+                                             Left err -> error ("Error loading texture " ++ filePath ++ ": " ++ err)
+                                             Right obj -> do GL.textureFilter GL.Texture2D $= ((GL.Nearest,Nothing), GL.Nearest)
+                                                             GLU.texture2DWrap $= (GL.Repeated, GL.ClampToEdge)
+                                                             return (GLTextureObject obj)
+
+unloadGLResource :: GLResourceRecord -> IO ()
+unloadGLResource (GLResourceBO o) = undefined
+unloadGLResource (GLShaderProgram s) = undefined
+unloadGLResource (GLTextureObject o) = undefined
 
 {- |
    Vertex buffer and index buffer resources are specified as a VertexSourceData.
@@ -47,7 +131,6 @@ data VertexSourceData =
   deriving (Ord, Eq, Show)
 
 
--- types so that vinyl-gl can check attribute data
 type Pos2 = '("pos2", V2 Float)
 type Pos3 = '("pos3", V3 Float)
 type TexCoord = '("texCoord", V2 Float)
@@ -60,6 +143,7 @@ type VertIndex = '("index", Int)
    in varying ways depending on resource: String/filepaths for shader programs, VertexSourceData
    for vertex, Strings/filepaths for textures
 -}
+{-
 data ResourceMap = Resources { 
     shaders :: (M.Map String GLU.ShaderProgram),
     v2Buffers :: (M.Map VertexSourceData (VGL.BufferedVertices '[Pos2], Word32)),
@@ -76,6 +160,7 @@ data ResourceMap = Resources {
 
 emptyResourceMap :: ResourceMap
 emptyResourceMap = Resources M.empty M.empty M.empty M.empty M.empty M.empty M.empty
+-}
 
 --
 -- |Just a list of resources that need to be loaded or created.  The resource
@@ -110,7 +195,7 @@ instance Monoid ResourceList where
 --
 -- functions to load/create graphics resources
 --
-
+{-
 initShader :: String -> IO GLU.ShaderProgram
 initShader shadername = GLU.loadShaderFamily $ "resources" </> "shaders" </> shadername
 
@@ -211,3 +296,4 @@ loadResources neededresources loadedresources = do
   let lt = loadTextures (S.toList . texturefiles $ neededresources)
   let ls = loadShaders (S.toList . shaderfiles $ neededresources)
   (lb >=> lt >=> ls) loadedresources
+-}
