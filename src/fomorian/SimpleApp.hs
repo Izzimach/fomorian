@@ -6,19 +6,27 @@
 
 module Fomorian.SimpleApp where
 
+import Linear
+
 import Graphics.Rendering.OpenGL as GL
-import qualified Graphics.GLUtil as GLU
 import qualified Graphics.UI.GLFW as GLFW
+
+import Control.Exception (try, SomeException, displayException, bracket)
 
 import Data.Row
 import Data.Row.Records
 import Data.IORef
 
+import Fomorian.SceneNode
+import Fomorian.SceneResources
 import Fomorian.Windowing
+import Fomorian.OpenGLCommand
+import Control.Monad (unless)
 
+-- | Parameters stored as App state that persists between frames.
 type OuterAppRow = ("window"     .== GLFW.Window .+
                     "windowSize" .== (Int,Int)   .+
---                    "resources" .== ResourceMap .+
+                    "resources"  .== Resources GLDataSource GLResourceRecord .+
                     "curTime"    .== Float       .+
                     "shouldTerminate" .== Bool)
 
@@ -44,10 +52,11 @@ initAppState (WindowInitData w h _) win =
 
     let initialAppState = (#window .== win)
                         .+ (#windowSize .== (w,h))
-                        -- .+ (#resources .== emptyResourceMap)
+                        .+ (#resources .== emptyResources)
                         .+ (#curTime .== (0 :: Float))
                         .+ (#shouldTerminate .== False)
     appIORef <- newIORef initialAppState
+    GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
 
     GLFW.setWindowSizeCallback win (Just $ resizeWindow appIORef)
 
@@ -55,56 +64,78 @@ initAppState (WindowInitData w h _) win =
 
 
 -- | Updates the 'shouldTerminate' field to true if the user presses escape or some other signal was sent from GLFW to close the window.
-shouldEndProgram :: (HasType "window" GLFW.Window r, HasType "shouldTerminate" Bool r) => Rec r -> IO (Rec r)
+shouldEndProgram :: (HasType "window" GLFW.Window r) => Rec r -> IO Bool
 shouldEndProgram r = do
   let win = r .! #window
   p <- GLFW.getKey win GLFW.Key'Escape
   GLFW.pollEvents
   windowKill <- GLFW.windowShouldClose win
   let shouldTerminate = (p == GLFW.KeyState'Pressed ||  windowKill)
-  return (update #shouldTerminate shouldTerminate r)
+  return shouldTerminate
 
-{-
-renderApp ::
-  ResourceMap ->
-  SceneGraph (FieldRec '[]) TopWindowFrameParams DrawGL ->
-  TopWindowFrameParams ->
-  IO ()
-renderApp resources scene windowparams = do
-  let framedata = FrameData RNil windowparams DC.Dict
-  GL.clearColor $= Color4 0.1 0.1 0.1 1
+-- | Given a scene graph, draw a single frame on an OpenGL canvas.
+renderOneFrame :: SceneGraph r OpenGLCommand -> Rec r -> IO ()
+renderOneFrame scene frameData = do
+  GL.clearColor $= Color4 0 0.5 0.5 1
   GL.clear [GL.ColorBuffer, GL.DepthBuffer]
   depthFunc $= Just Less
   cullFace $= Just Front
-  renderresult <- try $ openGLgo scene framedata resources
+  renderresult <- try $ openGLgo scene frameData
   case renderresult of
     Left e   -> putStrLn $ displayException (e :: SomeException)
     Right () -> return ()
-      
 
 
-renderLoop ::
-  IORef AppInfo -> 
-  (AppInfo -> SceneGraph (Rec Empty) TopWindowFrameParams DrawGL) ->
-  (AppInfo -> TopWindowFrameParams) ->
-  IO ()
-renderLoop appref buildScene genRP = loop
+
+-- | Runs a render loop by generating a scene graph and frame parameters from app state.
+renderLoop :: IORef AppInfo -> (AppInfo -> SceneGraph r OpenGLTarget ) -> (AppInfo -> Rec r) -> IO ()
+renderLoop appref buildScene genFD = loop
   where
     loop = do
       appstate <- readIORef appref
-      let win = rvalf #window appstate
-      let resources = rvalf #resources appstate
-      let needresources = oglResourcesScene $ buildScene appstate
-      new_resources <- loadResources needresources resources
-      let bumpTime = (rlensf #curTime) %~ (+0.016)
-      let new_appstate = bumpTime . (rputf #resources new_resources) $ appstate
+      let win = appstate .! #window
+      let sceneTarget = buildScene appstate
 
-      let frame_data = genRP new_appstate
-      let scene = buildScene appstate
-      renderApp new_resources scene frame_data
-      writeIORef appref new_appstate
+      -- generate new resources list and time and put them into the appstate
+      resources' <- loadResourcesScene sceneTarget (appstate .! #resources)
+      let curTime' = (appstate .! #curTime) + 0.016
+      let appstate' = update #curTime curTime' $ 
+                      update #resources resources' $
+                      appstate
+
+      writeIORef appref appstate'
+
+      -- generate the draw commands
+      let sceneCommand = oglToCommand resources' sceneTarget
+      let frameData = genFD appstate'
+      renderOneFrame sceneCommand frameData
 
       GLFW.swapBuffers win
-      shouldClose <- shouldEndProgram win
-      unless shouldClose loop
--}
+      shouldTerminate <- shouldEndProgram appstate'
+      unless shouldTerminate loop
+
+
+type TopLevel2DRow = ("modelViewMatrix" .== (M44 Float) .+ "projectionMatrix" .== (M44 Float) .+ "curTime" .== Float .+ "windowX" .== Integer .+ "windowY" .== Integer)
+
+-- | Given app state generates some default frame parameters
+simpleAppRenderParams :: AppInfo -> Rec TopLevel2DRow
+simpleAppRenderParams appstate =
+  let t     = appstate .! #curTime
+      (w,h) = appstate .! #windowSize
+  in   (#modelViewMatrix .== (identity :: M44 Float)) .+
+       (#projectionMatrix .== (identity :: M44 Float)) .+
+       (#curTime .== t) .+
+       (#windowX .== fromIntegral w) .+
+       (#windowY .== fromIntegral h)
+
+
+-- | A basic app that just runs a render function over and over.
+simpleApp :: (Int, Int) -> (AppInfo -> SceneGraph TopLevel2DRow OpenGLTarget) -> IO ()
+simpleApp (w,h) renderFunc = do
+  let initData = WindowInitData w h "Haskell App"
+  let initfunc = initWindowGL initData
+  let endfunc  = \win -> terminateWindowGL win
+  let loopfunc = \win -> do
+                           appdata <- initAppState initData win
+                           renderLoop appdata renderFunc simpleAppRenderParams
+  bracket initfunc endfunc loopfunc

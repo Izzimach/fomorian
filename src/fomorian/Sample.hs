@@ -38,8 +38,10 @@ import qualified Graphics.UI.GLFW as GLFW
 
 import Fomorian.SceneNode
 import Fomorian.Windowing
---import Fomorian.SceneResources
---import Fomorian.CommonSceneNodes
+import Fomorian.SimpleApp
+import Fomorian.SceneResources
+import Fomorian.OpenGLCommand
+import Fomorian.CommonSceneNodes
 
 --
 -- 2d draw test
@@ -96,32 +98,34 @@ test3DScene = perspective3DView (1,20) $
                     translate3d (V3 (-0.5) (-0.5) (-0.5)) $
                       simpleOBJFile "testcube.obj" "salamander.png"
 
-
-genRenderParams :: W.AppInfo -> TopWindowFrameParams
-genRenderParams appstate =
-  let (w,h) = rvalf #windowSize appstate
-      t     = rvalf #curTime appstate
-  in   (#windowX =: fromIntegral w)
-    :& (#windowY =: fromIntegral h)
-    :& (#curTime =: t)
-    :& RNil
-
-
-
-main :: IO ()
-main = do
-  let scene = test3DScene
-  let windowConfig = (600,400,"Demo")
-  let initfunc = W.initWindow windowConfig
-  let endfunc  = \win -> W.terminateWindow win
-  let loopfunc = \win -> do
-                           appdata <- W.initAppState windowConfig win
-                           W.renderLoop appdata (const scene) genRenderParams
-  bracket initfunc endfunc loopfunc
-
 -}
 
-y :: IO BufferObject
-y = GLU.makeBuffer ArrayBuffer ([1,2,3] :: [Int])
+genRenderParams :: AppInfo -> Rec TopLevel2DRow
+genRenderParams appstate =
+  let t     = appstate .! #curTime
+      (w,h) = appstate .! #windowSize
+  in   (#modelViewMatrix .== (identity :: M44 Float)) .+
+       (#projectionMatrix .== (identity :: M44 Float)) .+
+       (#curTime .== t) .+
+       (#windowX .== fromIntegral w) .+
+       (#windowY .== fromIntegral h)
 
-       
+--testScene :: SceneGraph TopLevel2DRow OpenGLTarget
+testScene :: SceneGraph TopLevel2DRow OpenGLTarget
+testScene = pixelOrtho2DView $
+              translate2d (V2 20 20) $
+                group [
+                  invoke (#shader .== (ShaderFiles "linez.vert" "linez.frag") .+
+                          #vertices .== (RawV2 [V2 0 0, V2 10 0, V2 10 10, V2 0 0, V2 0 10, V2 10 10]))
+                  ]
+
+{- pixelOrtho2DView $
+              group
+              [
+                translate2d (V2 0 0)    $ simpleSquare "sad-crab.png",
+                translate2d (V2 150 50) $ simpleSquare "owl.png"
+              ]
+-}
+
+main :: IO ()
+main = simpleApp (600,400) (const testScene)

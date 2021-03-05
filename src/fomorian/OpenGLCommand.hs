@@ -27,17 +27,26 @@ import Data.Row
 import Data.Row.Records
 
 import qualified Data.Set as S
+import qualified Data.Map as M
+
+import Foreign.Ptr (nullPtr)
+
+import qualified Graphics.Rendering.OpenGL as GL
+import Graphics.Rendering.OpenGL (GLfloat, ($=))
+import qualified Graphics.GLUtil as GLU
+import qualified Graphics.GLUtil.Shaders (loadShader)
+import Graphics.GLUtil.ShaderProgram (setUniform)
 
 import Fomorian.SceneNode
 import Fomorian.SceneResources
 
-data OpenGLCommand
-type instance (InvokeReq OpenGLCommand sreq) = (HasType "shader" GLDataSource sreq,
+data OpenGLTarget
+type instance (InvokeReq OpenGLTarget sreq) = (HasType "shader" GLDataSource sreq,
                                                 HasType "vertices" GLDataSource sreq)
-type instance (FrameReq OpenGLCommand dreq) = (HasType "modelViewMatrix" (M44 Float) dreq,
+type instance (FrameReq OpenGLTarget dreq) = (HasType "modelViewMatrix" (M44 Float) dreq,
                                                HasType "projectionMatrix" (M44 Float) dreq)
 
-drawGLAlgebra :: (MonadIO m) => SceneNode r OpenGLCommand (DrawCmd r m ()) -> DrawCmd r m ()
+drawGLAlgebra :: (MonadIO m) => SceneNode r OpenGLTarget (DrawCmd r m ()) -> DrawCmd r m ()
 drawGLAlgebra (Invoke x) = liftIO $ putStrLn $ show (x .! #shader)
 drawGLAlgebra (Group children) = foldl (>>) (DC $ \_ -> return ()) children
 drawGLAlgebra (Transformer f gr) = DC $ \r ->
@@ -45,48 +54,94 @@ drawGLAlgebra (Transformer f gr) = DC $ \r ->
         scmd = cata drawGLAlgebra gr
     in runDC scmd s
 
-drawGL :: SceneGraph r OpenGLCommand -> DrawCmd r IO ()
+drawGL :: SceneGraph r OpenGLTarget -> DrawCmd r IO ()
 drawGL = cata drawGLAlgebra
 
-testScene :: (HasType "time" (Double) r) => SceneGraph r OpenGLCommand
-testScene = group [invoke (#shader .== "ack"), invoke (#shader .== "argh")]
-
+{-
+testScene :: (FrameReq OpenGLTarget r) => SceneGraph r OpenGLTarget
+testScene = group [invoke (#shader .== (ShaderFiles "ack" "argh") .+
+                           #vertices .== (RawV3 [V3 0 0 1])), 
+                   invoke (#shader .== (ShaderFiles "ack" "argh") .+
+                           #vertices .== (RawV3 [V3 0 0 1]))]
+-}
 
 
 type GLResourceList = S.Set GLDataSource
 
-oglResourcesAlgebra :: SceneNode dreq OpenGLCommand GLResourceList -> GLResourceList
+oglResourcesAlgebra :: SceneNode dreq OpenGLTarget GLResourceList -> GLResourceList
 oglResourcesAlgebra (Invoke x) = let sh = x .! #shader
                                      v  = x .! #vertices
                                  in S.fromList [sh, v]
 oglResourcesAlgebra (Group cmds) = foldl S.union S.empty cmds
 oglResourcesAlgebra (Transformer t gr) = oglResourcesScene gr
 
-oglResourcesScene :: SceneGraph dreq OpenGLCommand -> GLResourceList
+oglResourcesScene :: SceneGraph dreq OpenGLTarget -> GLResourceList
 oglResourcesScene sg = cata oglResourcesAlgebra sg
 
-{-
+-- | Given a scene and a set of already-loaded resources, makes sure all the resources are loaded for this scene. Synchronously loads
+--   any resources needed for the scene.
+loadResourcesScene :: SceneGraph dreq OpenGLTarget -> Resources GLDataSource GLResourceRecord -> IO (Resources GLDataSource GLResourceRecord)
+loadResourcesScene sg oldres =
+  let needsResources = oglResourcesScene sg
+      loadX = flip (syncLoadResource loadGLResource)
+  in foldM loadX oldres needsResources
+
+
+data OpenGLCommand
+type instance (InvokeReq OpenGLCommand sreq) = (HasType "shader" GLU.ShaderProgram sreq,
+                                                HasType "vertices" GL.BufferObject sreq,
+                                                HasType "vertexCount" GL.GLint sreq,
+                                                HasType "indices" (Maybe GL.BufferObject) sreq)
+type instance (FrameReq OpenGLCommand dreq) = (HasType "modelViewMatrix" (M44 Float) dreq,
+                                               HasType "projectionMatrix" (M44 Float) dreq)
+
+-- | Given an OpenGLTarget scene graph and loaded resources, builds an OpenGlCommand scene graph which can be directly
+--   converted into a monad to draw the scene
+oglCommandAlgebra :: Resources GLDataSource GLResourceRecord -> SceneNode dreq OpenGLTarget (SceneGraph dreq OpenGLCommand) -> SceneGraph dreq OpenGLCommand
+oglCommandAlgebra r (Invoke x) =
+  let shaderRecord = lookupResource r (x .! #shader)
+      vertexObject = lookupResource r (x .! #vertices)
+  in case (shaderRecord, vertexObject) of
+       (Just (GLShaderProgram s), Just (GLResourceBO v l)) -> Fix $ Invoke (#shader .== s .+ #vertices .== v .+ #vertexCount .== l .+ #indices .== Nothing)
+       (_,_)                                             -> undefined
+oglCommandAlgebra _ (Group cmds) = Fix $ Group cmds
+oglCommandAlgebra r (Transformer t gr) = Fix $ Transformer t (oglToCommand r gr)
+
+oglToCommand :: Resources GLDataSource GLResourceRecord -> SceneGraph dreq OpenGLTarget -> SceneGraph dreq OpenGLCommand
+oglToCommand r sg = cata (oglCommandAlgebra r) sg
+
 
 --
 -- Drawing with OpenGL - shader parameters must be Uniform-valid, which
 -- means they are GLfloat, GLint, or vectors (V2,V3,V4) or matrices
 --
 
-data DrawGL
-
-instance DrawMethod DrawGL where
-  type ShaderReady DrawGL sp = (VGL.UniformFields sp)
-
-
-invokeGL :: (sp ~ FieldRec sf) =>
-  Invocation tp sp ->
-  ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ()
-invokeGL ir = ReaderT $ \rm -> DC $ \fd -> goInvoke ir rm fd
+invokeGL :: (InvokeReq OpenGLCommand r, FrameReq OpenGLCommand dreq) => Rec r -> DrawCmd dreq IO ()
+invokeGL r = DC $ \dr ->
+  do
+    let s = r .! #shader
+    let vs = r .! #vertices
+    let vc = r .! #vertexCount
+    let attrib = GL.vertexAttribArray (GL.AttribLocation 0)
+    let attribptr = GL.vertexAttribPointer (GL.AttribLocation 0)
+    GL.currentProgram $= Just (GLU.program s)
+    attrib $= GL.Enabled
+    attribptr $= (GL.ToFloat, GL.VertexArrayDescriptor (2 :: GL.GLint) GL.Float (0 :: GL.GLsizei) nullPtr)
+    GL.bindBuffer GL.ArrayBuffer $= Just vs
+    setUniform s "modelViewMatrix" ((dr .! #modelViewMatrix) :: M44 GL.GLfloat)
+    setUniform s "projectionMatrix" ((dr .! #projectionMatrix) :: M44 GL.GLfloat)
+    GL.drawArrays GL.Triangles 0 vc
+    checkError
+    attrib $= GL.Disabled
+    return ()
   where
-    goInvoke :: (sp ~ FieldRec sf) =>
-      Invocation tp sp ->
-      ResourceMap -> FrameData sp np DrawGL -> IO ()
-    goInvoke ir rm (FrameData sp np dc) = liftIO $ do
+    checkError = do e <- GL.get GL.errors
+                    case e of
+                      ((GL.Error c s) : _) -> putStrLn $ "Error " ++ show c ++ " " ++ s
+                      _ -> return ()
+
+{-
+     let shaderdata = r .! #shader
      let vBufferValues = rvalf #vertexBuffers ir
      let v2Vertices = mapMaybe (\x -> M.lookup x (v2Buffers rm)) vBufferValues
      let texCoords = mapMaybe (\x -> M.lookup x (texCoordBuffers rm))  vBufferValues
@@ -94,7 +149,6 @@ invokeGL ir = ReaderT $ \rm -> DC $ \fd -> goInvoke ir rm fd
      let textureObjects = mapMaybe (\x -> M.lookup x (textures rm)) (rvalf #textures ir)
      let indexVertices = mapMaybe (\x -> M.lookup x (indexBuffers rm)) vBufferValues
      let objVertices = mapMaybe (\x -> M.lookup x (objFileBuffers rm)) vBufferValues
-     let (Just shaderdata) = M.lookup (rvalf #shader ir) (shaders rm)
      GL.currentProgram $= Just (GLU.program shaderdata)
      GLU.printErrorMsg "currentProgram"
      --VGL.setUniforms shaderdata (rvalf #staticParameters ir)
@@ -145,24 +199,16 @@ invokeGL ir = ReaderT $ \rm -> DC $ \fd -> goInvoke ir rm fd
            VGL.bindVertices $ fst v
            VGL.enableVertices shaderdata $ fst v
 
-
-openGLAlgebra :: (sp ~ FieldRec sf) =>
-  SceneNode sp np DrawGL (ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ()) ->
-  (ReaderT ResourceMap (DrawCmd (FrameData sp np DrawGL) IO) ())
-openGLAlgebra (Invoke x)     = invokeGL x
-openGLAlgebra (Group cmds)   = foldl (>>) (ReaderT $ \rm -> DC $ \fd -> return ()) cmds
-openGLAlgebra (Transformer t gr) = ReaderT $ \rm ->
-  DC $ \fd ->
-         let fd2  = t fd
-             (FrameData sp2 c2 dc2) = fd2
-             scmd = DC.withDict dc2 (cata openGLAlgebra gr)
-             in runDC (runReaderT scmd rm) fd2
-  
-openGLgo :: SceneGraph (FieldRec sf) np DrawGL ->
-  FrameData (FieldRec sf) np DrawGL ->
-  ResourceMap ->
-  IO ()
-openGLgo sg sp rm = let sm = runReaderT (cata openGLAlgebra sg) rm
-                    in runDC sm sp
-                  
 -}
+openGLAlgebra :: SceneNode r OpenGLCommand (DrawCmd r IO ()) -> DrawCmd r IO ()
+openGLAlgebra (Invoke x)     = invokeGL x
+openGLAlgebra (Group cmds)   = foldl (>>) (DC $ \_ -> return ()) cmds
+openGLAlgebra (Transformer t gr) = DC $ \fd ->
+         let fd2  = t fd
+             scmd = cata openGLAlgebra gr
+             in runDC scmd fd2
+
+
+openGLgo :: SceneGraph r OpenGLCommand -> Rec r -> IO ()
+openGLgo sg fd = let sm = cata openGLAlgebra sg
+                 in runDC sm fd

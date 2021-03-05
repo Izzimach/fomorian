@@ -47,7 +47,7 @@ import Data.Row.Records
 --   Some examples:
 --   - 'NoDraw' has an empty list of requrements 'Empty'
 --   - 'DebugDump' just prints out the labels on invoke nodes, so it requires a string label on invoke nodes.
-type family InvokeReq a (sreq :: Row r) :: Constraint
+type family InvokeReq a (sreq :: Row s) :: Constraint
 
 type family FrameReq a (dreq :: Row r) :: Constraint
 
@@ -213,6 +213,6 @@ transformer t sg = Fix $ Transformer t sg
 group :: [Fix (SceneNode r cmd)] -> SceneGraph r cmd
 group xs = Fix $ Group xs
 
-invoke :: (InvokeReq cmd r, FrameReq cmd r) => Rec r -> SceneGraph r cmd
+invoke :: (InvokeReq cmd s, FrameReq cmd r) => Rec s -> SceneGraph r cmd
 invoke r = Fix $ Invoke r
 
