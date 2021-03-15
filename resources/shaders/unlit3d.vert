@@ -3,17 +3,18 @@
 // The vertex buffer can include position, texture coords, and normals
 // Use this for imported OBJ files.
 
-uniform mat4 worldTransform;
-uniform mat4 cameraProjection;
+uniform mat4 viewMatrix;
+uniform mat4 modelMatrix;
+uniform mat4 projectionMatrix;
 in vec3 pos3;
-in vec2 texCoord;
-in vec3 normal;
+//in vec2 texCoord;
+//in vec3 normal;
 
-out vec2 texCoordFrag;
-out vec3 normalFrag;
+//out vec2 texCoordFrag;
+//out vec3 normalFrag;
 
 void main() {
-  gl_Position = cameraProjection * worldTransform * vec4(pos3, 1);
-  texCoordFrag = texCoord;
-  normalFrag = normal;
+  gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(pos3, 1);
+  //texCoordFrag = texCoord;
+  //normalFrag = normal;
 }

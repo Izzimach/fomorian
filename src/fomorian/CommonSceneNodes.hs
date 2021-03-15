@@ -23,15 +23,12 @@ module Fomorian.CommonSceneNodes where
 
 import Linear
 
-import Graphics.Rendering.OpenGL (GLfloat, GLint)
+import Graphics.Rendering.OpenGL (GLfloat)
 
-import Data.Kind (Constraint)
 import Data.Functor.Foldable
 
 import Data.Row
 import Data.Row.Records
-
-import qualified Data.Constraint as DC
 
 import Fomorian.SceneNode
 
@@ -39,10 +36,10 @@ import Fomorian.SceneNode
 -- transformers
 --
 scaleMatrix :: (Num a) => a -> a -> a -> M44 a
-scaleMatrix x y z = V4  (V4 x 0 0 0)
+scaleMatrix x y z = scaled (V4 x y z 1) {-V4  (V4 x 0 0 0)
                         (V4 0 y 0 0)
                         (V4 0 0 z 0)
-                        (V4 0 0 0 1)
+                        (V4 0 0 0 1)-}
 
 translationMatrix :: (Num a) => a -> a -> a -> M44 a
 translationMatrix x y z = V4 (V4 1 0 0 x)
@@ -86,75 +83,85 @@ pixelOrtho2DView :: (HasType "windowX" Integer r, HasType "windowY" Integer r) =
   SceneGraph ("projectionMatrix" .== M44 Float .// r) cmd -> SceneGraph r cmd
 pixelOrtho2DView sg = Fix $ setFields orthoConvert sg
 
-{-
-perspectiveProject :: (ShaderReady cmd StandardShaderFrameParams,
-                       sp ~ FieldRec sf) =>
-  GLfloat -> GLfloat -> GLfloat -> GLfloat ->
-  FrameData sp TopWindowFrameParams cmd ->
-  FrameData StandardShaderFrameParams (FieldRec '[]) cmd
-perspectiveProject fov aspect near far (FrameData sp np dc) =
-          let t = rvalf #curTime np
-              frameData =    (#cameraProjection =: perspective fov aspect near far)
-                          :& (#worldTransform   =: (identity :: M44 GLfloat) )
-                          :& (#curTime =: t)
-                          :& RNil
-          in
-            DC.withDict dc $ FrameData frameData RNil DC.Dict
+data PerspectiveProjectConfig =
+  PerspectiveProject
+  {
+    fov :: Float,
+    aspect :: Float,
+    nearPlane :: Float,
+    farPlane :: Float
+  } deriving (Eq, Show)
 
-perspective3DView :: (ShaderReady cmd StandardShaderFrameParams,
-                      sp ~ FieldRec sf) => 
-    (Float, Float) ->
-    SceneGraph StandardShaderFrameParams (FieldRec '[]) cmd ->
-    Fix (SceneNode sp TopWindowFrameParams cmd)
-perspective3DView (near, far)= transformer (perspectiveProject 1 1 near far)
+-- | Generate a perspective projection representing the camera looking down the -z axis from the origin.
+perspectiveProject :: PerspectiveProjectConfig ->
+  SceneGraph ("projectionMatrix" .== M44 Float .// r) cmd -> SceneGraph r cmd
+perspectiveProject (PerspectiveProject v a n f) sg = Fix $ setFields setPerspective sg
+  where
+    setPerspective :: Rec r -> Rec ("projectionMatrix" .== M44 Float)
+    setPerspective _ = (#projectionMatrix .== perspective v a n f)
 
--}
---
---
---
-translateBy :: (HasType "modelViewMatrix" (M44 Float) r) => V3 GLfloat -> Rec r -> Rec r
+autoAspect :: (HasType "windowX" Integer r, HasType "windowY" Integer r, HasType "projectionMatrix" (M44 Float) r) =>
+  SceneGraph r cmd -> SceneGraph r cmd
+autoAspect sg = Fix $ Transformer correctAspect sg
+  where
+    correctAspect r =
+      let x = r .! #windowX
+          y = r .! #windowY
+          a = ((fromInteger y)/(fromInteger x)) :: Float
+          m = r .! #projectionMatrix
+          scaleAspect = scaleMatrix a 1 1
+      in update #projectionMatrix (scaleAspect !*! m) r
+
+cameraLookAt :: (HasType "viewMatrix" (M44 Float) r) => V3 Float -> V3 Float -> V3 Float -> SceneGraph r cmd -> SceneGraph r cmd
+cameraLookAt camat lookat upvector sg = Fix $ Transformer setLookAt sg
+  where
+    setLookAt r = update #viewMatrix (lookAt camat lookat upvector) r
+
+-- update 'modelMatrix' field to perform a translation
+translateBy :: (HasType "modelMatrix" (M44 Float) r) => V3 Float -> Rec r -> Rec r
 translateBy (V3 tx ty tz) r =
-  let xform = r .! #modelViewMatrix
+  let xform = r .! #modelMatrix
       xform' = xform !*! (translationMatrix tx ty tz)
   in
-    update #modelViewMatrix xform' r
+    update #modelMatrix xform' r
 
 
-translate2d :: (HasType "modelViewMatrix" (M44 Float) r) => V2 GLfloat -> SceneGraph r cmd -> SceneGraph r cmd
+-- | Applies a 2 dimensional translation to the modelMatrix frame parameter.
+translate2d :: (HasType "modelMatrix" (M44 Float) r) => V2 Float -> SceneGraph r cmd -> SceneGraph r cmd
 translate2d (V2 tx ty) sg = Fix $ Transformer (translateBy (V3 tx ty 0)) sg
 
-translate3d :: (HasType "modelViewMatrix" (M44 Float) r) => V3 GLfloat -> SceneGraph r cmd -> SceneGraph r cmd
+-- | Applies a 3 dimensional translation to the modelMatrix frame parameter
+translate3d :: (HasType "modelMatrix" (M44 Float) r) => V3 Float -> SceneGraph r cmd -> SceneGraph r cmd
 translate3d tr sg = Fix $ Transformer (translateBy tr) sg
 
-{-
+-- | Applies a time-varying translation. Uses a function that takes in the current time and returns the translation for that time.
+translateWithFunc :: (HasType "curTime" Float r, HasType "modelMatrix" (M44 Float) r) => (Float -> V3 Float) -> SceneGraph r cmd -> SceneGraph r cmd
+translateWithFunc f sg = Fix $ Transformer (translateFunc f) sg
+  where
+    translateFunc ft = \r -> let t = r .! #curTime
+                                 (V3 dx dy dz) = ft t
+                                 xform = r .! #modelMatrix
+                                 xform' = xform !*! (translationMatrix dx dy dz)
+                             in
+                               update #modelMatrix xform' r
 
 
-rotateAxisAngle :: (ShaderReady cmd StandardShaderFrameParams, np ~ FieldRec nf) =>
-  V3 GLfloat ->
-  Float ->
-  FrameData StandardShaderFrameParams np cmd ->
-  FrameData StandardShaderFrameParams np cmd
-rotateAxisAngle axis angle (FrameData sp np dc) =
-  let xform = rvalf #worldTransform sp
-      cproj = rvalf #cameraProjection sp
-      t = rvalf #curTime sp
+rotateAxisAngle :: (HasType "modelMatrix" (M44 Float) r) => V3 GLfloat -> Float ->
+  Rec r -> Rec r
+rotateAxisAngle axis ang r =
+  let xform = r .! #modelMatrix
       -- first build a quaterion, then convert to a matrix
-      quat = axisAngle axis angle
+      quat = axisAngle axis ang
       rotationMatrix = mkTransformation quat (V3 0 0 0)
       xform' = xform !*! rotationMatrix
-      frameData =    (#cameraProjection =: cproj)
-                  :& (#worldTransform =: xform')
-                  :& (#curTime =: t)
-                  :& RNil
-  in
-    FrameData frameData np DC.Dict
+  in update #modelMatrix xform' r
 
-rotate3d axis angle = transformer (rotateAxisAngle axis angle)
+rotate3d :: (HasType "modelMatrix" (M44 Float) r) => V3 GLfloat -> Float -> SceneGraph r cmd -> Fix (SceneNode r cmd)
+rotate3d axis ang = transformer (rotateAxisAngle axis ang)
 
-rotate3dDynamic axis spinspeed = transformer (spinAxis axis spinspeed)
+spin3d :: (HasType "curTime" Float r, HasType "modelMatrix" (M44 Float) r) => V3 GLfloat -> Float -> SceneGraph r cmd -> Fix (SceneNode r cmd)
+spin3d axis spinspeed = transformer (spinAxis spinspeed)
   where
-    spinAxis axis spin x@(FrameData sp np dc) =
-      let angle = spin * realToFrac (rvalf #curTime sp)
-      in rotateAxisAngle axis angle x
-
--}
+    spinAxis spin r =
+      let ang = spin * realToFrac (r .! #curTime)
+      in rotateAxisAngle axis ang r

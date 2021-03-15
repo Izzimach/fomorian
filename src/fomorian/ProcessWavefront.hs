@@ -21,6 +21,9 @@ import Data.Vector ((!?))
 import Data.Row
 import qualified Data.Row.Records as Rec
 
+import Foreign.Ptr
+import Foreign.Storable
+
 import Linear
 
 import Codec.Wavefront
@@ -85,10 +88,45 @@ buildFaceIndexLookup :: S.Set OBJVertex -> OBJFaceIndexLookup
 buildFaceIndexLookup faceverts = VI $ M.fromList $ zip (S.toList faceverts) [0..]
 
 type OBJBufferFormat = ("pos3" .== (V3 Float) .+ "texCoord" .== (V2 Float) .+ "normal" .== (V3 Float))
-type OBJBufferRecord = Rec OBJBufferFormat
+newtype OBJBufferRecord = OBJBufferRecord (Rec OBJBufferFormat)
+
+instance Storable OBJBufferRecord where
+  sizeOf _ = let x = sizeOf (undefined :: Float)
+             in 8 * x
+  alignment = sizeOf
+  peek p =
+    do
+      let b = castPtr p :: Ptr Float
+      p0 <- peekElemOff b 0 
+      p1 <- peekElemOff b 1
+      p2 <- peekElemOff b 2
+      t0 <- peekElemOff b 3
+      t1 <- peekElemOff b 4
+      n0 <- peekElemOff b 5
+      n1 <- peekElemOff b 6
+      n2 <- peekElemOff b 7
+      return $ OBJBufferRecord (#pos3 .== (V3 p0 p1 p2) .+ 
+                                #texCoord .== (V2 t0 t1) .+
+                                #normal .== (V3 n0 n1 n2))
+
+  poke p(OBJBufferRecord r) =
+    do
+      let b = castPtr p :: Ptr Float
+      let (V3 v0 v1 v2) = r .! #pos3
+      let (V2 t0 t1) = r .! #texCoord
+      let (V3 n0 n1 n2) = r .! #normal
+      pokeElemOff b 0 v0
+      pokeElemOff b 1 v1
+      pokeElemOff b 2 v2
+      pokeElemOff b 3 t0
+      pokeElemOff b 4 t1
+      pokeElemOff b 5 n0
+      pokeElemOff b 6 n1
+      pokeElemOff b 7 n2
+
 
 {-| 
-   Generate actual vinyl record for a given OBJVertex
+   Generate actual record for a given OBJVertex
  
    this is kind of a mess since the texture and normal data may be
    nonexistant ('Nothing' values) and the lookups are 1-indexed instead of 0-indexed
@@ -105,7 +143,7 @@ genOBJVertexRecord obj (VD v) =
       tex = maybe  (V2 0 0)   (V2 <$> texcoordR <*> texcoordS) texLookup
       norm = maybe (V3 0 0 1) (V3 <$> norX <*> norY <*> norZ) normLookup
   in
-      (#pos3 .== loc) .+ (#texCoord .== tex) .+ (#normal .== norm)
+      OBJBufferRecord $ (#pos3 .== loc) .+ (#texCoord .== tex) .+ (#normal .== norm)
 
 -- |Generate a full list of vertex buffer data
 genOBJVertexData :: WavefrontOBJ -> S.Set OBJVertex -> [OBJBufferRecord]

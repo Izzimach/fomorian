@@ -13,33 +13,12 @@ module Fomorian.Sample where
 
 import Linear
 import Data.Row
-import Data.Word (Word32)
-import qualified Data.Constraint as DC
 
-import Data.IORef
-import Data.Maybe (mapMaybe)
-import Data.Bifunctor (bimap)
-import Data.Functor.Foldable
-import Control.Monad
-import Control.Lens ((^.), (.~), (%~))
-import Control.Exception
-import Control.Monad.Trans
-import qualified Data.Map.Strict as M
-import qualified Data.Set as S
-
-import System.FilePath ((</>))
-
-import Graphics.Rendering.OpenGL as GL
-import qualified Graphics.GLUtil as GLU
-import qualified Graphics.UI.GLFW as GLFW
-
-
---import qualified Fomorian.Windowing as W
 
 import Fomorian.SceneNode
-import Fomorian.Windowing
 import Fomorian.SimpleApp
 import Fomorian.SceneResources
+import Fomorian.OpenGLResources
 import Fomorian.OpenGLCommand
 import Fomorian.CommonSceneNodes
 
@@ -100,32 +79,46 @@ test3DScene = perspective3DView (1,20) $
 
 -}
 
-genRenderParams :: AppInfo -> Rec TopLevel2DRow
+genRenderParams :: AppInfo -> Rec TopLevel3DRow
 genRenderParams appstate =
   let t     = appstate .! #curTime
       (w,h) = appstate .! #windowSize
-  in   (#modelViewMatrix .== (identity :: M44 Float)) .+
+  in   (#modelMatrix .== (identity :: M44 Float)) .+
+       (#viewMatrix .== (identity :: M44 Float)) .+
        (#projectionMatrix .== (identity :: M44 Float)) .+
        (#curTime .== t) .+
        (#windowX .== fromIntegral w) .+
        (#windowY .== fromIntegral h)
 
---testScene :: SceneGraph TopLevel2DRow OpenGLTarget
-testScene :: SceneGraph TopLevel2DRow OpenGLTarget
-testScene = pixelOrtho2DView $
-              translate2d (V2 20 20) $
-                group [
-                  invoke (#shader .== (ShaderFiles "linez.vert" "linez.frag") .+
-                          #vertices .== (RawV2 [V2 0 0, V2 10 0, V2 10 10, V2 0 0, V2 0 10, V2 10 10]))
-                  ]
 
-{- pixelOrtho2DView $
-              group
-              [
-                translate2d (V2 0 0)    $ simpleSquare "sad-crab.png",
-                translate2d (V2 150 50) $ simpleSquare "owl.png"
-              ]
--}
+testScene2d :: SceneGraph TopLevel3DRow OpenGLTarget
+testScene2d = pixelOrtho2DView $
+                group [
+                  someTriangle,
+                  translateWithFunc sinFunc someTriangle
+                  ]
+  where
+    sinFunc t = V3 (10 * (sin t)) (10 * (cos t)) 0
+    someTriangle :: SceneGraph TopLevel3DRow OpenGLTarget
+    someTriangle = invoke (#shader   .== MaterialData (ShaderPath "linez") .+
+                           #vertices .== GeometryData (RawV2 [V2 0 0, V2 10 0, V2 10 10, V2 0 0, V2 0 10, V2 10 10]) .+
+                           #textures .== [])
+
+testScene3d :: SceneGraph TopLevel3DRow OpenGLTarget
+testScene3d = perspectiveProject config $
+                -- We set the static aspect in 'PerspectiveProject' to 1.0 and let 'autoAspect' handle
+                -- the aspect to work with window resizing.
+                autoAspect $
+                  cameraLookAt (V3 0 5 5) (V3 0 0 0) (V3 0 0 1) $ 
+                    group [
+                      someCube,
+                      translate3d (V3 4 0 0) $ someCube
+                      ]
+  where
+    config = (PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 100 {-far plane-})
+    someCube = invoke (#shader .== MaterialData (ShaderPath "unlit3d") .+
+                       #vertices .== GeometryData (OBJFile "testcube.obj") .+
+                       #textures .== ([MaterialData (TexturePath "salamander.png")]))
 
 main :: IO ()
-main = simpleApp (600,400) (const testScene)
+main = simpleApp (600,400) (const testScene2d)
