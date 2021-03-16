@@ -1,0 +1,74 @@
+cabal-version:  2.2
+name:           fomorian
+version:        0.1.0.0
+category:       Web
+homepage:       https://github.com/Izzimach/fomorian#readme
+author:         Gary Haussmann
+maintainer:     gjhaussmann@gmail.com
+copyright:      2020 Gary Haussmann
+license:        BSD-3-Clause
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+
+
+common deps
+  ghc-options:         -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints
+  default-language:    Haskell2010
+  hs-source-dirs:      src
+  build-depends:       base >= 4.7 && < 5,
+                       constraints,
+                       containers,
+                       hashable,
+                       text,
+                       generic-deriving,
+                       generic-data,
+                       recursion-schemes,
+                       distributive,
+                       vector,
+                       groups,
+                       generics-sop,
+                       template-haskell,
+                       GLFW-b,
+                       GLUtil,
+                       OpenGL >=3.0 && <4,
+                       filepath,
+                       ghc-prim,
+                       linear,
+                       mtl,
+                       bytestring,
+                       unordered-containers,
+                       wavefront,
+                       row-types
+
+
+
+library
+  import: deps
+  other-modules:
+      Fomorian.Common
+      Fomorian.ProcessWavefront
+      Fomorian.Sample
+      Fomorian.SceneNode
+      Fomorian.OpenGLCommand
+      Fomorian.Windowing
+      Fomorian.SceneResources
+  hs-source-dirs:
+      src
+  ghc-options: -O2
+
+executable example
+  import: deps
+  main-is: fomorian/Main.hs
+  other-modules:
+      Fomorian.Common
+      Fomorian.ProcessWavefront
+      Fomorian.Sample
+      Fomorian.SceneNode
+      Fomorian.OpenGLCommand
+      Fomorian.Windowing
+      Fomorian.SceneResources
+  hs-source-dirs:
+      src
+  ghc-options: -O2
