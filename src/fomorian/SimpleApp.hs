@@ -47,12 +47,12 @@ windowResizeEvent ref w h =
 
 -- | Initializes the app state and OpenGL. Call after you open the window.
 initAppState :: WindowInitData -> GLFW.Window -> IO (IORef AppInfo)
-initAppState (WindowInitData w h _) win =
+initAppState (WindowInitData w h _ _) win =
   do
     defaultVAO <- fmap head (genObjectNames 1)
     bindVertexArrayObject $= Just defaultVAO
 
-    let initialAppState = (#window .== win)
+    let initialAppState =  (#window .== win)
                         .+ (#windowSize .== (w,h))
                         .+ (#resources .== OpenGLResources emptyResources emptyResources)
                         .+ (#curTime .== (0 :: Float))
@@ -138,9 +138,9 @@ simpleAppRenderParams appstate =
 -- | A basic app that just runs a render function over and over.
 simpleApp :: (Int, Int) -> (AppInfo -> SceneGraph TopLevel3DRow OpenGLTarget) -> IO ()
 simpleApp (w,h) renderFunc = do
-  let initData = WindowInitData w h "Haskell App"
-  let initfunc = initWindowGL initData
-  let endfunc  = \win -> terminateWindowGL win
+  let initData = WindowInitData w h "Haskell App" True
+  let initfunc = initWindow initData
+  let endfunc  = \win -> terminateWindow win
   let loopfunc = \win -> do
                            appdata <- initAppState initData win
                            renderLoop appdata renderFunc simpleAppRenderParams

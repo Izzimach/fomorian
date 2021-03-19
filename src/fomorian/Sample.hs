@@ -19,7 +19,6 @@ import Fomorian.SceneNode
 import Fomorian.SimpleApp
 import Fomorian.SceneResources
 import Fomorian.OpenGLResources
-import Fomorian.OpenGLCommand
 import Fomorian.CommonSceneNodes
 
 --
@@ -121,4 +120,4 @@ testScene3d = perspectiveProject config $
                        #textures .== ([MaterialData (TexturePath "salamander.png")]))
 
 main :: IO ()
-main = simpleApp (600,400) (const testScene2d)
+main = simpleApp (600,400) (const testScene3d)

@@ -17,36 +17,29 @@
 -- 
 module Fomorian.Windowing where
 
-import Graphics.Rendering.OpenGL as GL
-import qualified Graphics.GLUtil as GLU
 import qualified Graphics.UI.GLFW as GLFW
 
-import Linear
-import Data.Row
-import Data.Word (Word32)
-import qualified Data.Constraint as DC
-
-import Data.IORef
-import Data.Maybe
-import Control.Monad
-import Control.Monad.State
-import Control.Exception
-
-
+data OpenGLBinding = UseOpenGL | NoOpenGL deriving (Eq, Show)
 
 data WindowInitData = WindowInitData
   {
     width :: Int,
     height:: Int,
-    title :: String
+    title :: String,
+    openGLContext :: OpenGLBinding
   } deriving (Eq, Show)
 
 
--- | Create a window and bind an OpenGL context to that window. Returns the window handle
-initWindowGL :: WindowInitData -> IO GLFW.Window
-initWindowGL (WindowInitData w h t) = do
-  GLFW.init
+-- | Create a window, maybe bind an OpenGL context to that window depending on
+--   the value of 'openGLContext' in 'WindowInitData'. Returns the window handle
+initWindow :: WindowInitData -> IO GLFW.Window
+initWindow (WindowInitData w h t o) = do
+  _ <- GLFW.init
   GLFW.defaultWindowHints
+  if (o == NoOpenGL) then
+    GLFW.windowHint (GLFW.WindowHint'ClientAPI GLFW.ClientAPI'NoAPI)
+  else
+    return ()
   GLFW.windowHint (GLFW.WindowHint'ContextVersionMajor 4)
   GLFW.windowHint (GLFW.WindowHint'Resizable True)
   GLFW.windowHint (GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core)
@@ -54,13 +47,19 @@ initWindowGL (WindowInitData w h t) = do
   case win of
     Nothing -> fail "Error initializing window"
     Just windowID ->
-      do GLFW.makeContextCurrent win
-         GLFW.swapInterval 1      -- should wait for vsync, set to 0 to not wait
-         return windowID
+      if (o == UseOpenGL) then
+        do GLFW.makeContextCurrent win
+           GLFW.swapInterval 1      -- should wait for vsync, set to 0 to not wait
+           return windowID
+      else
+        do return windowID
+
+
+
 
 -- | Close a currently-active window.
-terminateWindowGL :: GLFW.Window -> IO ()
-terminateWindowGL windowID = do
+terminateWindow :: GLFW.Window -> IO ()
+terminateWindow windowID = do
   GLFW.destroyWindow windowID
   GLFW.terminate
 
@@ -79,8 +78,8 @@ terminateWindowGL windowID = do
 --
 runWithGL :: (IO a) -> IO a
 runWithGL go =
-  do w <- initWindowGL (WindowInitData 600 400 "Test")
+  do w <- initWindow (WindowInitData 600 400 "Test" UseOpenGL)
      ret <- go
-     terminateWindowGL w
+     terminateWindow w
      return ret
 

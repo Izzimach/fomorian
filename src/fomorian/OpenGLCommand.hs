@@ -14,14 +14,9 @@ module Fomorian.OpenGLCommand where
 
 import Linear
 
-import Control.Monad.IO.Class
-
 import Data.Functor.Foldable
-import qualified Data.Map as M
 
 import Data.Row
-
-import qualified Data.Set as S
 
 import Foreign.Ptr (nullPtr)
 
@@ -49,22 +44,24 @@ type instance (FrameReq OpenGLCommand dreq) = (HasType "modelMatrix" (M44 Float)
 --   converted into a monad to draw the scene
 oglCommandAlgebra :: OpenGLResources -> SceneNode dreq OpenGLTarget (SceneGraph dreq OpenGLCommand) -> SceneGraph dreq OpenGLCommand
 oglCommandAlgebra (OpenGLResources r r') (Invoke x) =
-  let shaderSource = x .! #shader
-      vertexSource = x .! #vertices
-      shaderRecord = lookupResource shaderSource r
-      vertexRecord = lookupResource vertexSource r
-      textureList = fmap (flip lookupResource r) (x .! #textures)
-  in case (shaderSource, vertexSource) of
+  -- these are pulled from the InvokeReq for OpenGLTarget
+  let shaderGLSource = x .! #shader
+      vertexGLSource = x .! #vertices
+      textureGLSource = x .! #textures
+      shaderRecord = lookupResource shaderGLSource r
+      vertexRecord = lookupResource vertexGLSource r
+      textureList = traverse (flip lookupResource r) textureGLSource
+  in case (shaderGLSource, vertexGLSource) of
     (MaterialData ss, GeometryData vs) -> 
       case (shaderRecord, vertexRecord) of
-          (Just (GLShaderProgram sR), Just (GLVertexArray va ix len)) ->
+          (Just (GLShaderProgram sR), Just (GLVertexArray _va ix len)) ->
             case (lookupResource (BoundVertices ss vs) r') of
-              (Just (GLBoundVertices vao _ _)) -> Fix $ Invoke (#shader .== sR .+
-                                                                #vao .== vao .+ 
+              (Just (GLBoundVertices vao _ _)) -> Fix $ Invoke (#shader      .== sR .+
+                                                                #vao         .== vao .+ 
                                                                 #vertexCount .== len .+ 
                                                                 #indexBuffer .== ix .+ 
-                                                                #textures .== [])
-              Nothing -> undefined
+                                                                #textures    .== [])
+              _                          -> undefined
           (_,_) -> undefined
     (_,_) -> undefined
 oglCommandAlgebra _ (Group cmds) = Fix $ Group cmds
@@ -84,16 +81,10 @@ invokeGL r = DC $ \dr ->
   do
     let s = r .! #shader
     let vao = r .! #vao
-    let vc = r .! #vertexCount
     let ib = r .! #indexBuffer
     let vc = r .! #vertexCount
-    --let attrib = GL.vertexAttribArray (GL.AttribLocation 0)
-    --let attribptr = GL.vertexAttribPointer (GL.AttribLocation 0)
     GL.currentProgram $= Just (GLUtil.program s)
     GL.bindVertexArrayObject $= Just vao
-    --attrib $= GL.Enabled
-    --attribptr $= (GL.ToFloat, GL.VertexArrayDescriptor (3 :: GL.GLint) GL.Float (0 :: GL.GLsizei) nullPtr)
-    --GL.bindBuffer GL.ArrayBuffer $= Just vs
     setUniform s "modelMatrix" ((dr .! #modelMatrix) :: M44 GL.GLfloat)
     setUniform s "viewMatrix" ((dr .! #viewMatrix) :: M44 GL.GLfloat)
     setUniform s "projectionMatrix" ((dr .! #projectionMatrix) :: M44 GL.GLfloat)
@@ -101,11 +92,7 @@ invokeGL r = DC $ \dr ->
     case ib of
       Just _ -> GL.drawElements GL.Triangles vc GL.UnsignedInt nullPtr
       Nothing -> GL.drawArrays GL.Triangles 0 vc
-    --GL.bindBuffer GL.ElementArrayBuffer $= is
-    --GL.bindBuffer GL.ElementArrayBuffer $= Nothing
-    --GL.bindBuffer GL.ElementArrayBuffer $= Nothing
     checkError
-    --attrib $= GL.Disabled
     GL.bindVertexArrayObject $= Nothing
     return ()
   where

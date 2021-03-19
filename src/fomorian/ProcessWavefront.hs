@@ -7,7 +7,8 @@
 module Fomorian.ProcessWavefront 
   (OBJBufferRecord, 
    OBJBufferFormat, 
-   loadWavefrontOBJFile)
+   loadWavefrontOBJFile,
+   emptyOBJ)
     where
 
 
@@ -19,7 +20,6 @@ import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
 import Data.Vector ((!?))
 import Data.Row
-import qualified Data.Row.Records as Rec
 
 import Foreign.Ptr
 import Foreign.Storable
@@ -137,13 +137,13 @@ genOBJVertexRecord obj (VD v) =
       locLookup = (objLocations obj) !? (l - 1)
       -- use monad Maybe to shortcut Nothing values in t or n
       texLookup = do t' <- t; objTexCoords obj !? (t' - 1)
-      normLookup = do n' <- n; objNormals obj !? (n' - 1)
+      normalLookup = do n' <- n; objNormals obj !? (n' - 1)
 
       loc = maybe  (V3 0 0 0) (V3 <$> locX <*> locY <*> locZ) locLookup
       tex = maybe  (V2 0 0)   (V2 <$> texcoordR <*> texcoordS) texLookup
-      norm = maybe (V3 0 0 1) (V3 <$> norX <*> norY <*> norZ) normLookup
+      normal = maybe (V3 0 0 1) (V3 <$> norX <*> norY <*> norZ) normalLookup
   in
-      OBJBufferRecord $ (#pos3 .== loc) .+ (#texCoord .== tex) .+ (#normal .== norm)
+      OBJBufferRecord $ (#pos3 .== loc) .+ (#texCoord .== tex) .+ (#normal .== normal)
 
 -- |Generate a full list of vertex buffer data
 genOBJVertexData :: WavefrontOBJ -> S.Set OBJVertex -> [OBJBufferRecord]

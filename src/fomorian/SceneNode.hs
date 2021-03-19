@@ -128,14 +128,14 @@ instance (Monad m) => Monad (DrawCmd r m) where
                              runDC (b a') r
 
 instance (MonadIO m) => MonadIO (DrawCmd r m) where
-  liftIO x = DC $ \r -> liftIO x
+  liftIO x = DC $ \_ -> liftIO x
   
 instance (Alternative m) => Alternative (DrawCmd r m) where
-  empty             = DC $ \r -> Control.Applicative.empty
+  empty             = DC $ \_ -> Control.Applicative.empty
   (DC a) <|> (DC b) = DC $ \r -> (a r) <|> (b r)
 
 instance (MonadPlus m) => MonadPlus (DrawCmd r m) where
-  mzero     = DC $ \r -> mzero
+  mzero     = DC $ \_ -> mzero
   mplus m n = DC $ \r -> mplus (runDC m r) (runDC n r)
 
 type DrawCmdAlgebra   r cmd m = SceneNode r cmd (DrawCmd r m ()) -> DrawCmd r m ()
@@ -191,7 +191,7 @@ dumpDotAlgebra (Group cmds) = do i <- get
                                  let my_label = "node" ++ show i
                                  let my_vizdata = combineNodeViz my_label x
                                  return my_vizdata
-dumpDotAlgebra (Transformer f gr) = do i <- get
+dumpDotAlgebra (Transformer _ gr) = do i <- get
                                        let (d, i') = runState (dumpDotScene (gr)) i
                                        put i'
                                        return d
