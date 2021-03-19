@@ -40,7 +40,8 @@ common deps
                        bytestring,
                        unordered-containers,
                        wavefront,
-                       row-types
+                       row-types,
+                       vulkan
 
 
 

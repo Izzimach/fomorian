@@ -12,26 +12,33 @@ packages:
   original:
     hackage: GLUtil-0.10.4@sha256:48f76f9c9666e45062c2fc4146162ca69dc773c742e61e06d752ca05ca1754ba,3217
 - completed:
-    hackage: vinyl-0.12.2@sha256:cefc269fd137841861c13f28a3f20f5973ef24e9f1e6245b77b688f1cbd979de,3717
-    pantry-tree:
-      size: 1857
-      sha256: 746367fcc06b7b1ffe5f55cc388df2daa3f5eb0f87b06f4e79582e3d16ef33a9
-  original:
-    hackage: vinyl-0.12.2@sha256:cefc269fd137841861c13f28a3f20f5973ef24e9f1e6245b77b688f1cbd979de,3717
-- completed:
-    hackage: vinyl-gl-0.3.4@sha256:44376b1a6b29db06bd06c96ffc9c026e432d90f0d88809c987a48cba4d36ce39,1748
-    pantry-tree:
-      size: 535
-      sha256: ad4817580424c2772b99d2aaf6b03fe5f7ec6e937e462b298131c9b98e4d6827
-  original:
-    hackage: vinyl-gl-0.3.4@sha256:44376b1a6b29db06bd06c96ffc9c026e432d90f0d88809c987a48cba4d36ce39,1748
-- completed:
     hackage: wavefront-0.7.1.4@sha256:0a1e4bc3de7a450c8da2c3b962ebc0b54acdeb9664e73cdd4649861740d96024,1999
     pantry-tree:
       size: 1026
       sha256: f76d53b34229a2b7ec084d8e0e7b86f86c2ae77a51d31954c8ffa62a055d57dc
   original:
     hackage: wavefront-0.7.1.4@sha256:0a1e4bc3de7a450c8da2c3b962ebc0b54acdeb9664e73cdd4649861740d96024,1999
+- completed:
+    hackage: constrained-categories-0.4.0.0@sha256:478e481b2ae62f3ff21c900ab9f26a5f01cc0b5b8f4a96f44c6e005970ed2639,3534
+    pantry-tree:
+      size: 1054
+      sha256: 4236e14c148a99b171e81eb21fd3cab9b999fd521280beb890dc37046408cd06
+  original:
+    hackage: constrained-categories-0.4.0.0@sha256:478e481b2ae62f3ff21c900ab9f26a5f01cc0b5b8f4a96f44c6e005970ed2639,3534
+- completed:
+    hackage: row-types-0.4.0.0@sha256:adf9dcf41e44e61c443a02cb9927740ea211e4cf60e68fb9d7b312da7bdd33be,3579
+    pantry-tree:
+      size: 777
+      sha256: 505cd5e903b359f800f7fc14776df4e1d03c18c4ebfa1dfa657754c73365f0df
+  original:
+    hackage: row-types-0.4.0.0@sha256:adf9dcf41e44e61c443a02cb9927740ea211e4cf60e68fb9d7b312da7bdd33be,3579
+- completed:
+    hackage: vulkan-3.10@sha256:176e30e9f79b76b184ea5349bf83d419a329c942bba0d720fede43f948dbd29d,24500
+    pantry-tree:
+      size: 66921
+      sha256: b7b0b2eea08d075af6739be07daadae2fe1fdbb69513a1b2dac4c284902180db
+  original:
+    hackage: vulkan-3.10
 snapshots:
 - completed:
     size: 498024

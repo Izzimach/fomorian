@@ -44,6 +44,8 @@ extra-deps:
 - wavefront-0.7.1.4@sha256:0a1e4bc3de7a450c8da2c3b962ebc0b54acdeb9664e73cdd4649861740d96024,1999
 - constrained-categories-0.4.0.0@sha256:478e481b2ae62f3ff21c900ab9f26a5f01cc0b5b8f4a96f44c6e005970ed2639,3534
 - row-types-0.4.0.0@sha256:adf9dcf41e44e61c443a02cb9927740ea211e4cf60e68fb9d7b312da7bdd33be,3579
+- vulkan-3.10
+
 #
 # OH NO
 #
@@ -70,8 +72,12 @@ allow-newer: true
 # arch: x86_64
 #
 # Extra directories used by stack for building
-# extra-include-dirs: [/path/to/dir]
-# extra-lib-dirs: [/path/to/dir]
+extra-include-dirs:
+- C:/VulkanSDK/1.2.170.0/Include
+
+extra-lib-dirs:
+- C:/VulkanSDK/1.2.170.0/lib/
+
 #
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
