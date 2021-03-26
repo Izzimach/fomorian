@@ -1,11 +1,17 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE TypeOperators, TypeFamilies #-}
-{-# LANGUAGE FlexibleContexts, FlexibleInstances, NoMonomorphismRestriction #-}
-{-# LANGUAGE GADTs, TypeSynonymInstances, TemplateHaskell, StandaloneDeriving #-}
-{-# LANGUAGE OverloadedLabels, TypeOperators #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Fomorian.Sample where
@@ -13,6 +19,8 @@ module Fomorian.Sample where
 
 import Linear
 import Data.Row
+import Data.Int
+import Foreign.Ptr
 
 
 import Fomorian.SceneNode
@@ -21,62 +29,6 @@ import Fomorian.SceneResources
 import Fomorian.OpenGLResources
 import Fomorian.CommonSceneNodes
 
---
--- 2d draw test
---
-{-
-simpleSquare file = Fix $ Invoke $ 
-          (#shader =: "linez")
-      :&  (#staticParameters =: ((#tex =: (0 :: GLint)) :& RNil) )
-      :&  (#frameParameters  =: (
-                                    (#cameraProjection =: (identity :: M44 GLfloat))
-                                 :& (#worldTransform =: (identity :: M44 GLfloat))
-                                 :& (#curTime =: (0 :: GLfloat))
-                                 :& RNil )
-          )
-      :&  (#vertexBuffers =: [
-              V2Data [V2 0 0, V2 100 0, V2 0 100, V2 100 100],
-              T2Data [V2 0 1, V2 1 1, V2 0 0, V2 1 0],
-              IndexData [0,2,1, 2,3,1]
-            ]
-          )
-      :&  (#textures =: [file])
-      :&  RNil
-
-testScene = pixelOrtho2DView $
-              group
-              [
-                translate2d (V2 0 0)    $ simpleSquare "sad-crab.png",
-                translate2d (V2 150 50) $ simpleSquare "owl.png"
-              ]
-
-
---
--- 3d draw test
---
-
-simpleOBJFile file texturefile = Fix $ Invoke $
-          (#shader =: "unlit3d")
-      :&  (#staticParameters =: ((#tex =: (0 :: GLint)) :& RNil) )
-      :&  (#frameParameters =: (
-                                    (#cameraProjection =: (identity :: M44 GLfloat))
-                                 :& (#worldTransform =: (identity :: M44 GLfloat))
-                                 :& (#curTime =: (0 :: GLfloat))
-                                 :& RNil )
-          )
-      :&  (#vertexBuffers =: [ OBJFile file ]
-          )
-      :&  (#textures =: [texturefile])
-      :&  RNil
-    
-
-test3DScene = perspective3DView (1,20) $ 
-                translate3d (V3 (0.5) (-0.5) (-4)) $
-                  rotate3dDynamic (V3 0 1 1) 0.3 $
-                    translate3d (V3 (-0.5) (-0.5) (-0.5)) $
-                      simpleOBJFile "testcube.obj" "salamander.png"
-
--}
 
 genRenderParams :: AppInfo -> Rec TopLevel3DRow
 genRenderParams appstate =
@@ -119,5 +71,22 @@ testScene3d = perspectiveProject config $
                        #vertices .== GeometryData (OBJFile "testcube.obj") .+
                        #textures .== ([MaterialData (TexturePath "salamander.png")]))
 
+myAdd :: Int32 -> Int32
+myAdd x = x + 3
+
+foreign import ccall unsafe "foo" hFoo :: Int32 -> IO Int32
+foreign import ccall safe "foo2" hFoo2 :: FunPtr (Int32 -> Int32) -> IO Int32
+foreign import ccall "wrapper" createAddPtr :: (Int32 -> Int32) -> IO (FunPtr (Int32 -> Int32))
+
+
+main2 :: IO ()
+main2 = simpleApp (600,400) (const testScene3d)
+
 main :: IO ()
-main = simpleApp (600,400) (const testScene3d)
+main = do
+  x <- hFoo 41
+  putStrLn (show x)
+  myAddPtr <- createAddPtr myAdd
+  x2 <- hFoo2 myAddPtr
+  putStrLn (show x2)
+  freeHaskellFunPtr myAddPtr

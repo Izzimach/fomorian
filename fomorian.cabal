@@ -11,6 +11,7 @@ license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
     README.md
+    src/fomorian/*.c
 
 
 common deps
@@ -20,6 +21,7 @@ common deps
   build-depends:       base >= 4.7 && < 5,
                        constraints,
                        containers,
+                       transformers,
                        hashable,
                        text,
                        generic-deriving,
@@ -44,32 +46,35 @@ common deps
                        vulkan
 
 
-
 library
   import: deps
   other-modules:
-      Fomorian.Common
+      Fomorian.CommonSceneNodes
       Fomorian.ProcessWavefront
       Fomorian.Sample
       Fomorian.SceneNode
       Fomorian.OpenGLCommand
       Fomorian.Windowing
       Fomorian.SceneResources
-  hs-source-dirs:
-      src
+      Fomorian.SimpleApp
+      Fomorian.OpenGLResources
+  hs-source-dirs: src
   ghc-options: -O2
 
 executable example
   import: deps
   main-is: fomorian/Main.hs
   other-modules:
-      Fomorian.Common
+      Fomorian.CommonSceneNodes
       Fomorian.ProcessWavefront
       Fomorian.Sample
       Fomorian.SceneNode
       Fomorian.OpenGLCommand
       Fomorian.Windowing
       Fomorian.SceneResources
-  hs-source-dirs:
-      src
+      Fomorian.SimpleApp
+      Fomorian.OpenGLResources
+  hs-source-dirs: src
+  c-sources: csrc/SomeCode.c
+  include-dirs: /c/VulkanSDK/1.2.170.0/include
   ghc-options: -O2

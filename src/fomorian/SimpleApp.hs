@@ -138,7 +138,7 @@ simpleAppRenderParams appstate =
 -- | A basic app that just runs a render function over and over.
 simpleApp :: (Int, Int) -> (AppInfo -> SceneGraph TopLevel3DRow OpenGLTarget) -> IO ()
 simpleApp (w,h) renderFunc = do
-  let initData = WindowInitData w h "Haskell App" True
+  let initData = WindowInitData w h "Haskell App" UseOpenGL
   let initfunc = initWindow initData
   let endfunc  = \win -> terminateWindow win
   let loopfunc = \win -> do
