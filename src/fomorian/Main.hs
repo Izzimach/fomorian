@@ -1,10 +1,11 @@
 module Main where
 
 import qualified Fomorian.Sample (main)
+import qualified Fomorian.Vulkan.Vulkan (main)
 
 main :: IO ()
 main = do
-  Fomorian.Sample.main
+  Fomorian.Vulkan.Vulkan.main
 
   
 

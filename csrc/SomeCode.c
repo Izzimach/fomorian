@@ -1,15 +1,26 @@
+//
+// C code to hold the vulkan debug callback.
+//
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <vulkan/vulkan.h>
 
+//
+// Callback used when vulkan debug/validation is enabled.
+//
 VKAPI_ATTR VkBool32 VKAPI_CALL
 debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
               VkDebugUtilsMessageTypeFlagsEXT messageType,
               const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
               void *pUserData) {
-  fprintf(stderr, "Validation: %s\n", pCallbackData->pMessage);
+  fprintf(stderr, "VulkenDebug: %s\n", pCallbackData->pMessage);
   return VK_FALSE;
 }
+
+//
+// test functions
+//
 
 int32_t foo(int32_t a) {
   return a+2;
