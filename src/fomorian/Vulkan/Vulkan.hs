@@ -26,8 +26,8 @@ import Foreign.Marshal
 import Foreign.Ptr
 import Foreign.Storable
 
-import Vulkan.Core10
-import Vulkan.Core10.DeviceInitialization
+import Vulkan.Core10 as VKCORE
+import Vulkan.Core10.DeviceInitialization as VKDI
 import Vulkan.Zero
 import Vulkan.CStruct.Extends
 import Vulkan.Exception
@@ -51,7 +51,7 @@ cMAX_FRAMES_IN_FLIGHT = 2
 
 -- | Setup for creating a Vulkan instance. Edit fields here to change your application name or version to use.
 --   Notably this config enables surface extensions so that the GLFW function 'createWindowSurface' will work.
-instanceConfig :: InstanceCreateInfo '[] -- '[DebugUtilsMessengerCreateInfoEXT, ValidationFeaturesEXT]
+instanceConfig :: InstanceCreateInfo '[]
 instanceConfig =
   InstanceCreateInfo
         ()   -- pNext
@@ -64,26 +64,29 @@ instanceConfig =
             1                     -- engine version
             ((shift 1 22) .|. (shift 0 12) .|. (shift 0 0)) -- major/minor/patch numbers, packed
         )
-        empty -- enabledLayerNames
-        (fromList [ KHR_SURFACE_EXTENSION_NAME, KHR_WIN32_SURFACE_EXTENSION_NAME ])  -- extensionNames
+        empty                                                                        -- enabledLayerNames
+        (fromList [ KHR_SURFACE_EXTENSION_NAME, KHR_WIN32_SURFACE_EXTENSION_NAME ])  -- enabledExtensionNames
 
 -- | Modifies the standard InstanceCreateInfo to add validation layers.
 validatedInstance :: InstanceCreateInfo '[] -> InstanceCreateInfo '[DebugUtilsMessengerCreateInfoEXT, ValidationFeaturesEXT]
 validatedInstance baseCreateInfo = 
   let debugCreateInfo = DebugUtilsMessengerCreateInfoEXT zero
-        (DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT .|. DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
-        (DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT .|. DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT)
-        debugCallbackPtr
-        nullPtr
+                          (DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT .|. DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+                          (DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT .|. DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT)
+                          debugCallbackPtr
+                          nullPtr
       validationFeatures = ValidationFeaturesEXT (fromList [VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT]) empty
-      debugLayers = fromList [ "VK_LAYER_KHRONOS_validation" ]
-      debugExtensions =  (Vulkan.Core10.DeviceInitialization.enabledExtensionNames baseCreateInfo) <>
+      debugLayers = (VKDI.enabledLayerNames baseCreateInfo) <>
+                    (fromList [ "VK_LAYER_KHRONOS_validation" ])
+      debugExtensions =  (VKDI.enabledExtensionNames baseCreateInfo) <>
                          (fromList [ EXT_VALIDATION_FEATURES_EXTENSION_NAME, EXT_DEBUG_UTILS_EXTENSION_NAME ])
   in
+    -- modify the layers and extensions fields
     (baseCreateInfo {
-      Vulkan.Core10.DeviceInitialization.enabledLayerNames = debugLayers,
-      Vulkan.Core10.DeviceInitialization.enabledExtensionNames = debugExtensions
+      VKDI.enabledLayerNames = debugLayers,
+      VKDI.enabledExtensionNames = debugExtensions
     })
+    -- add some extra information structs to the pNext chain
     ::& (debugCreateInfo :& validationFeatures :& ())
 
 
@@ -94,33 +97,36 @@ main = do
     --let config = instanceConfig
     let config = validatedInstance instanceConfig
     let allocator = Nothing
-    withInstance config allocator bracket $ \i -> do
-      --debugInstance i
-      let windowConfig = WindowInitData 600 400 "Vulkan test window" NoOpenGL
-      withWindowEtc i windowConfig bracket $ \wETC@(WindowEtc inst handle dev phy surf gq pq is rs fnc cpool swref) -> do
-        renderLoop wETC allocator
-        deviceWaitIdle dev
+    let windowConfig = WindowInitData 600 400 "Vulkan test window" NoOpenGL
+    withInstance config allocator bracket $ \inst -> do
+      withWindowEtc inst windowConfig bracket $ \windowETC-> do
+        renderLoop windowETC allocator
+        deviceWaitIdle (vkDevice windowETC)
 
 
+-- | Main render loop. Initialize the set of IORefs to track which frameBuffers
+--   are 'in flight' and then updates this every frame.
 renderLoop :: WindowEtc -> Maybe AllocationCallbacks -> IO ()
 renderLoop windowEtc allocator = do 
-    inFlightInit >>= go 0
+    inFlightTrackerInit >>= go 0
     return ()
   where
-    inFlightInit :: IO (Vector Fence)
-    inFlightInit = do
+    inFlightTrackerInit :: IO (Vector Fence)
+    inFlightTrackerInit = do
       swEtc <- readIORef (swapChainRef windowEtc)
       let imageCount = length (swapchainFramebuffers swEtc)
       return $ fromList $ fmap (\_ -> NULL_HANDLE) [1..imageCount]
-    go currentFrame inFlight = do
+    go currentFrame inFlightTracker = do
       GLFW.pollEvents
       x <- GLFW.windowShouldClose (windowHandle windowEtc)
       if x then
         return ()
       else do
-        inFlight' <- renderFrame windowEtc currentFrame inFlight allocator
-        go ((currentFrame + 1) `mod` cMAX_FRAMES_IN_FLIGHT) inFlight'
+        inFlightTracker' <- renderFrame windowEtc currentFrame inFlightTracker allocator
+        go ((currentFrame + 1) `mod` cMAX_FRAMES_IN_FLIGHT) inFlightTracker'
 
+-- | Render a single frame. Gets most of the relevant info from the 'WindowEtc'
+--   record. Also takes in and updates the vector of fences for the 'in flight' frame buffers.
 renderFrame :: WindowEtc -> Int -> Vector Fence -> Maybe AllocationCallbacks -> IO (Vector Fence)
 renderFrame windowEtc currentFrame inFlight allocator = do
   swapchainEtc <- readIORef (swapChainRef windowEtc)
@@ -130,34 +136,39 @@ renderFrame windowEtc currentFrame inFlight allocator = do
   let sgSemaphore = renderingFinishedSemaphores windowEtc ! currentFrame
   let thisFence = fences windowEtc ! currentFrame
   waitForFences device (fromList [thisFence]) True maxBound
+  -- if the swapchain is invalid (perhaps due to window resizing) then acquireNextImageKHR
+  -- or queuePresentKHR will throw an ERROR_OUT_OF_DATE_KHR exception, so we need to catch 
+  -- that and then recreate the swapchain
   runResult <- try $
     do
-      (_, imageIndex) <- acquireNextImageKHR device swap maxBound iaSemaphore NULL_HANDLE 
-      let imageFence = inFlight ! fromIntegral imageIndex
+      (_, imgIndex) <- acquireNextImageKHR device swap maxBound iaSemaphore NULL_HANDLE
+      -- Lookup this image in the 'inFlight' vector; if there is a fence there then the
+      -- frame was in flight in we need to wait on that fence for the relevant queue to complete.
+      let imageFence = inFlight ! fromIntegral imgIndex
       if (imageFence /= NULL_HANDLE)
-      then
-        waitForFences device (fromList [imageFence]) True maxBound
-      else
-        return SUCCESS
-      let buffer = (swapchainCommandBuffers swapchainEtc) ! (fromIntegral imageIndex)
+      then waitForFences device (fromList [imageFence]) True maxBound
+      else return SUCCESS
+      let swcBuffer = (swapchainCommandBuffers swapchainEtc) ! (fromIntegral imgIndex)
       let submitInfo = SomeStruct $ SubmitInfo () (fromList [iaSemaphore]) 
                                                   (fromList [PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT])
-                                                  (fromList [commandBufferHandle buffer])
+                                                  (fromList [commandBufferHandle swcBuffer])
                                                   (fromList [sgSemaphore])
       resetFences device (fromList [thisFence])
       queueSubmit (graphicsQueue windowEtc) (fromList [submitInfo]) thisFence
       let presentInfo = PresentInfoKHR () (fromList [sgSemaphore])
                                           (fromList [theSwapchain swapchainEtc])
-                                          (fromList [imageIndex])
+                                          (fromList [imgIndex])
                                           nullPtr
       queuePresentKHR (presentQueue windowEtc) presentInfo
-      return $ inFlight // [(fromIntegral imageIndex, thisFence)]
+      return $ inFlight // [(fromIntegral imgIndex, thisFence)]
+  -- If the swapchain was invalid (ERROR_OUT_OF_DATE_KHR) we'll have an exception here,
+  -- in which case we need to recreate the swapchain.
   case runResult of
     Right result -> return result
     Left (VulkanException ERROR_OUT_OF_DATE_KHR) -> do
         let chosen = vkChosen windowEtc
         let cpool = (cmdPool windowEtc)
-        deviceWaitIdle device
+        deviceWaitIdle device     -- wait until previous command/frames are done
         newswapchain <- recreateSwapChainEtc device cpool swapchainEtc chosen (surfaceRef windowEtc) allocator
         liftIO $ writeIORef (swapChainRef windowEtc) newswapchain
         return inFlight
@@ -179,6 +190,16 @@ data WindowEtc =
     cmdPool :: CommandPool,
     swapChainRef :: IORef SwapchainEtc
   }
+
+
+data ChosenDevice =
+  ChosenDevice {
+    deviceHandle :: PhysicalDevice,
+    graphicsQueueIndex :: Word32,
+    presentQueueIndex :: Word32
+  }
+  deriving (Eq, Show)
+
 
 -- | Holds a swapchain and the associated data handles. 
 data SwapchainEtc =
@@ -218,17 +239,17 @@ withWindowEtc inst wid wrapper wrapped = wrapper startWindow endWindow goWindow
       choice <- runMaybeT $ chooseVulkanDevice inst surfaceH
       case choice of
         Nothing -> return ()
-        Just c@(ChosenDevice h gq pq) -> do
-          withDevice h (chosenDeviceCreateInfo c) Nothing wrapper $ \device -> do
-            graphicsQ <- getDeviceQueue device gq 0
-            presentQ <- getDeviceQueue device pq 0
+        Just chosen@(ChosenDevice h gq pq) -> do
+          withDevice h (chosenDeviceCreateInfo chosen) Nothing wrapper $ \device -> do
             withSyncObjects device simpleSemaphoreConfig simpleFenceConfig Nothing cMAX_FRAMES_IN_FLIGHT wrapper $ \syncs -> do
-              let (SyncObjects imageAvailables renderingFinisheds fences) = syncs
               let commandPoolInfo = CommandPoolCreateInfo zero gq
               withCommandPool device commandPoolInfo Nothing wrapper $ \cmdpool -> do
-                swapchainInfo <- generateSwapchainInfo c surfaceH
+                swapchainInfo <- generateSwapchainInfo chosen surfaceH
                 withSwapchainEtc device swapchainInfo cmdpool Nothing wrapper $ \swapchainEtc -> do
-                    wrapped (WindowEtc inst w device c surfaceH graphicsQ presentQ imageAvailables renderingFinisheds fences cmdpool swapchainEtc)
+                    graphicsQ <- getDeviceQueue device gq 0
+                    presentQ <- getDeviceQueue device pq 0
+                    let (SyncObjects imageAvailables renderingFinisheds fences) = syncs
+                    wrapped (WindowEtc inst w device chosen surfaceH graphicsQ presentQ imageAvailables renderingFinisheds fences cmdpool swapchainEtc)
 
 
 -- | Creates the vulkan surface via GLFW, and deallocates it at the end using a bracketing function.
@@ -244,14 +265,6 @@ withSurface inst wid wrapper goSurface = wrapper startSurface endSurface goSurfa
 
     endSurface surf = destroySurfaceKHR inst surf Nothing
 
-
-data ChosenDevice =
-  ChosenDevice {
-    deviceHandle :: PhysicalDevice,
-    graphicsQueueIndex :: Word32,
-    presentQueueIndex :: Word32
-  }
-  deriving (Eq, Show)
 
 -- | Picks a suitable vulkan decide using 'suitableDevice' and finds the right queue family/families
 --   for graphics and presentation.
@@ -388,23 +401,23 @@ withSwapchainEtc device createInfo cpool allocator wrapper = wrapper startSwapch
 
 createSwapchainEtc :: (MonadIO io) => Device -> CommandPool -> SwapchainCreateInfoKHR '[] -> Maybe AllocationCallbacks -> io SwapchainEtc
 createSwapchainEtc device cpool createInfo allocator = do
-  swapchain <- createSwapchainKHR device createInfo allocator
-  (_,newImages) <- getSwapchainImagesKHR device swapchain
+  newSwapchain <- createSwapchainKHR device createInfo allocator
+  (_,newImages) <- getSwapchainImagesKHR device newSwapchain
   newImageViews <- createImageViews device createInfo newImages
-  pipe <- liftIO $ buildSimplePipeline device createInfo
-  framebuffers <- makeFramebuffers device pipe createInfo newImageViews
+  newPipe <- liftIO $ buildSimplePipeline device createInfo
+  framebuffers <- makeFramebuffers device newPipe createInfo newImageViews
   cmdBuffers <- makeCommandBuffers device cpool framebuffers
-  liftIO $ recordCommandBuffers cmdBuffers framebuffers createInfo pipe
-  return (SwapchainEtc swapchain newImages newImageViews framebuffers cmdBuffers pipe createInfo)
+  liftIO $ recordCommandBuffers cmdBuffers framebuffers createInfo newPipe
+  return (SwapchainEtc newSwapchain newImages newImageViews framebuffers cmdBuffers newPipe createInfo)
 
 destroySwapchainEtc :: (MonadIO io) => Device -> CommandPool -> Maybe AllocationCallbacks -> SwapchainEtc -> io ()
 destroySwapchainEtc device cpool allocator swETC = do
-  let (SwapchainEtc swapchain images imageViews framebuffers commandbuffers pipe _) = swETC
+  let (SwapchainEtc sc _ imageViews framebuffers commandbuffers pipe _) = swETC
   mapM (\fb -> destroyFramebuffer device fb Nothing) framebuffers
   freeCommandBuffers device cpool commandbuffers
   liftIO $ destroyPipelineEtc device pipe
   mapM (\iv -> destroyImageView device iv Nothing) imageViews
-  destroySwapchainKHR device swapchain allocator
+  destroySwapchainKHR device sc allocator
 
 recreateSwapChainEtc :: (MonadIO io) => Device -> CommandPool -> SwapchainEtc -> ChosenDevice -> SurfaceKHR -> Maybe AllocationCallbacks -> io SwapchainEtc
 recreateSwapChainEtc device cpool oldswETC chosen surfaceK allocator = do
@@ -570,6 +583,12 @@ shaderStageBoilerplate :: ShaderModule -> ByteString -> SomeStruct (PipelineShad
 shaderStageBoilerplate sm entry = SomeStruct $
   PipelineShaderStageCreateInfo () zero SHADER_STAGE_VERTEX_BIT sm entry Nothing
 
+-- | Put together a simple pipeline:
+--   - Use shader "tut" which has "main" entry points
+--   - triangle list
+--   - front face culling
+--   - one color attachment
+--   - one simple renderpass
 buildSimplePipeline :: Device -> SwapchainCreateInfoKHR '[] -> IO PipelineEtc
 buildSimplePipeline device swapchainInfo = do
   (vm,fm) <- readSPIRV device "tut"
@@ -650,6 +669,7 @@ buildSimplePipeline device swapchainInfo = do
   let onepipe = pipelines ! 0
   return $ PipelineEtc onepipe renderPass pipelineLayout (fromList [vm,fm]) 
 
+-- | Clean up the pipeline - usually called via 'bracket'
 destroyPipelineEtc :: Device -> PipelineEtc -> IO ()
 destroyPipelineEtc dev (PipelineEtc pipeline renderPass layout modules) = do
   mapM_ (\m -> destroyShaderModule dev m Nothing) modules
@@ -657,6 +677,8 @@ destroyPipelineEtc dev (PipelineEtc pipeline renderPass layout modules) = do
   destroyRenderPass dev renderPass Nothing
   destroyPipeline dev pipeline Nothing
 
+-- | Record the same set of commands (pre-defined in 'recordCommands') to all the commandbuffers passed
+--   in. Needs the framebuffers associated with each command buffer.
 recordCommandBuffers :: Vector CommandBuffer -> Vector Framebuffer -> SwapchainCreateInfoKHR '[] -> PipelineEtc -> IO ()
 recordCommandBuffers cbs fbs sci pipeETC = do
   let buffers = zip (toList cbs) (toList fbs)
@@ -664,6 +686,7 @@ recordCommandBuffers cbs fbs sci pipeETC = do
   mapM_ goBuffers buffers
   return ()
 
+-- | Simple recording of a command buffer to draw using the given renderpass, pipeline, and framebuffer.
 recordCommands :: CommandBuffer -> SwapchainCreateInfoKHR '[] -> RenderPass -> Pipeline -> Framebuffer -> IO ()
 recordCommands buf sce pass pipe fb = do
   beginCommandBuffer buf (CommandBufferBeginInfo () zero Nothing)
