@@ -2,18 +2,21 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Fomorian.Vulkan.Vulkan where
 
-import Data.ByteString (ByteString, readFile, pack)
+import Data.ByteString (ByteString, readFile)
 import Data.Foldable
 import Data.IORef
 import Data.Word (Word32, Word64)
 import Data.Bits
-import Data.Vector (Vector(..), fromList, findIndex, (!), empty, (//))
+import Data.Vector (Vector, fromList, findIndex, (!), empty, (//))
 
 import GHC.Int
+
+import Linear (V2(..), V3(..))
 
 import System.FilePath
 
@@ -28,6 +31,7 @@ import Foreign.Storable
 
 import Vulkan.Core10 as VKCORE
 import Vulkan.Core10.DeviceInitialization as VKDI
+import Vulkan.Core10.MemoryManagement as VKMEM
 import Vulkan.Zero
 import Vulkan.CStruct.Extends
 import Vulkan.Exception
@@ -49,6 +53,37 @@ data VulkanValidation = UseValidation | NoValidation
 cMAX_FRAMES_IN_FLIGHT :: Int
 cMAX_FRAMES_IN_FLIGHT = 2
 
+
+data OneVertex = OneVertex (V2 Float) (V3 Float)
+
+instance Storable OneVertex where
+  sizeOf (OneVertex x y) = sizeOf x + sizeOf y
+  alignment _ = 4
+  peek p = do
+    x <- peek (castPtr @OneVertex @(V2 Float) p)
+    y <- peekByteOff p 8
+    return (OneVertex x y)
+  poke p (OneVertex x y) = do
+    poke (castPtr @OneVertex @(V2 Float) p) x
+    pokeByteOff p 8 y
+
+-- Vertex data for drawing
+vertexData :: [OneVertex]
+vertexData = [
+  (OneVertex (V2 0.0 (-0.5)) (V3 1.0 0.0 0.0)),
+  (OneVertex (V2 0.5 0.5)    (V3 1.0 1.0 1.0)),
+  (OneVertex (V2 (-0.5) (0.5)) (V3 0.0 0.0 1.0))
+  ]
+
+vertexDataBinding :: VertexInputBindingDescription
+vertexDataBinding = VertexInputBindingDescription 0 (4 * 5) VERTEX_INPUT_RATE_VERTEX
+
+vertexInputAttrs :: [VertexInputAttributeDescription]
+vertexInputAttrs = [
+  (VertexInputAttributeDescription 0 0 FORMAT_R32G32_SFLOAT 0),
+  (VertexInputAttributeDescription 1 0 FORMAT_R32G32B32_SFLOAT 8)
+  ]
+
 -- | Setup for creating a Vulkan instance. Edit fields here to change your application name or version to use.
 --   Notably this config enables surface extensions so that the GLFW function 'createWindowSurface' will work.
 instanceConfig :: InstanceCreateInfo '[]
@@ -63,7 +98,7 @@ instanceConfig =
             (Just ("fomorian" :: ByteString))     -- engine name
             1                     -- engine version
             ((shift 1 22) .|. (shift 0 12) .|. (shift 0 0)) -- major/minor/patch numbers, packed
-        )
+          )
         empty                                                                        -- enabledLayerNames
         (fromList [ KHR_SURFACE_EXTENSION_NAME, KHR_WIN32_SURFACE_EXTENSION_NAME ])  -- enabledExtensionNames
 
@@ -99,7 +134,7 @@ main = do
     let allocator = Nothing
     let windowConfig = WindowInitData 600 400 "Vulkan test window" NoOpenGL
     withInstance config allocator bracket $ \inst -> do
-      withWindowEtc inst windowConfig bracket $ \windowETC-> do
+      withWindowEtc inst windowConfig bracket $ \windowETC -> do
         renderLoop windowETC allocator
         deviceWaitIdle (vkDevice windowETC)
 
@@ -143,7 +178,7 @@ renderFrame windowEtc currentFrame inFlight allocator = do
     do
       (_, imgIndex) <- acquireNextImageKHR device swap maxBound iaSemaphore NULL_HANDLE
       -- Lookup this image in the 'inFlight' vector; if there is a fence there then the
-      -- frame was in flight in we need to wait on that fence for the relevant queue to complete.
+      -- frame was in flight and we need to wait on that fence for the relevant queue to complete.
       let imageFence = inFlight ! fromIntegral imgIndex
       if (imageFence /= NULL_HANDLE)
       then waitForFences device (fromList [imageFence]) True maxBound
@@ -169,7 +204,8 @@ renderFrame windowEtc currentFrame inFlight allocator = do
         let chosen = vkChosen windowEtc
         let cpool = (cmdPool windowEtc)
         deviceWaitIdle device     -- wait until previous command/frames are done
-        newswapchain <- recreateSwapChainEtc device cpool swapchainEtc chosen (surfaceRef windowEtc) allocator
+        let tRes = transients windowEtc
+        newswapchain <- recreateSwapChainEtc device cpool tRes swapchainEtc chosen (surfaceRef windowEtc) allocator
         liftIO $ writeIORef (swapChainRef windowEtc) newswapchain
         return inFlight
     Left exc -> throw exc
@@ -188,13 +224,14 @@ data WindowEtc =
     renderingFinishedSemaphores :: Vector Semaphore,
     fences :: Vector Fence,
     cmdPool :: CommandPool,
+    transients :: TransientResources,
     swapChainRef :: IORef SwapchainEtc
   }
 
 
 data ChosenDevice =
   ChosenDevice {
-    deviceHandle :: PhysicalDevice,
+    physicalHandle :: PhysicalDevice,
     graphicsQueueIndex :: Word32,
     presentQueueIndex :: Word32
   }
@@ -213,6 +250,14 @@ data SwapchainEtc =
     swapchainCreateInfo :: SwapchainCreateInfoKHR '[]
   }
   deriving (Show)
+
+data TransientResources =
+  TransientResources {
+    vertexBuffer :: VBuffer
+  }
+  deriving (Show)
+
+
 
 -- | Vulkan initialization boilerplate. Goes through several levels of allocation and
 --   bracketing to create and acquire several vulkan resources:
@@ -244,12 +289,13 @@ withWindowEtc inst wid wrapper wrapped = wrapper startWindow endWindow goWindow
             withSyncObjects device simpleSemaphoreConfig simpleFenceConfig Nothing cMAX_FRAMES_IN_FLIGHT wrapper $ \syncs -> do
               let commandPoolInfo = CommandPoolCreateInfo zero gq
               withCommandPool device commandPoolInfo Nothing wrapper $ \cmdpool -> do
-                swapchainInfo <- generateSwapchainInfo chosen surfaceH
-                withSwapchainEtc device swapchainInfo cmdpool Nothing wrapper $ \swapchainEtc -> do
-                    graphicsQ <- getDeviceQueue device gq 0
-                    presentQ <- getDeviceQueue device pq 0
-                    let (SyncObjects imageAvailables renderingFinisheds fences) = syncs
-                    wrapped (WindowEtc inst w device chosen surfaceH graphicsQ presentQ imageAvailables renderingFinisheds fences cmdpool swapchainEtc)
+                withTransientResources device h Nothing wrapper $ \tRes -> do
+                  swapchainInfo <- generateSwapchainInfo chosen surfaceH
+                  withSwapchainEtc device swapchainInfo cmdpool tRes Nothing wrapper $ \swapchainEtc -> do
+                      graphicsQ <- getDeviceQueue device gq 0
+                      presentQ <- getDeviceQueue device pq 0
+                      let (SyncObjects imageAvailables renderingFinisheds fences) = syncs
+                      wrapped (WindowEtc inst w device chosen surfaceH graphicsQ presentQ imageAvailables renderingFinisheds fences cmdpool tRes swapchainEtc)
 
 
 -- | Creates the vulkan surface via GLFW, and deallocates it at the end using a bracketing function.
@@ -385,13 +431,13 @@ generateSwapchainInfo (ChosenDevice d gq pq) s = do
 
 -- | Creates a swapchain and passes and IORef to the wrapped user function. We provide an IORef because
 --   sometimes you have to recreate the swapchain in-place without restarting the program.
-withSwapchainEtc :: (MonadIO io) => Device -> SwapchainCreateInfoKHR '[] -> CommandPool -> Maybe AllocationCallbacks -> (io (IORef SwapchainEtc) -> (IORef SwapchainEtc -> io ()) -> r) -> r
-withSwapchainEtc device createInfo cpool allocator wrapper = wrapper startSwapchainRef endSwapchainRef
+withSwapchainEtc :: (MonadIO io) => Device -> SwapchainCreateInfoKHR '[] -> CommandPool -> TransientResources -> Maybe AllocationCallbacks -> (io (IORef SwapchainEtc) -> (IORef SwapchainEtc -> io ()) -> r) -> r
+withSwapchainEtc device createInfo cpool tr allocator wrapper = wrapper startSwapchainRef endSwapchainRef
   where
     startSwapchainRef :: (MonadIO io) => io (IORef SwapchainEtc)
     startSwapchainRef =
       do
-        swETC <- createSwapchainEtc device cpool createInfo allocator
+        swETC <- createSwapchainEtc device cpool tr createInfo allocator
         liftIO $ newIORef swETC
     endSwapchainRef :: (MonadIO io) => IORef SwapchainEtc -> io ()
     endSwapchainRef ref =
@@ -399,15 +445,15 @@ withSwapchainEtc device createInfo cpool allocator wrapper = wrapper startSwapch
         swETC <- liftIO $ readIORef ref
         destroySwapchainEtc device cpool allocator swETC
 
-createSwapchainEtc :: (MonadIO io) => Device -> CommandPool -> SwapchainCreateInfoKHR '[] -> Maybe AllocationCallbacks -> io SwapchainEtc
-createSwapchainEtc device cpool createInfo allocator = do
+createSwapchainEtc :: (MonadIO io) => Device -> CommandPool -> TransientResources -> SwapchainCreateInfoKHR '[] -> Maybe AllocationCallbacks -> io SwapchainEtc
+createSwapchainEtc device cpool tRes createInfo allocator = do
   newSwapchain <- createSwapchainKHR device createInfo allocator
   (_,newImages) <- getSwapchainImagesKHR device newSwapchain
   newImageViews <- createImageViews device createInfo newImages
   newPipe <- liftIO $ buildSimplePipeline device createInfo
   framebuffers <- makeFramebuffers device newPipe createInfo newImageViews
   cmdBuffers <- makeCommandBuffers device cpool framebuffers
-  liftIO $ recordCommandBuffers cmdBuffers framebuffers createInfo newPipe
+  liftIO $ recordCommandBuffers cmdBuffers framebuffers tRes createInfo newPipe
   return (SwapchainEtc newSwapchain newImages newImageViews framebuffers cmdBuffers newPipe createInfo)
 
 destroySwapchainEtc :: (MonadIO io) => Device -> CommandPool -> Maybe AllocationCallbacks -> SwapchainEtc -> io ()
@@ -419,11 +465,11 @@ destroySwapchainEtc device cpool allocator swETC = do
   mapM (\iv -> destroyImageView device iv Nothing) imageViews
   destroySwapchainKHR device sc allocator
 
-recreateSwapChainEtc :: (MonadIO io) => Device -> CommandPool -> SwapchainEtc -> ChosenDevice -> SurfaceKHR -> Maybe AllocationCallbacks -> io SwapchainEtc
-recreateSwapChainEtc device cpool oldswETC chosen surfaceK allocator = do
+recreateSwapChainEtc :: (MonadIO io) => Device -> CommandPool -> TransientResources -> SwapchainEtc -> ChosenDevice -> SurfaceKHR -> Maybe AllocationCallbacks -> io SwapchainEtc
+recreateSwapChainEtc device cpool tRes oldswETC chosen surfaceK allocator = do
   destroySwapchainEtc device cpool allocator oldswETC
   newCreateInfo <- liftIO $ generateSwapchainInfo chosen surfaceK
-  createSwapchainEtc device cpool newCreateInfo allocator
+  createSwapchainEtc device cpool tRes newCreateInfo allocator
 
 createImageViews :: (MonadIO io) => Device -> SwapchainCreateInfoKHR '[] -> Vector Image -> io (Vector ImageView)
 createImageViews device swapchainInfo images =
@@ -596,7 +642,9 @@ buildSimplePipeline device swapchainInfo = do
                       SomeStruct $ PipelineShaderStageCreateInfo () zero SHADER_STAGE_VERTEX_BIT vm "main" Nothing,
                       SomeStruct $ PipelineShaderStageCreateInfo () zero SHADER_STAGE_FRAGMENT_BIT fm "main" Nothing
                       ]
-  let vertexStageInfo = PipelineVertexInputStateCreateInfo () zero empty empty
+  let vertexStageInfo = PipelineVertexInputStateCreateInfo () zero 
+                          (fromList [vertexDataBinding])
+                          (fromList vertexInputAttrs)
   let inputAssembly = PipelineInputAssemblyStateCreateInfo zero PRIMITIVE_TOPOLOGY_TRIANGLE_LIST False
   let windowExtent@(Extent2D w h) = VKSWAPCHAIN.imageExtent swapchainInfo
   let viewport = Viewport 0.0 0.0 (fromIntegral w) (fromIntegral h) 0.0 1.0
@@ -677,24 +725,90 @@ destroyPipelineEtc dev (PipelineEtc pipeline renderPass layout modules) = do
   destroyRenderPass dev renderPass Nothing
   destroyPipeline dev pipeline Nothing
 
+
+
+newtype MemoryTypeMask = MemoryTypeMask Word32
+  deriving (Eq, Show)
+
+-- Look through the physical device memory types and find one that matches a bit in the memoryTypeBits
+-- and 
+findMemoryType :: PhysicalDevice -> MemoryTypeMask -> MemoryPropertyFlags -> IO Word32
+findMemoryType pd (MemoryTypeMask typeBits) memFlags = do
+  memProps <- getPhysicalDeviceMemoryProperties pd
+  let typeIndices = [0..(fromIntegral $ memoryTypeCount memProps - 1)]
+  let bitsMatch x y = (x .&. y) /= zeroBits
+  let matchesTypeBits = \i -> testBit typeBits i
+  let matchesProperties = \i -> let memType = (memoryTypes memProps) ! i
+                                in bitsMatch (propertyFlags memType) memFlags
+  let fullMatch = \i -> matchesTypeBits i && matchesProperties i
+  case find fullMatch typeIndices of
+    Nothing -> fail "No memory type found"
+    Just ix -> return $ fromIntegral ix
+
+
+data VBuffer = VBuffer Buffer DeviceMemory
+  deriving (Eq, Show)
+
+createVertexBuffer :: forall v. (Storable v) => Device -> PhysicalDevice -> [v] -> Maybe AllocationCallbacks -> IO VBuffer
+createVertexBuffer d pd verts allocator = do
+  let bufferSize = (fromIntegral ((length verts) * (sizeOf (head verts))))
+  let bufInfo = BufferCreateInfo ()
+                     zero
+                     bufferSize
+                     BUFFER_USAGE_VERTEX_BUFFER_BIT
+                     SHARING_MODE_EXCLUSIVE
+                     empty
+  b <- createBuffer d bufInfo allocator
+  req <- getBufferMemoryRequirements d b
+  memIndex <- findMemoryType pd 
+                             (MemoryTypeMask (memoryTypeBits req))
+                             (MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. MEMORY_PROPERTY_HOST_COHERENT_BIT)
+  let allocInfo = MemoryAllocateInfo () (VKMEM.size req) memIndex
+  mem <- allocateMemory d allocInfo Nothing
+  bindBufferMemory d b mem 0
+  withMappedMemory d mem 0 bufferSize zero bracket $ \ptr -> pokeArray (castPtr ptr) verts
+  return (VBuffer b mem)
+
+destroyVertexBuffer :: Device -> VBuffer -> Maybe AllocationCallbacks  -> IO ()
+destroyVertexBuffer d (VBuffer b mem) allocator = do
+  destroyBuffer d b allocator
+  freeMemory d mem allocator
+
+withTransientResources :: Device -> PhysicalDevice -> Maybe AllocationCallbacks ->
+  (IO TransientResources -> (TransientResources -> IO ()) -> r) -> r
+withTransientResources d pd allocator wrapper = wrapper loadResources unloadResources
+  where
+    loadResources = do
+      v <- createVertexBuffer d pd vertexData allocator
+      return (TransientResources v)
+
+    unloadResources (TransientResources vb) = destroyVertexBuffer d vb allocator
+
+
+
+
 -- | Record the same set of commands (pre-defined in 'recordCommands') to all the commandbuffers passed
 --   in. Needs the framebuffers associated with each command buffer.
-recordCommandBuffers :: Vector CommandBuffer -> Vector Framebuffer -> SwapchainCreateInfoKHR '[] -> PipelineEtc -> IO ()
-recordCommandBuffers cbs fbs sci pipeETC = do
+recordCommandBuffers :: Vector CommandBuffer -> Vector Framebuffer -> TransientResources -> SwapchainCreateInfoKHR '[] -> PipelineEtc -> IO ()
+recordCommandBuffers cbs fbs tRes sci pipeETC = do
   let buffers = zip (toList cbs) (toList fbs)
-  let goBuffers (cb,fb) = recordCommands cb sci (rendPass pipeETC) (pipeline pipeETC) fb
+  let goBuffers (cb,fb) = recordCommands cb tRes sci (rendPass pipeETC) (pipeline pipeETC) fb
   mapM_ goBuffers buffers
   return ()
 
 -- | Simple recording of a command buffer to draw using the given renderpass, pipeline, and framebuffer.
-recordCommands :: CommandBuffer -> SwapchainCreateInfoKHR '[] -> RenderPass -> Pipeline -> Framebuffer -> IO ()
-recordCommands buf sce pass pipe fb = do
+recordCommands :: CommandBuffer -> TransientResources -> SwapchainCreateInfoKHR '[] -> RenderPass -> Pipeline -> Framebuffer -> IO ()
+recordCommands buf tRes sce pass pipe fb = do
   beginCommandBuffer buf (CommandBufferBeginInfo () zero Nothing)
   let renderarea = Rect2D (Offset2D 0 0) (VKSWAPCHAIN.imageExtent $ sce)
   let clearTo = fromList [Color (Float32 0 0 0 1)]
   cmdBeginRenderPass buf (RenderPassBeginInfo () pass fb renderarea clearTo) SUBPASS_CONTENTS_INLINE
   cmdBindPipeline buf PIPELINE_BIND_POINT_GRAPHICS pipe
-  cmdDraw buf 3 1 0 0
+  let (VBuffer vBuf _) = vertexBuffer tRes
+  let vBufs = [vBuf]
+  let offsets = [0]
+  cmdBindVertexBuffers buf 0 (fromList vBufs) (fromList offsets)
+  cmdDraw buf (fromIntegral $ length vertexData) 1 0 0
   cmdEndRenderPass buf
   endCommandBuffer buf
 
