@@ -9,6 +9,7 @@ copyright:      2020 Gary Haussmann
 license:        BSD-3-Clause
 license-file:   LICENSE
 build-type:     Simple
+
 extra-source-files:
     README.md
     csrc/*.c
