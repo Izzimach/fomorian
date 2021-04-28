@@ -10,11 +10,11 @@
 // Callback used when vulkan debug/validation is enabled.
 //
 VKAPI_ATTR VkBool32 VKAPI_CALL
-debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-              VkDebugUtilsMessageTypeFlagsEXT messageType,
-              const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
-              void *pUserData) {
-  fprintf(stderr, "VulkenDebug: %s\n", pCallbackData->pMessage);
+vulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+                    VkDebugUtilsMessageTypeFlagsEXT messageType,
+                    const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
+                    void *pUserData) {
+  fprintf(stderr, "VulkanDebug: %s\n", pCallbackData->pMessage);
   return VK_FALSE;
 }
 
