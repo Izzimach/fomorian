@@ -5,36 +5,34 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Fomorian.Vulkan.WindowEtc (
-  defaultInstanceConfig,
-  validatedInstance,
-  WindowEtc(..),
-  withWindowEtc
-  ) where
+module Fomorian.Vulkan.WindowEtc
+  ( VulkanConfig (..),
+    WindowEtc (..),
+    withWindowEtc,
+    defaultInstanceConfig,
+    validatedInstance,
+    rebuildSwapChain
+  )
+where
 
-import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Maybe
 import Data.Bits
-import Data.ByteString (ByteString, readFile)
-import Data.Foldable
+import Data.ByteString (ByteString)
 import Data.IORef
-import Data.Vector ((!), (//), Vector, empty, findIndex, fromList)
-import Data.Word (Word16, Word32, Word64)
+import Data.Vector ((!), Vector, empty, findIndex, fromList)
+import Data.Word (Word32, Word64)
+import Fomorian.Vulkan.SwapChainEtc
 import Fomorian.Windowing
 import Foreign.Marshal
 import Foreign.Ptr
 import Foreign.Storable
 import GHC.Int
 import qualified Graphics.UI.GLFW as GLFW
-import Linear (V2 (..), V3 (..))
-import System.FilePath
 import Vulkan.CStruct.Extends
 import Vulkan.Core10 as VKCORE
 import Vulkan.Core10.DeviceInitialization as VKDI
-import Vulkan.Core10.MemoryManagement as VKMEM
-import Vulkan.Exception
 import Vulkan.Extensions.VK_EXT_debug_utils
 import Vulkan.Extensions.VK_EXT_validation_features
 import Vulkan.Extensions.VK_KHR_surface as VKSURFACE
@@ -42,13 +40,34 @@ import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
 import Vulkan.Extensions.VK_KHR_win32_surface
 import Vulkan.Zero
 
-import Fomorian.Vulkan.SwapChainEtc
+import Fomorian.Vulkan.TransientResources
+
+data WindowEtc = WindowEtc
+  { vkInstance :: Instance,
+    windowHandle :: GLFW.Window,
+    vkDevice :: Device,
+    vkChosen :: DeviceEtc,
+    surfaceRef :: SurfaceKHR,
+    graphicsQueue :: Queue,
+    presentQueue :: Queue,
+    imageAvailableSemaphores :: Vector Semaphore,
+    renderingFinishedSemaphores :: Vector Semaphore,
+    fences :: Vector Fence,
+    cmdPool :: CommandPool,
+    transients :: TransientResources,
+    swapChainRef :: IORef SwapChainEtc
+  }
+
+data VulkanConfig a = VulkanConfig
+  { createInfo :: InstanceCreateInfo a,
+    inFlightFrames :: Int
+  }
 
 -- | This is a C function used as a callback to handle the vulkan validation messages.
-foreign import ccall unsafe "VulkanCallback.c &debugCallback" debugCallbackPtr :: PFN_vkDebugUtilsMessengerCallbackEXT
+foreign import ccall unsafe "VulkanCallback.c &vulkanDebugCallback" debugCallbackPtr :: PFN_vkDebugUtilsMessengerCallbackEXT
 
 data VulkanValidation = UseValidation | NoValidation
-
+  deriving (Eq, Show)
 
 -- | Setup for creating a Vulkan instance. Edit fields here to change your application name or version to use.
 --   Notably this config enables surface extensions so that the GLFW function 'createWindowSurface' will work.
@@ -94,57 +113,49 @@ validatedInstance baseCreateInfo =
         -- add some extra information structs to the pNext chain
         ::& (debugCreateInfo :& validationFeatures :& ())
 
-
-data WindowEtc = WindowEtc
-  { vkInstance :: Instance,
-    windowHandle :: GLFW.Window,
-    vkDevice :: Device,
-    vkChosen :: DeviceEtc,
-    surfaceRef :: SurfaceKHR,
-    graphicsQueue :: Queue,
-    presentQueue :: Queue,
-    imageAvailableSemaphores :: Vector Semaphore,
-    renderingFinishedSemaphores :: Vector Semaphore,
-    fences :: Vector Fence,
-    cmdPool :: CommandPool,
-    transients :: TransientResources,
-    swapChainRef :: IORef SwapchainEtc
-  }
-
 -- | Vulkan initialization boilerplate. Goes through several levels of allocation and
 --   bracketing to create and acquire several vulkan resources:
 --   - The GLFW window
---   - a SurfaceKHR for that window
+--   - The Vulkan instance
+--   - a SurfaceKHR for the window
 --   - a vulkan device that works with the surface
 --   - a graphics and presentation queue
 --   - two semaphores, to signal events to the swapchain
 --
 --   All these are wrapped with the user-provided wrapper function (which is usually just 'bracket')
 --   to deallocate resources when the program exits, with or without an exception.
-withWindowEtc :: Instance -> WindowInitData -> Int -> (forall a b c. IO a -> (a -> IO b) -> (a -> IO c) -> IO c) -> (WindowEtc -> IO ()) -> IO ()
-withWindowEtc inst wid inFlightFrames wrapper wrapped = wrapper startWindow endWindow goWindow
+withWindowEtc ::
+  (PokeChain a, Extendss InstanceCreateInfo a) =>
+  VulkanConfig a ->
+  WindowInitData ->
+  Maybe AllocationCallbacks ->
+  (forall a b c. IO a -> (a -> IO b) -> (a -> IO c) -> IO c) ->
+  (WindowEtc -> IO ()) ->
+  IO ()
+withWindowEtc vCfg wid allocator wrapper wrapped = wrapper startWindow endWindow goWindow
   where
     simpleSemaphoreConfig = (SemaphoreCreateInfo () zero)
     simpleFenceConfig = (FenceCreateInfo () FENCE_CREATE_SIGNALED_BIT)
     startWindow = initWindow wid
     endWindow w = terminateWindow w
-    goWindow w = withSurface inst w wrapper $ \surfaceH -> do
-      choice <- runMaybeT $ chooseVulkanDevice inst surfaceH
-      case choice of
-        Nothing -> return ()
-        Just chosen@(DeviceEtc h gq pq) -> do
-          withDevice h (chosenDeviceCreateInfo chosen) Nothing wrapper $ \device -> do
-            graphicsQ <- getDeviceQueue device gq 0
-            presentQ <- getDeviceQueue device pq 0
-            withSyncObjects device simpleSemaphoreConfig simpleFenceConfig Nothing inFlightFrames wrapper $ \syncs -> do
-              let commandPoolInfo = CommandPoolCreateInfo zero gq
-              withCommandPool device commandPoolInfo Nothing wrapper $ \cmdpool -> do
-                withTransientResources device h cmdpool graphicsQ Nothing wrapper $ \tRes -> do
-                  swapchainInfo <- generateSwapchainInfo chosen surfaceH
-                  withSwapchainEtc device swapchainInfo cmdpool tRes Nothing wrapper $ \swapchainEtc -> do
-                    let (SyncObjects imageAvailables renderingFinisheds localFences) = syncs
-                    wrapped (WindowEtc inst w device chosen surfaceH graphicsQ presentQ imageAvailables renderingFinisheds localFences cmdpool tRes swapchainEtc)
-
+    goWindow w =
+      withInstance (createInfo vCfg) allocator wrapper $ \inst -> do
+        withSurface inst w wrapper $ \surfaceH -> do
+          choice <- runMaybeT $ chooseVulkanDevice inst surfaceH
+          case choice of
+            Nothing -> return ()
+            Just chosen@(DeviceEtc h gq pq) -> do
+              withDevice h (chosenDeviceCreateInfo chosen) allocator wrapper $ \device -> do
+                graphicsQ <- getDeviceQueue device gq 0
+                presentQ <- getDeviceQueue device pq 0
+                withSyncObjects device simpleSemaphoreConfig simpleFenceConfig Nothing (inFlightFrames vCfg) wrapper $ \syncs -> do
+                  let commandPoolInfo = CommandPoolCreateInfo zero gq
+                  withCommandPool device commandPoolInfo Nothing wrapper $ \cmdpool -> do
+                    withTransientResources device h cmdpool graphicsQ Nothing wrapper $ \tRes -> do
+                      swapchainInfo <- generateSwapChainInfo chosen surfaceH
+                      withSwapChainEtc device h cmdpool tRes graphicsQ swapchainInfo Nothing wrapper $ \swapchainEtc -> do
+                        let (SyncObjects imageAvailables renderingFinisheds localFences) = syncs
+                        wrapped (WindowEtc inst w device chosen surfaceH graphicsQ presentQ imageAvailables renderingFinisheds localFences cmdpool tRes swapchainEtc)
 
 -- | Creates the vulkan surface via GLFW, and deallocates it at the end using a bracketing function.
 withSurface :: Instance -> GLFW.Window -> (forall a b c. IO a -> (a -> IO b) -> (a -> IO c) -> IO c) -> (SurfaceKHR -> IO ()) -> IO ()
@@ -264,4 +275,17 @@ withSyncObjects device semcreate fencecreate alloc count wrapper = wrapper start
       mapM_ (\s -> destroySemaphore device s alloc) isems
       mapM_ (\s -> destroySemaphore device s alloc) rsems
       mapM_ (\f -> destroyFence device f alloc) localFences
+
+rebuildSwapChain :: WindowEtc -> Maybe AllocationCallbacks -> IO ()
+rebuildSwapChain windowEtc allocator = 
+  let device = vkDevice windowEtc
+      chosen = vkChosen windowEtc
+      phy = physicalHandle chosen
+      cpool = (cmdPool windowEtc)
+      tRes = transients windowEtc
+  in
+    do
+      swapchainEtc <- readIORef (swapChainRef windowEtc)
+      newswapchain <- recreateSwapChainEtc device phy cpool tRes swapchainEtc chosen (surfaceRef windowEtc) allocator
+      liftIO $ writeIORef (swapChainRef windowEtc) newswapchain
 

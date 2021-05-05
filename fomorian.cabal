@@ -1,4 +1,4 @@
-cabal-version:  2.2
+cabal-version:  3.0
 name:           fomorian
 version:        0.1.0.0
 category:       Web
@@ -43,8 +43,7 @@ common deps
                        bytestring,
                        unordered-containers,
                        wavefront,
-                       row-types,
-                       vulkan
+                       row-types
 
 
 library
@@ -60,7 +59,6 @@ library
       Fomorian.SimpleApp
       Fomorian.OpenGLResources
   hs-source-dirs: src
-  ghc-options: -O2
 
 executable example
   import: deps
@@ -75,7 +73,7 @@ executable example
       Fomorian.SceneResources
       Fomorian.SimpleApp
       Fomorian.OpenGLResources
+  build-depends: vulkan
   hs-source-dirs: src
-  c-sources: csrc/SomeCode.c
+  c-sources: csrc/VulkanCallback.c
   include-dirs: /c/VulkanSDK/1.2.170.0/include
-  ghc-options: -O2

@@ -5,37 +5,20 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Fomorian.Vulkan.Vulkan where
+module Fomorian.Vulkan.Example where
 
 import Control.Exception
-import Control.Monad
 import Control.Monad.IO.Class
-import Control.Monad.Trans.Maybe
-import Data.Bits
-import Data.ByteString (ByteString, readFile)
 import Data.Foldable
 import Data.IORef
-import Data.Vector ((!), (//), Vector, empty, findIndex, fromList)
-import Data.Word (Word16, Word32, Word64)
+import Data.Vector ((!), (//), Vector, fromList)
 import Fomorian.Windowing
-import Foreign.Marshal
 import Foreign.Ptr
-import Foreign.Storable
-import GHC.Int
 import qualified Graphics.UI.GLFW as GLFW
-import Linear (V2 (..), V3 (..))
-import System.FilePath
 import Vulkan.CStruct.Extends
 import Vulkan.Core10 as VKCORE
-import Vulkan.Core10.DeviceInitialization as VKDI
-import Vulkan.Core10.MemoryManagement as VKMEM
 import Vulkan.Exception
-import Vulkan.Extensions.VK_EXT_debug_utils
-import Vulkan.Extensions.VK_EXT_validation_features
-import Vulkan.Extensions.VK_KHR_surface as VKSURFACE
 import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
-import Vulkan.Extensions.VK_KHR_win32_surface
-import Vulkan.Zero
 
 import Fomorian.Vulkan.WindowEtc
 import Fomorian.Vulkan.SwapChainEtc
@@ -47,13 +30,12 @@ cMAX_FRAMES_IN_FLIGHT = 2
 main :: IO ()
 main = do
   --let config = instanceConfig
-  let config = validatedInstance defaultInstanceConfig
   let allocator = Nothing
+  let vulkanConfig = VulkanConfig (validatedInstance defaultInstanceConfig) cMAX_FRAMES_IN_FLIGHT
   let windowConfig = WindowInitData 600 400 "Vulkan test window" NoOpenGL
-  withInstance config allocator bracket $ \inst -> do
-    withWindowEtc inst windowConfig cMAX_FRAMES_IN_FLIGHT bracket $ \windowETC -> do
-      renderLoop windowETC allocator
-      deviceWaitIdle (vkDevice windowETC)
+  withWindowEtc vulkanConfig windowConfig allocator bracket $ \windowETC -> do
+    renderLoop windowETC allocator
+    deviceWaitIdle (vkDevice windowETC)
 
 -- | Main render loop. Initialize the set of IORefs to track which frameBuffers
 --   are 'in flight' and then updates this every frame.
@@ -86,7 +68,7 @@ renderFrame windowEtc currentFrame inFlight allocator = do
   let iaSemaphore = imageAvailableSemaphores windowEtc ! currentFrame
   let sgSemaphore = renderingFinishedSemaphores windowEtc ! currentFrame
   let thisFence = fences windowEtc ! currentFrame
-  waitForFences device (fromList [thisFence]) True maxBound
+  _ <- waitForFences device (fromList [thisFence]) True maxBound
   -- if the swapchain is invalid (perhaps due to window resizing) then acquireNextImageKHR
   -- or queuePresentKHR will throw an ERROR_OUT_OF_DATE_KHR exception, so we need to catch
   -- that and then recreate the swapchain
@@ -96,9 +78,9 @@ renderFrame windowEtc currentFrame inFlight allocator = do
       -- Lookup this image in the 'inFlight' vector; if there is a fence there then the
       -- frame was in flight and we need to wait on that fence for the relevant queue to complete.
       let imageFence = inFlight ! fromIntegral imgIndex
-      if (imageFence /= NULL_HANDLE)
-        then waitForFences device (fromList [imageFence]) True maxBound
-        else return SUCCESS
+      _ <- if (imageFence /= NULL_HANDLE)
+            then waitForFences device (fromList [imageFence]) True maxBound
+            else return SUCCESS
       let swcBuffer = (swapchainCommandBuffers swapchainEtc) ! (fromIntegral imgIndex)
       let submitInfo =
             SomeStruct $
@@ -117,19 +99,15 @@ renderFrame windowEtc currentFrame inFlight allocator = do
               (fromList [theSwapchain swapchainEtc])
               (fromList [imgIndex])
               nullPtr
-      queuePresentKHR (presentQueue windowEtc) presentInfo
+      _ <- queuePresentKHR (presentQueue windowEtc) presentInfo
       return $ inFlight // [(fromIntegral imgIndex, thisFence)]
   -- If the swapchain was invalid (ERROR_OUT_OF_DATE_KHR) we'll have an exception here,
   -- in which case we need to recreate the swapchain.
   case runResult of
     Right result -> return result
     Left (VulkanException ERROR_OUT_OF_DATE_KHR) -> do
-      let chosen = vkChosen windowEtc
-      let cpool = (cmdPool windowEtc)
       deviceWaitIdle device -- wait until previous command/frames are done
-      let tRes = transients windowEtc
-      newswapchain <- recreateSwapChainEtc device cpool tRes swapchainEtc chosen (surfaceRef windowEtc) allocator
-      liftIO $ writeIORef (swapChainRef windowEtc) newswapchain
+      rebuildSwapChain windowEtc allocator
       return inFlight
     Left exc -> throw exc
 
@@ -140,7 +118,7 @@ renderFrame windowEtc currentFrame inFlight allocator = do
 
 debugInstance :: Instance -> IO ()
 debugInstance i = do
-  (_, layerz) <- liftIO enumerateInstanceLayerProperties
+  --(_, layerz) <- liftIO enumerateInstanceLayerProperties
   (_, extensionz) <- enumerateInstanceExtensionProperties Nothing
   putStrLn (show extensionz)
   --putStrLn (show layerz)
@@ -150,9 +128,9 @@ debugInstance i = do
 deviceInfo :: (MonadIO m) => PhysicalDevice -> m ()
 deviceInfo p = do
   (_, extensions) <- enumerateDeviceExtensionProperties p Nothing
-  (_, layers) <- enumerateDeviceLayerProperties p
+  (_, layerz) <- enumerateDeviceLayerProperties p
   liftIO $ traverse_ myPrint extensions
-  liftIO $ traverse_ myPrint layers
+  liftIO $ traverse_ myPrint layerz
   --myPrint =<< getPhysicalDeviceFeatures p
   myPrint =<< getPhysicalDeviceQueueFamilyProperties p
   myPrint =<< getPhysicalDeviceProperties p
