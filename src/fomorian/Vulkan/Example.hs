@@ -22,6 +22,7 @@ import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
 
 import Fomorian.Vulkan.WindowEtc
 import Fomorian.Vulkan.SwapChainEtc
+import Fomorian.Vulkan.TransientResources
 
 
 cMAX_FRAMES_IN_FLIGHT :: Int
@@ -51,12 +52,13 @@ renderLoop windowEtc allocator = do
       return $ fromList $ fmap (\_ -> NULL_HANDLE) [1 .. imageCount]
     go currentFrame inFlightTracker = do
       GLFW.pollEvents
+      p <- GLFW.getKey (windowHandle windowEtc) GLFW.Key'Escape
       shouldClose <- GLFW.windowShouldClose (windowHandle windowEtc)
-      if shouldClose
+      if (shouldClose || (p == GLFW.KeyState'Pressed))
         then return ()
         else do
           inFlightTracker' <- renderFrame windowEtc currentFrame inFlightTracker allocator
-          go ((currentFrame + 1) `mod` cMAX_FRAMES_IN_FLIGHT) inFlightTracker'
+          go (currentFrame + 1) inFlightTracker'
 
 -- | Render a single frame. Gets most of the relevant info from the 'WindowEtc'
 --   record. Also takes in and updates the vector of fences for the 'in flight' frame buffers.
@@ -65,9 +67,10 @@ renderFrame windowEtc currentFrame inFlight allocator = do
   swapchainEtc <- readIORef (swapChainRef windowEtc)
   let device = vkDevice windowEtc
   let swap = theSwapchain swapchainEtc
-  let iaSemaphore = imageAvailableSemaphores windowEtc ! currentFrame
-  let sgSemaphore = renderingFinishedSemaphores windowEtc ! currentFrame
-  let thisFence = fences windowEtc ! currentFrame
+  let frameLookup = currentFrame `mod` cMAX_FRAMES_IN_FLIGHT
+  let iaSemaphore = imageAvailableSemaphores windowEtc ! frameLookup
+  let sgSemaphore = renderingFinishedSemaphores windowEtc ! frameLookup
+  let thisFence = fences windowEtc ! frameLookup
   _ <- waitForFences device (fromList [thisFence]) True maxBound
   -- if the swapchain is invalid (perhaps due to window resizing) then acquireNextImageKHR
   -- or queuePresentKHR will throw an ERROR_OUT_OF_DATE_KHR exception, so we need to catch
@@ -82,9 +85,11 @@ renderFrame windowEtc currentFrame inFlight allocator = do
             then waitForFences device (fromList [imageFence]) True maxBound
             else return SUCCESS
       let swcBuffer = (swapchainCommandBuffers swapchainEtc) ! (fromIntegral imgIndex)
+      let uniformBuffer = (swapchainPerFrameResources swapchainEtc) ! (fromIntegral imgIndex)
+      updateUniformBuffer device (uniforms uniformBuffer) ((fromIntegral currentFrame) * 0.016) (VKSWAPCHAIN.imageExtent $ swapchainCreateInfo swapchainEtc)
       let submitInfo =
             SomeStruct $
-              SubmitInfo
+               SubmitInfo
                 ()
                 (fromList [iaSemaphore])
                 (fromList [PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT])

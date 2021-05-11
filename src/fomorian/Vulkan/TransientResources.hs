@@ -14,11 +14,18 @@ module Fomorian.Vulkan.TransientResources (
   destroyPipelineEtc,
   makeImageFrameResources,
   destroyImageFrameResources,
+  updateUniformBuffer,
+  makeDescriptorPool,
+  unmakeDescriptorPool,
+  makeDescriptorSetLayout,
+  unmakeDescriptorSetLayout,
+  makeDescriptorSets,
+  unmakeDescriptorSets,
+  syncDescriptorSets,
   recordCommandBuffers
   ) where
 
 import Control.Exception
-import Control.Monad.IO.Class
 import Data.Bits
 import Data.ByteString (readFile)
 import Data.Foldable
@@ -27,7 +34,7 @@ import Data.Word (Word16, Word32)
 import Foreign.Marshal
 import Foreign.Ptr
 import Foreign.Storable
-import Linear (V2 (..), V3 (..), M44)
+import Linear (V2 (..), V3 (..), V4(..), M44, identity, (!*!), mkTransformation, mkTransformationMat, Quaternion, axisAngle, lookAt, perspective, ortho, transpose)
 import System.FilePath
 import Vulkan.CStruct.Extends
 import Vulkan.Core10 as VKCORE
@@ -107,8 +114,8 @@ readSPIRV dev shaderPath = do
 --   - front face culling
 --   - one color attachment
 --   - one simple renderpass
-buildSimplePipeline :: Device -> Maybe AllocationCallbacks -> SwapchainCreateInfoKHR '[] -> IO PipelineEtc
-buildSimplePipeline device allocator swapchainInfo = do
+buildSimplePipeline :: Device -> Maybe AllocationCallbacks -> DescriptorSetLayout -> SwapchainCreateInfoKHR '[] -> IO PipelineEtc
+buildSimplePipeline device allocator descriptorLayout swapchainInfo = do
   (vm, fm) <- readSPIRV device "tut"
   let shaderStages =
         fromList
@@ -127,7 +134,7 @@ buildSimplePipeline device allocator swapchainInfo = do
   let scissor = Rect2D (Offset2D 0 0) windowExtent
   let initViewportState = PipelineViewportStateCreateInfo () zero 1 (fromList [viewport]) 1 (fromList [scissor])
   -- use simple fill mode and culling
-  let rasterizerState = PipelineRasterizationStateCreateInfo () zero False False POLYGON_MODE_FILL CULL_MODE_BACK_BIT FRONT_FACE_CLOCKWISE False 0 0 0 1.0
+  let rasterizerState = PipelineRasterizationStateCreateInfo () zero False False POLYGON_MODE_FILL CULL_MODE_BACK_BIT FRONT_FACE_COUNTER_CLOCKWISE False 0 0 0 1.0
   -- multisample is basically disabled
   let initMultisampleState = PipelineMultisampleStateCreateInfo () zero SAMPLE_COUNT_1_BIT False 1.0 empty False False
   let blendAllBits = (COLOR_COMPONENT_R_BIT .|. COLOR_COMPONENT_G_BIT .|. COLOR_COMPONENT_B_BIT .|. COLOR_COMPONENT_A_BIT)
@@ -143,7 +150,6 @@ buildSimplePipeline device allocator swapchainInfo = do
           blendAllBits
   let colorBlendCreate = PipelineColorBlendStateCreateInfo () zero False LOGIC_OP_COPY (fromList [initColorBlendState]) (0, 0, 0, 0)
   let dynamicStateCreate = PipelineDynamicStateCreateInfo zero (fromList [DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_LINE_WIDTH])
-  descriptorLayout <- makeDescriptorSetLayout device allocator
   let pipelineLayoutCreate = PipelineLayoutCreateInfo zero (fromList [descriptorLayout]) empty
   pipelineLayout <- createPipelineLayout device pipelineLayoutCreate Nothing
   let swapchainFormat = VKSWAPCHAIN.imageFormat swapchainInfo
@@ -215,7 +221,6 @@ destroyPipelineEtc dev (PipelineEtc pipeline renderPassInstance descriptorLayout
   destroyPipelineLayout dev layoutInstance Nothing
   destroyRenderPass dev renderPassInstance Nothing
   destroyPipeline dev pipeline Nothing
-  destroyDescriptorSetLayout dev descriptorLayoutInstance Nothing
 
 
 
@@ -432,8 +437,8 @@ instance Storable UniformBufferObject where
     -- treat as an array of @M44 Float@ objects
     let pMats = castPtr @UniformBufferObject @(M44 Float) p
     m <- peekElemOff pMats 0
-    v <- peekByteOff pMats 1
-    p <- peekByteOff pMats 2
+    v <- peekElemOff pMats 1
+    p <- peekElemOff pMats 2
     return (UBO m v p)
   poke p (UBO m v prj) = do
     let pMats = castPtr @UniformBufferObject @(M44 Float) p
@@ -446,6 +451,9 @@ makeDescriptorSetLayout device allocator = do
   let dBinding = DescriptorSetLayoutBinding 0 DESCRIPTOR_TYPE_UNIFORM_BUFFER 1 SHADER_STAGE_VERTEX_BIT empty
   let createInfo = DescriptorSetLayoutCreateInfo () zero (fromList [dBinding])
   createDescriptorSetLayout device createInfo allocator
+
+unmakeDescriptorSetLayout :: Device -> DescriptorSetLayout -> Maybe AllocationCallbacks -> IO ()
+unmakeDescriptorSetLayout device descriptorSetLayoutInstance allocator = destroyDescriptorSetLayout device descriptorSetLayoutInstance allocator
 
 makeImageFrameResources :: Device -> PhysicalDevice -> Vector Image -> Maybe AllocationCallbacks -> IO (Vector ImageFrameResources)
 makeImageFrameResources device phy images allocator = mapM makeSingleFrameResource images
@@ -486,6 +494,49 @@ destroyUniformBuffers :: Device -> Vector UBuffer -> Maybe AllocationCallbacks -
 destroyUniformBuffers d ubs allocator = do
   forM_ ubs (\u -> destroyUniformBuffer d u allocator)
 
+
+updateUniformBuffer :: Device -> UBuffer -> Float -> Extent2D -> IO ()
+updateUniformBuffer device (UBuffer _ mem) elapsedTime (Extent2D width height) = do
+  -- our shaders use premultiply so matrices need to be transposed
+  let modelMatrix = transpose $ mkTransformation (axisAngle (V3 0 0 1) elapsedTime) (V3 (sin elapsedTime) 0 (0.1))
+  let viewMatrix = transpose $ lookAt (V3 2 2 2) (V3 0 0 0) (V3 0 0 1)
+  let scaleMatrix sx sy sz = V4 (V4 sx 0 0 0) (V4 0 sy 0 0) (V4 0 0 sz 0) (V4 0 0 0 1)
+  let aspect = (fromIntegral width) / (fromIntegral height)
+  let projMatrix = transpose $ (perspective (45 * 3.14159 / 180.0) aspect 0.1 10) !*! (scaleMatrix 1 (-1) 1)
+  let newUniforms = UBO modelMatrix viewMatrix projMatrix
+  withMappedMemory device mem 0 (fromIntegral $ sizeOf newUniforms) zero bracket $ \ptr -> poke (castPtr ptr) newUniforms
+  return ()
+
+
+makeDescriptorPool :: Device -> Int -> Maybe AllocationCallbacks -> IO DescriptorPool
+makeDescriptorPool device count allocator = do
+  let descriptorPoolSize = DescriptorPoolSize DESCRIPTOR_TYPE_UNIFORM_BUFFER (fromIntegral count)
+  let dCreateInfo = DescriptorPoolCreateInfo () zero (fromIntegral count) (fromList [descriptorPoolSize])
+  createDescriptorPool device dCreateInfo allocator
+
+unmakeDescriptorPool :: Device -> DescriptorPool -> Maybe AllocationCallbacks -> IO ()
+unmakeDescriptorPool device dPool allocator = destroyDescriptorPool device dPool allocator
+
+
+makeDescriptorSets :: Device -> DescriptorPool -> DescriptorSetLayout -> Int -> IO (Vector DescriptorSet)
+makeDescriptorSets device dPool dLayout count = do
+  let layouts = replicate count dLayout
+  let allocateInfo = DescriptorSetAllocateInfo () dPool (fromList layouts)
+  allocateDescriptorSets device allocateInfo
+
+
+-- | Descriptor set are automatically freed when their pool is destroyed, so this function is optional
+unmakeDescriptorSets :: Device -> DescriptorPool -> (Vector DescriptorSet) -> IO ()
+unmakeDescriptorSets device dPool dSets = freeDescriptorSets device dPool dSets
+
+syncDescriptorSets :: Device -> Vector UBuffer -> Vector DescriptorSet -> IO ()
+syncDescriptorSets device dBufs dSets = mapM_ sync1 $ zip (toList dBufs) (toList dSets)
+  where
+    sync1 ((UBuffer dBuf _), dSet) = do
+      let bufferInfo = DescriptorBufferInfo dBuf 0 (fromIntegral $ sizeOf (undefined :: UniformBufferObject))
+      let writeDescriptor = SomeStruct $ WriteDescriptorSet () dSet 0 0 1 DESCRIPTOR_TYPE_UNIFORM_BUFFER empty (fromList [bufferInfo]) empty
+      updateDescriptorSets device (fromList [writeDescriptor]) empty
+
 --
 -- command buffers
 --
@@ -494,16 +545,16 @@ destroyUniformBuffers d ubs allocator = do
 
 -- | Record the same set of commands (pre-defined in 'recordCommands') to all the commandbuffers passed
 --   in. Needs the framebuffers associated with each command buffer.
-recordCommandBuffers :: Vector CommandBuffer -> Vector Framebuffer -> TransientResources -> SwapchainCreateInfoKHR '[] -> PipelineEtc -> IO ()
-recordCommandBuffers cbs fbs tRes sci pipeETC = do
-  let buffers = zip (toList cbs) (toList fbs)
-  let goBuffers (cb, fb) = recordCommands cb tRes sci (rendPass pipeETC) (pipelineInstance pipeETC) fb
+recordCommandBuffers :: Vector CommandBuffer -> Vector Framebuffer -> TransientResources -> SwapchainCreateInfoKHR '[] -> PipelineEtc -> Vector DescriptorSet -> IO ()
+recordCommandBuffers cbs fbs tRes sci pipeETC dSets = do
+  let buffers = zip3 (toList cbs) (toList fbs) (toList dSets)
+  let goBuffers (cb, fb, dSet) = recordCommands cb tRes sci (rendPass pipeETC) (pipelineInstance pipeETC) fb (pipeLayout pipeETC) dSet
   mapM_ goBuffers buffers
   return ()
 
 -- | Simple recording of a command buffer to draw using the given renderpass, pipeline, and framebuffer.
-recordCommands :: CommandBuffer -> TransientResources -> SwapchainCreateInfoKHR '[] -> RenderPass -> Pipeline -> Framebuffer -> IO ()
-recordCommands buf tRes sce pass pipe fb = do
+recordCommands :: CommandBuffer -> TransientResources -> SwapchainCreateInfoKHR '[] -> RenderPass -> Pipeline -> Framebuffer -> PipelineLayout -> DescriptorSet -> IO ()
+recordCommands buf tRes sce pass pipe fb pLayout dSet = do
   beginCommandBuffer buf (CommandBufferBeginInfo () zero Nothing)
   let renderarea = Rect2D (Offset2D 0 0) (VKSWAPCHAIN.imageExtent $ sce)
   let clearTo = fromList [Color (Float32 0 0 0 1)]
@@ -515,6 +566,7 @@ recordCommands buf tRes sce pass pipe fb = do
   cmdBindVertexBuffers buf 0 (fromList vBufs) (fromList offsets)
   let (VBuffer ixBuf _) = indexBuffer tRes
   cmdBindIndexBuffer buf ixBuf 0 INDEX_TYPE_UINT16
+  cmdBindDescriptorSets buf PIPELINE_BIND_POINT_GRAPHICS pLayout 0 (fromList [dSet]) empty
   cmdDrawIndexed buf (fromIntegral $ length indexData) 1 0 0 0
   cmdEndRenderPass buf
   endCommandBuffer buf

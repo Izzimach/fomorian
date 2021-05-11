@@ -23,8 +23,6 @@ import Data.ByteString (ByteString)
 import Data.IORef
 import Data.Vector ((!), Vector, empty, findIndex, fromList)
 import Data.Word (Word32, Word64)
-import Fomorian.Vulkan.SwapChainEtc
-import Fomorian.Windowing
 import Foreign.Marshal
 import Foreign.Ptr
 import Foreign.Storable
@@ -40,6 +38,8 @@ import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
 import Vulkan.Extensions.VK_KHR_win32_surface
 import Vulkan.Zero
 
+import Fomorian.Windowing
+import Fomorian.Vulkan.SwapChainEtc
 import Fomorian.Vulkan.TransientResources
 
 data WindowEtc = WindowEtc
@@ -64,6 +64,8 @@ data VulkanConfig a = VulkanConfig
   }
 
 -- | This is a C function used as a callback to handle the vulkan validation messages.
+--   Note that since vulkan calls are unsafe by default you can't write a debug callback in Haskell.
+--   To change this you can compile the vulkan package with 'safe-foreign-calls'.
 foreign import ccall unsafe "VulkanCallback.c &vulkanDebugCallback" debugCallbackPtr :: PFN_vkDebugUtilsMessengerCallbackEXT
 
 data VulkanValidation = UseValidation | NoValidation

@@ -44,6 +44,9 @@ data SwapChainEtc = SwapChainEtc
     swapchainFramebuffers :: Vector Framebuffer,
     swapchainCommandBuffers :: Vector CommandBuffer,
     swapchainPerFrameResources :: Vector ImageFrameResources,
+    swapchainDescriptorPool :: DescriptorPool,
+    swapchainDescriptorSets :: Vector DescriptorSet,
+    swapchainDescriptorSetLayoutInstance :: DescriptorSetLayout,
     swapchainPipeline :: PipelineEtc,
     swapchainCreateInfo :: SwapchainCreateInfoKHR '[]
   }
@@ -109,21 +112,29 @@ createSwapChainEtc device phy cpool tRes createInfo allocator = do
   newSwapchain <- createSwapchainKHR device createInfo allocator
   (_, newImages) <- getSwapchainImagesKHR device newSwapchain
   newImageViews <- createImageViews device createInfo newImages
-  newPipe <- liftIO $ buildSimplePipeline device allocator createInfo
+  descriptorSetLayoutInstance <- makeDescriptorSetLayout device allocator
+  dPool <- makeDescriptorPool device (length newImages) allocator
+  dSets <- makeDescriptorSets device dPool descriptorSetLayoutInstance (length newImages)
+  fRes <- makeImageFrameResources device phy newImages allocator
+  let uBufs = fmap uniforms fRes
+  syncDescriptorSets device uBufs dSets
+  newPipe <- liftIO $ buildSimplePipeline device allocator descriptorSetLayoutInstance createInfo
   framebuffers <- makeFramebuffers device newPipe createInfo newImageViews
   cmdBuffers <- makeCommandBuffers device cpool framebuffers
-  liftIO $ recordCommandBuffers cmdBuffers framebuffers tRes createInfo newPipe
-  fRes <- makeImageFrameResources device phy newImages allocator
-  return (SwapChainEtc newSwapchain newImages newImageViews framebuffers cmdBuffers fRes newPipe createInfo)
+  recordCommandBuffers cmdBuffers framebuffers tRes createInfo newPipe dSets
+  return (SwapChainEtc newSwapchain newImages newImageViews framebuffers cmdBuffers fRes dPool dSets descriptorSetLayoutInstance newPipe createInfo)
 
 destroySwapChainEtc :: Device -> CommandPool -> Maybe AllocationCallbacks -> SwapChainEtc -> IO ()
 destroySwapChainEtc device cpool allocator swETC = do
   -- destroy in reverse order from creation
-  let (SwapChainEtc sc _ imageViews framebuffers commandbuffers frameresources pipe _) = swETC
+  let (SwapChainEtc sc _ imageViews framebuffers commandbuffers frameresources dPool _dSets dLayout pipe _) = swETC
   destroyImageFrameResources device frameresources allocator
   freeCommandBuffers device cpool commandbuffers
   mapM (\fb -> destroyFramebuffer device fb Nothing) framebuffers
-  liftIO $ destroyPipelineEtc device pipe
+  destroyPipelineEtc device pipe
+  unmakeDescriptorPool device dPool allocator
+  -- don't need to destory descriptor sets, they get destroyed when the pool is destroyed
+  unmakeDescriptorSetLayout device dLayout allocator
   mapM (\iv -> destroyImageView device iv Nothing) imageViews
   destroySwapchainKHR device sc allocator
 
