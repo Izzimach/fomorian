@@ -117,7 +117,8 @@ createSwapChainEtc device phy cpool tRes createInfo allocator = do
   dSets <- makeDescriptorSets device dPool descriptorSetLayoutInstance (length newImages)
   fRes <- makeImageFrameResources device phy newImages allocator
   let uBufs = fmap uniforms fRes
-  syncDescriptorSets device uBufs dSets
+  let imgBuffer = textureImage tRes
+  syncDescriptorSets device uBufs imgBuffer dSets
   newPipe <- liftIO $ buildSimplePipeline device allocator descriptorSetLayoutInstance createInfo
   framebuffers <- makeFramebuffers device newPipe createInfo newImageViews
   cmdBuffers <- makeCommandBuffers device cpool framebuffers
@@ -131,7 +132,7 @@ destroySwapChainEtc device cpool allocator swETC = do
   destroyImageFrameResources device frameresources allocator
   freeCommandBuffers device cpool commandbuffers
   mapM (\fb -> destroyFramebuffer device fb Nothing) framebuffers
-  destroyPipelineEtc device pipe
+  destroyPipelineEtc device pipe allocator
   unmakeDescriptorPool device dPool allocator
   -- don't need to destory descriptor sets, they get destroyed when the pool is destroyed
   unmakeDescriptorSetLayout device dLayout allocator

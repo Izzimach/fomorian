@@ -127,8 +127,8 @@ validatedInstance baseCreateInfo =
 --   All these are wrapped with the user-provided wrapper function (which is usually just 'bracket')
 --   to deallocate resources when the program exits, with or without an exception.
 withWindowEtc ::
-  (PokeChain a, Extendss InstanceCreateInfo a) =>
-  VulkanConfig a ->
+  (PokeChain q, Extendss InstanceCreateInfo q) =>
+  VulkanConfig q ->
   WindowInitData ->
   Maybe AllocationCallbacks ->
   (forall a b c. IO a -> (a -> IO b) -> (a -> IO c) -> IO c) ->
@@ -194,14 +194,15 @@ findSuitableDevice i s = do
 --    - Supports the surface provided.
 suitableDevice :: SurfaceKHR -> PhysicalDevice -> IO Bool
 suitableDevice s d = do
-  _features <- getPhysicalDeviceFeatures d
+  features <- getPhysicalDeviceFeatures d
+  let supportsAnisotropy = samplerAnisotropy features 
   _properties <- getPhysicalDeviceProperties d
   _mem <- getPhysicalDeviceMemoryProperties d
   gq <- runMaybeT $ findGraphicsQueue d
   pq <- runMaybeT $ findSurfaceQueue s d
   -- we need both a graphics queue and presentation queue to be valid
   case (gq, pq) of
-    (Just _, Just _) -> return True
+    (Just _, Just _) -> return supportsAnisotropy
     (_, _) -> return False
 
 -- | Given a device, returns index of the first queue that supports
@@ -243,13 +244,14 @@ chosenDeviceCreateInfo (DeviceEtc _h gq pq) =
         if (gq == pq)
           then [simpleQueue gq]
           else [simpleQueue gq, simpleQueue pq]
+      deviceFeatures = zero { samplerAnisotropy = True }
    in DeviceCreateInfo
         ()
         (DeviceCreateFlags 0)
         (fromList queueList) -- queues
         (fromList []) -- enabledLayerNames
         (fromList [KHR_SWAPCHAIN_EXTENSION_NAME]) -- enabledExtensionNames
-        Nothing -- device features to enable
+        (Just deviceFeatures) -- device features to enable
 
 data SyncObjects = SyncObjects (Vector Semaphore) (Vector Semaphore) (Vector Fence)
   deriving (Show)

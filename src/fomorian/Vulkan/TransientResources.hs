@@ -28,9 +28,11 @@ module Fomorian.Vulkan.TransientResources (
 import Control.Exception
 import Data.Bits
 import Data.ByteString (readFile)
+import Data.Coerce (coerce)
 import Data.Foldable
 import Data.Vector ((!), Vector, empty, fromList)
-import Data.Word (Word16, Word32)
+import qualified Data.Vector.Storable as VS
+import Data.Word (Word8, Word16, Word32)
 import Foreign.Marshal
 import Foreign.Ptr
 import Foreign.Storable
@@ -42,13 +44,16 @@ import Vulkan.Core10.MemoryManagement as VKMEM
 import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
 import Vulkan.Zero
 
+import qualified Codec.Picture as JUICY
+import qualified Codec.Picture.Types as JC
+
 -- | Holds all resources that should then be unloaded later
 data TransientResources = TransientResources
   { 
     vertexBuffer :: VBuffer,
-    indexBuffer :: VBuffer
+    indexBuffer :: VBuffer,
+    textureImage :: IMGBuffer
   }
-  deriving (Show)
 
 -- | Resources that need to be allocated per imageframe, which may vary depending on the SwapChain.
 --   Thus these need to be re-allocated when the swapchain is created or recreated
@@ -68,12 +73,14 @@ loadTransientResources :: Device -> PhysicalDevice -> CommandPool -> Queue -> Ma
 loadTransientResources d pd cPool gq allocator = do
   v <- createLocalVertexBuffer d pd cPool gq vertexData allocator
   ix <- createLocalIndexBuffer d pd cPool gq indexData allocator
-  return (TransientResources v ix)
+  img <- makeTextureImage d pd cPool gq ("resources" </> "textures" </> "owl.png") allocator
+  return (TransientResources v ix img)
 
 unloadTransientResources :: Device -> TransientResources -> Maybe AllocationCallbacks -> IO ()
-unloadTransientResources d (TransientResources vb ix) allocator = do
+unloadTransientResources d (TransientResources vb ix img) allocator = do
   destroyVertexBuffer d vb allocator
   destroyIndexBuffer d ix allocator
+  unmakeTextureImage d img allocator
 
 
 
@@ -151,7 +158,7 @@ buildSimplePipeline device allocator descriptorLayout swapchainInfo = do
   let colorBlendCreate = PipelineColorBlendStateCreateInfo () zero False LOGIC_OP_COPY (fromList [initColorBlendState]) (0, 0, 0, 0)
   let dynamicStateCreate = PipelineDynamicStateCreateInfo zero (fromList [DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_LINE_WIDTH])
   let pipelineLayoutCreate = PipelineLayoutCreateInfo zero (fromList [descriptorLayout]) empty
-  pipelineLayout <- createPipelineLayout device pipelineLayoutCreate Nothing
+  pipelineLayout <- createPipelineLayout device pipelineLayoutCreate allocator
   let swapchainFormat = VKSWAPCHAIN.imageFormat swapchainInfo
   let attachmentDescription =
         AttachmentDescription
@@ -190,7 +197,7 @@ buildSimplePipeline device allocator descriptorLayout swapchainInfo = do
           (fromList [attachmentDescription])
           (fromList [subpassDescription])
           (fromList [subpassDependency])
-  initRenderPass <- createRenderPass device renderPassCreateInfo Nothing
+  initRenderPass <- createRenderPass device renderPassCreateInfo allocator
   let pipelineCreateInfo =
         GraphicsPipelineCreateInfo
           () -- next
@@ -210,17 +217,17 @@ buildSimplePipeline device allocator descriptorLayout swapchainInfo = do
           0 -- subpass
           NULL_HANDLE -- basePipelineHandle
           (-1) -- basePipelineIndex
-  (_, pipelines) <- createGraphicsPipelines device NULL_HANDLE (fromList [SomeStruct pipelineCreateInfo]) Nothing
+  (_, pipelines) <- createGraphicsPipelines device NULL_HANDLE (fromList [SomeStruct pipelineCreateInfo]) allocator
   let onepipe = pipelines ! 0
   return $ PipelineEtc onepipe initRenderPass descriptorLayout pipelineLayout (fromList [vm, fm])
 
 -- | Clean up the pipeline - usually called via 'bracket'
-destroyPipelineEtc :: Device -> PipelineEtc -> IO ()
-destroyPipelineEtc dev (PipelineEtc pipeline renderPassInstance descriptorLayoutInstance layoutInstance modules) = do
+destroyPipelineEtc :: Device -> PipelineEtc -> Maybe AllocationCallbacks -> IO ()
+destroyPipelineEtc dev (PipelineEtc pipeline renderPassInstance descriptorLayoutInstance layoutInstance modules) allocator = do
   mapM_ (\m -> destroyShaderModule dev m Nothing) modules
-  destroyPipelineLayout dev layoutInstance Nothing
-  destroyRenderPass dev renderPassInstance Nothing
-  destroyPipeline dev pipeline Nothing
+  destroyPipelineLayout dev layoutInstance allocator
+  destroyRenderPass dev renderPassInstance allocator
+  destroyPipeline dev pipeline allocator
 
 
 
@@ -246,35 +253,41 @@ data StagingBuffer = StagingBuffer Buffer DeviceMemory
 
 
 
-data OneVertex = OneVertex (V2 Float) (V3 Float)
+data OneVertex = OneVertex (V2 Float) (V3 Float) (V2 Float)
+
+blankVertex :: OneVertex
+blankVertex = OneVertex (V2 0 0) (V3 0 0 0) (V2 0 0)
 
 instance Storable OneVertex where
-  sizeOf (OneVertex a1 a2) = sizeOf a1 + sizeOf a2
+  sizeOf (OneVertex a1 a2 a3) = sizeOf a1 + sizeOf a2 + sizeOf a3
   alignment _ = 4
   peek p = do
     a1 <- peek (castPtr @OneVertex @(V2 Float) p)
     a2 <- peekByteOff p 8
-    return (OneVertex a1 a2)
-  poke p (OneVertex a1 a2) = do
+    a3 <- peekByteOff p 20
+    return (OneVertex a1 a2 a3)
+  poke p (OneVertex a1 a2 a3) = do
     poke (castPtr @OneVertex @(V2 Float) p) a1
     pokeByteOff p 8 a2
+    pokeByteOff p 20 a3
 
 -- Vertex data for drawing
 vertexData :: [OneVertex]
 vertexData =
-  [ (OneVertex (V2 (-0.5) (-0.5)) (V3 1.0 0.0 0.0)),
-    (OneVertex (V2 0.5 (-0.5)) (V3 0.0 1.0 0.0)),
-    (OneVertex (V2 0.5 0.5) (V3 1.0 1.0 1.0)),
-    (OneVertex (V2 (-0.5) (0.5)) (V3 0.0 0.0 1.0))
+  [ (OneVertex (V2 (-0.5) (-0.5)) (V3 1.0 0.0 0.0) (V2 1.0 0.0)),
+    (OneVertex (V2 0.5 (-0.5)) (V3 0.0 1.0 0.0) (V2 0.0 0.0)),
+    (OneVertex (V2 0.5 0.5) (V3 1.0 1.0 1.0) (V2 0.0 1.0)),
+    (OneVertex (V2 (-0.5) (0.5)) (V3 0.0 0.0 1.0) (V2 1.0 1.0))
   ]
 
 vertexDataBinding :: VertexInputBindingDescription
-vertexDataBinding = VertexInputBindingDescription 0 (4 * 5) VERTEX_INPUT_RATE_VERTEX
+vertexDataBinding = VertexInputBindingDescription 0 (fromIntegral $ sizeOf blankVertex) VERTEX_INPUT_RATE_VERTEX
 
 vertexInputAttrs :: [VertexInputAttributeDescription]
 vertexInputAttrs =
   [ (VertexInputAttributeDescription 0 0 FORMAT_R32G32_SFLOAT 0),
-    (VertexInputAttributeDescription 1 0 FORMAT_R32G32B32_SFLOAT 8)
+    (VertexInputAttributeDescription 1 0 FORMAT_R32G32B32_SFLOAT 8),
+    (VertexInputAttributeDescription 2 0 FORMAT_R32G32_SFLOAT 20)
   ]
 
 indexData :: [Word16]
@@ -317,7 +330,7 @@ allocBuffer d pd bufSize usageFlags memoryProps allocator = do
       (MemoryTypeMask (memoryTypeBits req))
       memoryProps
   let allocInfo = MemoryAllocateInfo () (VKMEM.size req) memIndex
-  mem <- allocateMemory d allocInfo Nothing
+  mem <- allocateMemory d allocInfo allocator
   bindBufferMemory d buf mem 0
   return (VBuffer buf mem)
 
@@ -402,19 +415,7 @@ destroyStagingBuffer d (StagingBuffer buf mem) allocator = do
 -- | Run a copy command to transfer data from a staging buffer into a (possibly GPU local) buffer.
 copyBuffer :: Device -> CommandPool -> Queue -> StagingBuffer -> VBuffer -> DeviceSize -> IO ()
 copyBuffer d cp gq (StagingBuffer srcBuf _srcMem) (VBuffer dstBuf _dstMem) bufSize = do
-  let allocInfo = CommandBufferAllocateInfo cp COMMAND_BUFFER_LEVEL_PRIMARY 1
-  cBufs <- allocateCommandBuffers d allocInfo
-  let cBuf = cBufs ! 0
-  let beginInfo = CommandBufferBeginInfo () COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
-  beginCommandBuffer cBuf beginInfo
-  cmdCopyBuffer cBuf srcBuf dstBuf (fromList [BufferCopy 0 0 bufSize])
-  endCommandBuffer cBuf
-  let submitInfo = SomeStruct $ SubmitInfo () empty empty (fromList [commandBufferHandle cBuf]) empty
-  queueSubmit gq (fromList [submitInfo]) NULL_HANDLE
-  queueWaitIdle gq
-  freeCommandBuffers d cp (fromList [cBuf])
-  return ()
-
+  withOneTimeCommand d cp gq bracket $ \cBuf -> cmdCopyBuffer cBuf srcBuf dstBuf (fromList [BufferCopy 0 0 bufSize])
 
 --
 -- Descriptor sets
@@ -449,7 +450,8 @@ instance Storable UniformBufferObject where
 makeDescriptorSetLayout :: Device -> Maybe AllocationCallbacks -> IO DescriptorSetLayout
 makeDescriptorSetLayout device allocator = do
   let dBinding = DescriptorSetLayoutBinding 0 DESCRIPTOR_TYPE_UNIFORM_BUFFER 1 SHADER_STAGE_VERTEX_BIT empty
-  let createInfo = DescriptorSetLayoutCreateInfo () zero (fromList [dBinding])
+  let dBinding2 = DescriptorSetLayoutBinding 1 DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER 1 SHADER_STAGE_FRAGMENT_BIT empty
+  let createInfo = DescriptorSetLayoutCreateInfo () zero (fromList [dBinding, dBinding2])
   createDescriptorSetLayout device createInfo allocator
 
 unmakeDescriptorSetLayout :: Device -> DescriptorSetLayout -> Maybe AllocationCallbacks -> IO ()
@@ -510,8 +512,9 @@ updateUniformBuffer device (UBuffer _ mem) elapsedTime (Extent2D width height) =
 
 makeDescriptorPool :: Device -> Int -> Maybe AllocationCallbacks -> IO DescriptorPool
 makeDescriptorPool device count allocator = do
-  let descriptorPoolSize = DescriptorPoolSize DESCRIPTOR_TYPE_UNIFORM_BUFFER (fromIntegral count)
-  let dCreateInfo = DescriptorPoolCreateInfo () zero (fromIntegral count) (fromList [descriptorPoolSize])
+  let uniformPoolSize = DescriptorPoolSize DESCRIPTOR_TYPE_UNIFORM_BUFFER (fromIntegral count)
+  let imagePoolSize = DescriptorPoolSize DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER (fromIntegral count)
+  let dCreateInfo = DescriptorPoolCreateInfo () zero (fromIntegral count) (fromList [uniformPoolSize, imagePoolSize])
   createDescriptorPool device dCreateInfo allocator
 
 unmakeDescriptorPool :: Device -> DescriptorPool -> Maybe AllocationCallbacks -> IO ()
@@ -529,13 +532,142 @@ makeDescriptorSets device dPool dLayout count = do
 unmakeDescriptorSets :: Device -> DescriptorPool -> (Vector DescriptorSet) -> IO ()
 unmakeDescriptorSets device dPool dSets = freeDescriptorSets device dPool dSets
 
-syncDescriptorSets :: Device -> Vector UBuffer -> Vector DescriptorSet -> IO ()
-syncDescriptorSets device dBufs dSets = mapM_ sync1 $ zip (toList dBufs) (toList dSets)
+syncDescriptorSets :: Device -> Vector UBuffer -> IMGBuffer -> Vector DescriptorSet -> IO ()
+syncDescriptorSets device dBufs (IMGBuffer _ _ iView iSampler _) dSets = mapM_ sync1 $ zip (toList dBufs) (toList dSets)
   where
     sync1 ((UBuffer dBuf _), dSet) = do
       let bufferInfo = DescriptorBufferInfo dBuf 0 (fromIntegral $ sizeOf (undefined :: UniformBufferObject))
-      let writeDescriptor = SomeStruct $ WriteDescriptorSet () dSet 0 0 1 DESCRIPTOR_TYPE_UNIFORM_BUFFER empty (fromList [bufferInfo]) empty
-      updateDescriptorSets device (fromList [writeDescriptor]) empty
+      let imageInfo = DescriptorImageInfo iSampler iView IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+      let writeDescriptor1 = SomeStruct $ WriteDescriptorSet () dSet 0 0 1 DESCRIPTOR_TYPE_UNIFORM_BUFFER          empty (fromList [bufferInfo]) empty
+      let writeDescriptor2 = SomeStruct $ WriteDescriptorSet () dSet 1 0 1 DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER (fromList [imageInfo]) empty empty
+      updateDescriptorSets device (fromList [writeDescriptor1, writeDescriptor2]) empty
+
+
+
+--
+-- images
+--
+
+data IMGBuffer = IMGBuffer Image DeviceMemory ImageView Sampler (ImageCreateInfo '[])
+
+
+partialLoadImage :: FilePath -> IO (Either String (JUICY.Image JUICY.PixelRGBA8, Int, Int))
+partialLoadImage filePath = do
+  dImage <- JUICY.readImage filePath
+  case dImage of
+    Left errorMessage -> return $ Left $ "Error loading file " ++ filePath ++ ": " ++ errorMessage  
+    Right img -> do
+      let w = JUICY.dynamicMap JUICY.imageWidth img
+      let h = JUICY.dynamicMap JUICY.imageHeight img
+      let stdImage = toRGBA8 img
+      return $ Right $ (stdImage, w, h)
+  where
+    toRGBA8 :: JUICY.DynamicImage -> JUICY.Image JUICY.PixelRGBA8
+    toRGBA8 (JC.ImageRGBA8 img) = JC.promoteImage img
+    toRGBA8 (JC.ImageRGB8 img)  = JC.promoteImage img
+    toRGBA8 _                   = undefined
+
+
+makeIMGBuffer :: Device -> PhysicalDevice -> Int -> Int -> Format -> ImageTiling -> ImageUsageFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO IMGBuffer
+makeIMGBuffer device phy w h imgFormat imgTiling imgUsage memoryProps allocator = do
+  let imgInfo = ImageCreateInfo ()
+                  zero
+                  IMAGE_TYPE_2D
+                  imgFormat
+                  (Extent3D (fromIntegral w) (fromIntegral h) 1)
+                  1 -- mipLevels
+                  1 -- arrayLayers
+                  SAMPLE_COUNT_1_BIT
+                  imgTiling --IMAGE_TILING_OPTIMAL
+                  imgUsage --(IMAGE_USAGE_TRANSFER_DST_BIT .|. IMAGE_USAGE_SAMPLED_BIT)
+                  SHARING_MODE_EXCLUSIVE
+                  (fromList [])
+                  IMAGE_LAYOUT_UNDEFINED
+  imageHandle <- createImage device imgInfo allocator
+  memReq <- getImageMemoryRequirements device imageHandle
+  memIndex <-
+    findMemoryType
+      phy
+      (MemoryTypeMask (memoryTypeBits memReq))
+      memoryProps
+  let allocInfo = MemoryAllocateInfo () (VKMEM.size memReq) memIndex
+  iMem <- allocateMemory device allocInfo allocator
+  bindImageMemory device imageHandle iMem 0
+  let viewInfo = ImageViewCreateInfo () zero imageHandle IMAGE_VIEW_TYPE_2D FORMAT_R8G8B8A8_SRGB zero (ImageSubresourceRange IMAGE_ASPECT_COLOR_BIT 0 1 0 1)
+  imgView <- createImageView device viewInfo allocator
+  phyProps <- getPhysicalDeviceProperties phy
+  let samplerInfo = SamplerCreateInfo () zero 
+                      FILTER_LINEAR -- magFilter
+                      FILTER_LINEAR -- minFilter
+                      SAMPLER_MIPMAP_MODE_LINEAR -- mapmapMode
+                      SAMPLER_ADDRESS_MODE_REPEAT -- addressModeU
+                      SAMPLER_ADDRESS_MODE_REPEAT -- addressModeV
+                      SAMPLER_ADDRESS_MODE_REPEAT -- addressModeW
+                      0.0 -- mipLodBias
+                      True -- anisotopryEnable
+                      (maxSamplerAnisotropy $ limits phyProps)  -- maxAnisotropy
+                      False -- compareEnable
+                      COMPARE_OP_ALWAYS -- compareOp
+                      0.0 -- minLod
+                      0.0 -- maxLod
+                      BORDER_COLOR_INT_OPAQUE_BLACK -- borderColor
+                      False -- unnormalizedCoordinates
+  imgSampler <- createSampler device samplerInfo allocator
+  return (IMGBuffer imageHandle iMem imgView imgSampler imgInfo)
+
+
+makeTextureImage :: Device -> PhysicalDevice -> CommandPool -> Queue -> FilePath -> Maybe AllocationCallbacks -> IO IMGBuffer
+makeTextureImage device phy cPool gQueue filePath allocator = do
+  imageResult <- partialLoadImage filePath
+  case imageResult of
+    Left errString -> fail errString
+    Right (imgRGBA, w, h) -> do
+      let imageByteSize = fromIntegral (w * h * 4)
+      let imagePixels = (JC.imageData imgRGBA) :: VS.Vector Word8
+      let imageBytes = VS.toList imagePixels
+      staging@(StagingBuffer sBuf _) <- createStagingBuffer device phy imageBytes allocator
+      imgBuffer@(IMGBuffer img _ _ _ _) <- makeIMGBuffer device phy w h FORMAT_R8G8B8A8_SRGB IMAGE_TILING_OPTIMAL (IMAGE_USAGE_TRANSFER_DST_BIT .|. IMAGE_USAGE_SAMPLED_BIT) MEMORY_PROPERTY_DEVICE_LOCAL_BIT allocator
+      transitionImageLayout device cPool gQueue img FORMAT_R8G8B8A8_SRGB IMAGE_LAYOUT_UNDEFINED IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+      copyBufferToImage device cPool gQueue sBuf img w h
+      transitionImageLayout device cPool gQueue img FORMAT_R8G8B8A8_SRGB IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+      destroyStagingBuffer device staging allocator
+      return imgBuffer
+
+
+
+unmakeTextureImage :: Device -> IMGBuffer -> Maybe AllocationCallbacks -> IO ()
+unmakeTextureImage = unmakeIMGBuffer
+
+unmakeIMGBuffer :: Device -> IMGBuffer -> Maybe AllocationCallbacks -> IO ()
+unmakeIMGBuffer device (IMGBuffer imgHandle imgMem imgView imgSampler _imgInfo) allocator = do
+  destroySampler device imgSampler allocator
+  destroyImageView device imgView allocator
+  destroyImage device imgHandle allocator
+  freeMemory device imgMem allocator
+  return ()
+
+transitionImageLayout :: Device -> CommandPool -> Queue -> Image -> Format -> ImageLayout -> ImageLayout -> IO ()
+transitionImageLayout device cPool gQueue img format oldLayout newLayout =
+  withOneTimeCommand device cPool gQueue bracket $ \cBuf -> do
+    let (srcMask, dstMask,srcStage,dstStage) = computeBarrierValues oldLayout newLayout
+    let barrier = ImageMemoryBarrier () srcMask dstMask oldLayout newLayout QUEUE_FAMILY_IGNORED QUEUE_FAMILY_IGNORED img (ImageSubresourceRange IMAGE_ASPECT_COLOR_BIT 0 1 0 1)
+    cmdPipelineBarrier cBuf srcStage dstStage zero empty empty (fromList [SomeStruct barrier])
+    return ()
+  where
+    computeBarrierValues IMAGE_LAYOUT_UNDEFINED IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL                = (zero, ACCESS_TRANSFER_WRITE_BIT,
+                                                                                                    PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                                                                                    PIPELINE_STAGE_TRANSFER_BIT)
+    computeBarrierValues IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL = (ACCESS_TRANSFER_WRITE_BIT,ACCESS_SHADER_READ_BIT,
+                                                                                                    PIPELINE_STAGE_TRANSFER_BIT,
+                                                                                                    PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
+
+
+copyBufferToImage :: Device -> CommandPool -> Queue -> Buffer -> Image -> Int -> Int -> IO ()
+copyBufferToImage device cPool gQueue iBuf img width height =
+  withOneTimeCommand device cPool gQueue bracket $ \cBuf -> do
+    let copyInfo = BufferImageCopy 0 0 0 (ImageSubresourceLayers IMAGE_ASPECT_COLOR_BIT 0 0 1) (Offset3D 0 0 0) (Extent3D (fromIntegral width) (fromIntegral height) 1)
+    cmdCopyBufferToImage cBuf iBuf img IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL (fromList [copyInfo])
+
 
 --
 -- command buffers
@@ -570,3 +702,23 @@ recordCommands buf tRes sce pass pipe fb pLayout dSet = do
   cmdDrawIndexed buf (fromIntegral $ length indexData) 1 0 0 0
   cmdEndRenderPass buf
   endCommandBuffer buf
+
+
+
+withOneTimeCommand :: Device -> CommandPool -> Queue -> (IO CommandBuffer -> (CommandBuffer -> IO ()) -> (CommandBuffer -> IO ()) -> IO ()) -> (CommandBuffer -> IO ()) -> IO ()
+withOneTimeCommand device cPool gQueue wrapper wrapped = wrapper startCBuf endCBuf goCBuf
+  where
+    startCBuf = do
+      let allocInfo = CommandBufferAllocateInfo cPool COMMAND_BUFFER_LEVEL_PRIMARY 1
+      cBufs <- allocateCommandBuffers device allocInfo
+      let cBuf = cBufs ! 0
+      let beginInfo = CommandBufferBeginInfo () COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
+      beginCommandBuffer cBuf beginInfo
+      return cBuf
+    endCBuf cBuf = do
+      endCommandBuffer cBuf
+      let submitInfo = SomeStruct $ SubmitInfo () empty empty (fromList [commandBufferHandle cBuf]) empty
+      queueSubmit gQueue (fromList [submitInfo]) NULL_HANDLE
+      queueWaitIdle gQueue
+      freeCommandBuffers device cPool (fromList [cBuf])
+    goCBuf = wrapped
