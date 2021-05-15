@@ -22,7 +22,10 @@ module Fomorian.Vulkan.TransientResources (
   makeDescriptorSets,
   unmakeDescriptorSets,
   syncDescriptorSets,
-  recordCommandBuffers
+  recordCommandBuffers,
+  DepthBuffer(..),
+  makeDepthBuffer,
+  unmakeDepthBuffer
   ) where
 
 import Control.Exception
@@ -30,7 +33,7 @@ import Data.Bits
 import Data.ByteString (readFile)
 import Data.Coerce (coerce)
 import Data.Foldable
-import Data.Vector ((!), Vector, empty, fromList)
+import Data.Vector ((!), Vector, empty, fromList, findIndex)
 import qualified Data.Vector.Storable as VS
 import Data.Word (Word8, Word16, Word32)
 import Foreign.Marshal
@@ -121,8 +124,8 @@ readSPIRV dev shaderPath = do
 --   - front face culling
 --   - one color attachment
 --   - one simple renderpass
-buildSimplePipeline :: Device -> Maybe AllocationCallbacks -> DescriptorSetLayout -> SwapchainCreateInfoKHR '[] -> IO PipelineEtc
-buildSimplePipeline device allocator descriptorLayout swapchainInfo = do
+buildSimplePipeline :: Device -> PhysicalDevice -> Maybe AllocationCallbacks -> DescriptorSetLayout -> SwapchainCreateInfoKHR '[] -> IO PipelineEtc
+buildSimplePipeline device phy allocator descriptorLayout swapchainInfo = do
   (vm, fm) <- readSPIRV device "tut"
   let shaderStages =
         fromList
@@ -160,41 +163,66 @@ buildSimplePipeline device allocator descriptorLayout swapchainInfo = do
   let pipelineLayoutCreate = PipelineLayoutCreateInfo zero (fromList [descriptorLayout]) empty
   pipelineLayout <- createPipelineLayout device pipelineLayoutCreate allocator
   let swapchainFormat = VKSWAPCHAIN.imageFormat swapchainInfo
-  let attachmentDescription =
+  let colorAttachmentDescription =
         AttachmentDescription
           zero
           swapchainFormat
           SAMPLE_COUNT_1_BIT
-          ATTACHMENT_LOAD_OP_CLEAR
-          ATTACHMENT_STORE_OP_STORE
-          ATTACHMENT_LOAD_OP_DONT_CARE
-          ATTACHMENT_STORE_OP_DONT_CARE
+          ATTACHMENT_LOAD_OP_CLEAR -- load
+          ATTACHMENT_STORE_OP_STORE  -- store
+          ATTACHMENT_LOAD_OP_DONT_CARE  -- stencil load
+          ATTACHMENT_STORE_OP_DONT_CARE -- stencil store
           IMAGE_LAYOUT_UNDEFINED
           IMAGE_LAYOUT_PRESENT_SRC_KHR
-  let attachmentReference = AttachmentReference 0 IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+  depthFormat <- findDepthFormat phy
+  let depthAttachmentDescription =
+        AttachmentDescription
+          zero
+          depthFormat
+          SAMPLE_COUNT_1_BIT
+          ATTACHMENT_LOAD_OP_CLEAR  -- load
+          ATTACHMENT_STORE_OP_DONT_CARE -- store
+          ATTACHMENT_LOAD_OP_DONT_CARE  -- stencil load
+          ATTACHMENT_STORE_OP_DONT_CARE -- stencil store
+          IMAGE_LAYOUT_UNDEFINED
+          IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+  let colorAttachmentReference = AttachmentReference 0 IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+  let depthAttachmentReference = AttachmentReference 1 IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+  let depthStencil =
+        PipelineDepthStencilStateCreateInfo
+          zero
+          True   -- depthTestEnable
+          True   -- depthWriteEnable
+          COMPARE_OP_LESS -- depthCompareOp
+          False           -- depthBoundsTestEnable
+          False           -- stencilTestEnable
+          zero            -- front (stencil)
+          zero            -- back (stencil)
+          0.0             -- minDepthBounds
+          1.0             -- maxDepthBounds
   let subpassDescription =
         SubpassDescription
           zero
           PIPELINE_BIND_POINT_GRAPHICS
           empty -- inputAttachments
-          (fromList [attachmentReference]) -- colorAttachments
+          (fromList [colorAttachmentReference]) -- colorAttachments
           empty -- resolveAttachments
-          Nothing -- depthStencilAttachment
+          (Just depthAttachmentReference) -- depthStencilAttachment
           empty -- preserveAttachments
   let subpassDependency =
         SubpassDependency
-          SUBPASS_EXTERNAL
-          0
-          PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-          PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-          zero
-          ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-          zero
+          SUBPASS_EXTERNAL -- srcSubpass
+          0                -- dstSubpass
+          (PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT .|. PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT) -- srcStageMask
+          (PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT .|. PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT) -- dstStageMask
+          zero                                       -- srcAccessMask
+          (ACCESS_COLOR_ATTACHMENT_WRITE_BIT .|. ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)        -- dstAccessMask
+          zero                                       -- dependencyFlags
   let renderPassCreateInfo =
         RenderPassCreateInfo
           ()
           zero
-          (fromList [attachmentDescription])
+          (fromList [colorAttachmentDescription, depthAttachmentDescription])
           (fromList [subpassDescription])
           (fromList [subpassDependency])
   initRenderPass <- createRenderPass device renderPassCreateInfo allocator
@@ -209,7 +237,7 @@ buildSimplePipeline device allocator descriptorLayout swapchainInfo = do
           (Just (SomeStruct $ initViewportState)) -- viewportState
           (SomeStruct rasterizerState) -- rasterizationState
           (Just (SomeStruct initMultisampleState)) -- multisampleState
-          Nothing -- depthStencilState
+          (Just depthStencil) -- depthStencilState
           (Just (SomeStruct colorBlendCreate)) -- colorBlendState
           Nothing -- dynamicState
           pipelineLayout -- layout
@@ -253,31 +281,37 @@ data StagingBuffer = StagingBuffer Buffer DeviceMemory
 
 
 
-data OneVertex = OneVertex (V2 Float) (V3 Float) (V2 Float)
+data OneVertex = OneVertex (V3 Float) (V3 Float) (V2 Float)
 
 blankVertex :: OneVertex
-blankVertex = OneVertex (V2 0 0) (V3 0 0 0) (V2 0 0)
+blankVertex = OneVertex (V3 0 0 0) (V3 0 0 0) (V2 0 0)
 
 instance Storable OneVertex where
   sizeOf (OneVertex a1 a2 a3) = sizeOf a1 + sizeOf a2 + sizeOf a3
   alignment _ = 4
   peek p = do
-    a1 <- peek (castPtr @OneVertex @(V2 Float) p)
-    a2 <- peekByteOff p 8
-    a3 <- peekByteOff p 20
+    a1 <- peek (castPtr @OneVertex @(V3 Float) p)
+    a2 <- peekByteOff p 12
+    a3 <- peekByteOff p 24
     return (OneVertex a1 a2 a3)
   poke p (OneVertex a1 a2 a3) = do
-    poke (castPtr @OneVertex @(V2 Float) p) a1
-    pokeByteOff p 8 a2
-    pokeByteOff p 20 a3
+    poke (castPtr @OneVertex @(V3 Float) p) a1
+    pokeByteOff p 12 a2
+    pokeByteOff p 24 a3
 
 -- Vertex data for drawing
 vertexData :: [OneVertex]
 vertexData =
-  [ (OneVertex (V2 (-0.5) (-0.5)) (V3 1.0 0.0 0.0) (V2 1.0 0.0)),
-    (OneVertex (V2 0.5 (-0.5)) (V3 0.0 1.0 0.0) (V2 0.0 0.0)),
-    (OneVertex (V2 0.5 0.5) (V3 1.0 1.0 1.0) (V2 0.0 1.0)),
-    (OneVertex (V2 (-0.5) (0.5)) (V3 0.0 0.0 1.0) (V2 1.0 1.0))
+  [ 
+    (OneVertex (V3 (-0.5) (-0.5) 0.0) (V3 1.0 0.0 0.0) (V2 1.0 0.0)),
+    (OneVertex (V3 0.5    (-0.5) 0.0) (V3 0.0 1.0 0.0) (V2 0.0 0.0)),
+    (OneVertex (V3 0.5    0.5    0.0) (V3 1.0 1.0 1.0) (V2 0.0 1.0)),
+    (OneVertex (V3 (-0.5) (0.5)  0.0) (V3 0.0 0.0 1.0) (V2 1.0 1.0)),
+
+    (OneVertex (V3 (-0.5) (-0.5) (-0.5)) (V3 1.0 0.0 0.0) (V2 1.0 0.0)),
+    (OneVertex (V3 0.5    (-0.5) (-0.5)) (V3 0.0 1.0 0.0) (V2 0.0 0.0)),
+    (OneVertex (V3 0.5    0.5    (-0.5)) (V3 1.0 1.0 1.0) (V2 0.0 1.0)),
+    (OneVertex (V3 (-0.5) (0.5)  (-0.5)) (V3 0.0 0.0 1.0) (V2 1.0 1.0))
   ]
 
 vertexDataBinding :: VertexInputBindingDescription
@@ -285,13 +319,14 @@ vertexDataBinding = VertexInputBindingDescription 0 (fromIntegral $ sizeOf blank
 
 vertexInputAttrs :: [VertexInputAttributeDescription]
 vertexInputAttrs =
-  [ (VertexInputAttributeDescription 0 0 FORMAT_R32G32_SFLOAT 0),
-    (VertexInputAttributeDescription 1 0 FORMAT_R32G32B32_SFLOAT 8),
-    (VertexInputAttributeDescription 2 0 FORMAT_R32G32_SFLOAT 20)
+  [ (VertexInputAttributeDescription 0 0 FORMAT_R32G32B32_SFLOAT 0),
+    (VertexInputAttributeDescription 1 0 FORMAT_R32G32B32_SFLOAT 12),
+    (VertexInputAttributeDescription 2 0 FORMAT_R32G32_SFLOAT 24)
   ]
 
 indexData :: [Word16]
-indexData = [0, 1, 2, 2, 3, 0]
+indexData = [0, 1, 2, 2, 3, 0,
+             4, 5, 6, 6, 7, 4]
 
 newtype MemoryTypeMask = MemoryTypeMask Word32
   deriving (Eq, Show)
@@ -497,6 +532,26 @@ destroyUniformBuffers d ubs allocator = do
   forM_ ubs (\u -> destroyUniformBuffer d u allocator)
 
 
+
+-- | Perspective that projects z to the range [0,1] used by Vulkan.  We can't use 'Linear.Projection.perspective' since it projects z to [-1,1]
+zeroOnePerspective :: Floating a =>  a -> a -> a -> a -> M44 a
+zeroOnePerspective fov aspect near far =
+  V4 (V4 x 0 0 0)
+     (V4 0 y 0 0)
+     (V4 0 0 z w)
+     (V4 0 0 m 0)
+  where
+    tanHalfFov = tan $ fov / 2
+    x = 1 / (aspect * tanHalfFov)
+    y = 1 / tanHalfFov
+    fpn = far + near
+    fmn = far - near
+    oon = 1 / near
+    oof = 1 / far
+    z = - far / fmn
+    w = 1 / (oof-oon)
+    m = (-1)
+
 updateUniformBuffer :: Device -> UBuffer -> Float -> Extent2D -> IO ()
 updateUniformBuffer device (UBuffer _ mem) elapsedTime (Extent2D width height) = do
   -- our shaders use premultiply so matrices need to be transposed
@@ -504,7 +559,7 @@ updateUniformBuffer device (UBuffer _ mem) elapsedTime (Extent2D width height) =
   let viewMatrix = transpose $ lookAt (V3 2 2 2) (V3 0 0 0) (V3 0 0 1)
   let scaleMatrix sx sy sz = V4 (V4 sx 0 0 0) (V4 0 sy 0 0) (V4 0 0 sz 0) (V4 0 0 0 1)
   let aspect = (fromIntegral width) / (fromIntegral height)
-  let projMatrix = transpose $ (perspective (45 * 3.14159 / 180.0) aspect 0.1 10) !*! (scaleMatrix 1 (-1) 1)
+  let projMatrix = transpose $ (zeroOnePerspective (45 * 3.14159 / 180.0) aspect 0.1 10) !*! (scaleMatrix 1 (-1) 1)
   let newUniforms = UBO modelMatrix viewMatrix projMatrix
   withMappedMemory device mem 0 (fromIntegral $ sizeOf newUniforms) zero bracket $ \ptr -> poke (castPtr ptr) newUniforms
   return ()
@@ -533,7 +588,7 @@ unmakeDescriptorSets :: Device -> DescriptorPool -> (Vector DescriptorSet) -> IO
 unmakeDescriptorSets device dPool dSets = freeDescriptorSets device dPool dSets
 
 syncDescriptorSets :: Device -> Vector UBuffer -> IMGBuffer -> Vector DescriptorSet -> IO ()
-syncDescriptorSets device dBufs (IMGBuffer _ _ iView iSampler _) dSets = mapM_ sync1 $ zip (toList dBufs) (toList dSets)
+syncDescriptorSets device dBufs (IMGBuffer _ _ iView iSampler) dSets = mapM_ sync1 $ zip (toList dBufs) (toList dSets)
   where
     sync1 ((UBuffer dBuf _), dSet) = do
       let bufferInfo = DescriptorBufferInfo dBuf 0 (fromIntegral $ sizeOf (undefined :: UniformBufferObject))
@@ -548,7 +603,7 @@ syncDescriptorSets device dBufs (IMGBuffer _ _ iView iSampler _) dSets = mapM_ s
 -- images
 --
 
-data IMGBuffer = IMGBuffer Image DeviceMemory ImageView Sampler (ImageCreateInfo '[])
+data IMGBuffer = IMGBuffer Image DeviceMemory ImageView Sampler
 
 
 partialLoadImage :: FilePath -> IO (Either String (JUICY.Image JUICY.PixelRGBA8, Int, Int))
@@ -567,9 +622,8 @@ partialLoadImage filePath = do
     toRGBA8 (JC.ImageRGB8 img)  = JC.promoteImage img
     toRGBA8 _                   = undefined
 
-
-makeIMGBuffer :: Device -> PhysicalDevice -> Int -> Int -> Format -> ImageTiling -> ImageUsageFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO IMGBuffer
-makeIMGBuffer device phy w h imgFormat imgTiling imgUsage memoryProps allocator = do
+makeImageParts :: Device -> PhysicalDevice -> Int -> Int -> Format -> ImageTiling -> ImageUsageFlags -> ImageAspectFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO (Image, DeviceMemory, ImageView)
+makeImageParts device phy w h imgFormat imgTiling imgUsage imgAspect memoryProps allocator = do
   let imgInfo = ImageCreateInfo ()
                   zero
                   IMAGE_TYPE_2D
@@ -593,8 +647,13 @@ makeIMGBuffer device phy w h imgFormat imgTiling imgUsage memoryProps allocator 
   let allocInfo = MemoryAllocateInfo () (VKMEM.size memReq) memIndex
   iMem <- allocateMemory device allocInfo allocator
   bindImageMemory device imageHandle iMem 0
-  let viewInfo = ImageViewCreateInfo () zero imageHandle IMAGE_VIEW_TYPE_2D FORMAT_R8G8B8A8_SRGB zero (ImageSubresourceRange IMAGE_ASPECT_COLOR_BIT 0 1 0 1)
+  let viewInfo = ImageViewCreateInfo () zero imageHandle IMAGE_VIEW_TYPE_2D imgFormat zero (ImageSubresourceRange imgAspect 0 1 0 1)
   imgView <- createImageView device viewInfo allocator
+  return (imageHandle, iMem, imgView)
+
+makeIMGBuffer :: Device -> PhysicalDevice -> Int -> Int -> Format -> ImageTiling -> ImageUsageFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO IMGBuffer
+makeIMGBuffer device phy w h imgFormat imgTiling imgUsage memoryProps allocator = do
+  (imageHandle, iMem, imgView) <- makeImageParts device phy w h imgFormat imgTiling imgUsage IMAGE_ASPECT_COLOR_BIT memoryProps allocator
   phyProps <- getPhysicalDeviceProperties phy
   let samplerInfo = SamplerCreateInfo () zero 
                       FILTER_LINEAR -- magFilter
@@ -613,7 +672,7 @@ makeIMGBuffer device phy w h imgFormat imgTiling imgUsage memoryProps allocator 
                       BORDER_COLOR_INT_OPAQUE_BLACK -- borderColor
                       False -- unnormalizedCoordinates
   imgSampler <- createSampler device samplerInfo allocator
-  return (IMGBuffer imageHandle iMem imgView imgSampler imgInfo)
+  return (IMGBuffer imageHandle iMem imgView imgSampler)
 
 
 makeTextureImage :: Device -> PhysicalDevice -> CommandPool -> Queue -> FilePath -> Maybe AllocationCallbacks -> IO IMGBuffer
@@ -626,7 +685,7 @@ makeTextureImage device phy cPool gQueue filePath allocator = do
       let imagePixels = (JC.imageData imgRGBA) :: VS.Vector Word8
       let imageBytes = VS.toList imagePixels
       staging@(StagingBuffer sBuf _) <- createStagingBuffer device phy imageBytes allocator
-      imgBuffer@(IMGBuffer img _ _ _ _) <- makeIMGBuffer device phy w h FORMAT_R8G8B8A8_SRGB IMAGE_TILING_OPTIMAL (IMAGE_USAGE_TRANSFER_DST_BIT .|. IMAGE_USAGE_SAMPLED_BIT) MEMORY_PROPERTY_DEVICE_LOCAL_BIT allocator
+      imgBuffer@(IMGBuffer img _ _ _) <- makeIMGBuffer device phy w h FORMAT_R8G8B8A8_SRGB IMAGE_TILING_OPTIMAL (IMAGE_USAGE_TRANSFER_DST_BIT .|. IMAGE_USAGE_SAMPLED_BIT) MEMORY_PROPERTY_DEVICE_LOCAL_BIT allocator
       transitionImageLayout device cPool gQueue img FORMAT_R8G8B8A8_SRGB IMAGE_LAYOUT_UNDEFINED IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
       copyBufferToImage device cPool gQueue sBuf img w h
       transitionImageLayout device cPool gQueue img FORMAT_R8G8B8A8_SRGB IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
@@ -639,7 +698,7 @@ unmakeTextureImage :: Device -> IMGBuffer -> Maybe AllocationCallbacks -> IO ()
 unmakeTextureImage = unmakeIMGBuffer
 
 unmakeIMGBuffer :: Device -> IMGBuffer -> Maybe AllocationCallbacks -> IO ()
-unmakeIMGBuffer device (IMGBuffer imgHandle imgMem imgView imgSampler _imgInfo) allocator = do
+unmakeIMGBuffer device (IMGBuffer imgHandle imgMem imgView imgSampler) allocator = do
   destroySampler device imgSampler allocator
   destroyImageView device imgView allocator
   destroyImage device imgHandle allocator
@@ -669,6 +728,52 @@ copyBufferToImage device cPool gQueue iBuf img width height =
     cmdCopyBufferToImage cBuf iBuf img IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL (fromList [copyInfo])
 
 
+data DepthBuffer = DepthBuffer Image DeviceMemory ImageView
+  deriving Show
+
+makeDepthBuffer :: Device -> PhysicalDevice -> Int -> Int -> Maybe AllocationCallbacks -> IO DepthBuffer
+makeDepthBuffer device phy w h allocator = do
+  depthFormat <- findDepthFormat phy
+  (img, iMem, imgView) <- makeImageParts device phy w h depthFormat
+                            IMAGE_TILING_OPTIMAL
+                            IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+                            IMAGE_ASPECT_DEPTH_BIT
+                            MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+                            allocator
+  return (DepthBuffer img iMem imgView)
+
+unmakeDepthBuffer :: Device -> DepthBuffer -> Maybe AllocationCallbacks -> IO ()
+unmakeDepthBuffer device (DepthBuffer img imgMem imgView) allocator = do
+  destroyImageView device imgView allocator
+  destroyImage device img allocator
+  freeMemory device imgMem allocator
+
+findDepthFormat :: PhysicalDevice -> IO Format
+findDepthFormat phy =
+  findSupportedFormat
+    phy
+    (fromList [FORMAT_D32_SFLOAT, FORMAT_D32_SFLOAT_S8_UINT, FORMAT_D24_UNORM_S8_UINT])
+    IMAGE_TILING_OPTIMAL
+    FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+  
+hasStencilComponent :: Format -> Bool
+hasStencilComponent f = (f == FORMAT_D32_SFLOAT_S8_UINT) || (f == FORMAT_D24_UNORM_S8_UINT)
+
+findSupportedFormat :: PhysicalDevice -> Vector Format -> ImageTiling -> FormatFeatureFlags -> IO Format
+findSupportedFormat phy possibleFormats tiling chooseFeatures = do
+  vecFeatures <- mapM (relevantFeatures ) possibleFormats
+  case findIndex (hasFeatures) vecFeatures of
+    Nothing -> fail "No allowed format"
+    Just foundIndex -> return (possibleFormats ! foundIndex)
+  where
+    relevantFeatures fmt = do
+      props <- getPhysicalDeviceFormatProperties phy fmt
+      case tiling of
+                                IMAGE_TILING_OPTIMAL -> return $ optimalTilingFeatures props
+                                IMAGE_TILING_LINEAR -> return $ linearTilingFeatures props
+                                _ -> return zero
+    hasFeatures features = (features .&. chooseFeatures) > (FormatFeatureFlagBits zero)
+
 --
 -- command buffers
 --
@@ -689,7 +794,7 @@ recordCommands :: CommandBuffer -> TransientResources -> SwapchainCreateInfoKHR 
 recordCommands buf tRes sce pass pipe fb pLayout dSet = do
   beginCommandBuffer buf (CommandBufferBeginInfo () zero Nothing)
   let renderarea = Rect2D (Offset2D 0 0) (VKSWAPCHAIN.imageExtent $ sce)
-  let clearTo = fromList [Color (Float32 0 0 0 1)]
+  let clearTo = fromList [Color (Float32 0 0 0 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
   cmdBeginRenderPass buf (RenderPassBeginInfo () pass fb renderarea clearTo) SUBPASS_CONTENTS_INLINE
   cmdBindPipeline buf PIPELINE_BIND_POINT_GRAPHICS pipe
   let (VBuffer vBuf _) = vertexBuffer tRes

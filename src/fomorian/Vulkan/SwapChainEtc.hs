@@ -42,6 +42,7 @@ data SwapChainEtc = SwapChainEtc
     swapchainImages :: Vector Image,
     swapchainImageViews :: Vector ImageView,
     swapchainFramebuffers :: Vector Framebuffer,
+    swapchainDepthBuffer :: DepthBuffer,
     swapchainCommandBuffers :: Vector CommandBuffer,
     swapchainPerFrameResources :: Vector ImageFrameResources,
     swapchainDescriptorPool :: DescriptorPool,
@@ -109,9 +110,11 @@ withSwapChainEtc device phy cPool tRes gq createInfo allocator wrapper = wrapper
 
 createSwapChainEtc :: Device -> PhysicalDevice -> CommandPool -> TransientResources -> SwapchainCreateInfoKHR '[] -> Maybe AllocationCallbacks -> IO SwapChainEtc
 createSwapChainEtc device phy cpool tRes createInfo allocator = do
+  let (Extent2D w h) = (VKSWAPCHAIN.imageExtent $ createInfo)
   newSwapchain <- createSwapchainKHR device createInfo allocator
   (_, newImages) <- getSwapchainImagesKHR device newSwapchain
   newImageViews <- createImageViews device createInfo newImages
+  depthBuffer <- makeDepthBuffer device phy (fromIntegral w) (fromIntegral h) allocator
   descriptorSetLayoutInstance <- makeDescriptorSetLayout device allocator
   dPool <- makeDescriptorPool device (length newImages) allocator
   dSets <- makeDescriptorSets device dPool descriptorSetLayoutInstance (length newImages)
@@ -119,17 +122,18 @@ createSwapChainEtc device phy cpool tRes createInfo allocator = do
   let uBufs = fmap uniforms fRes
   let imgBuffer = textureImage tRes
   syncDescriptorSets device uBufs imgBuffer dSets
-  newPipe <- liftIO $ buildSimplePipeline device allocator descriptorSetLayoutInstance createInfo
-  framebuffers <- makeFramebuffers device newPipe createInfo newImageViews
+  newPipe <- liftIO $ buildSimplePipeline device phy allocator descriptorSetLayoutInstance createInfo
+  framebuffers <- makeFramebuffers device newPipe createInfo newImageViews depthBuffer
   cmdBuffers <- makeCommandBuffers device cpool framebuffers
   recordCommandBuffers cmdBuffers framebuffers tRes createInfo newPipe dSets
-  return (SwapChainEtc newSwapchain newImages newImageViews framebuffers cmdBuffers fRes dPool dSets descriptorSetLayoutInstance newPipe createInfo)
+  return (SwapChainEtc newSwapchain newImages newImageViews framebuffers depthBuffer cmdBuffers fRes dPool dSets descriptorSetLayoutInstance newPipe createInfo)
 
 destroySwapChainEtc :: Device -> CommandPool -> Maybe AllocationCallbacks -> SwapChainEtc -> IO ()
 destroySwapChainEtc device cpool allocator swETC = do
   -- destroy in reverse order from creation
-  let (SwapChainEtc sc _ imageViews framebuffers commandbuffers frameresources dPool _dSets dLayout pipe _) = swETC
+  let (SwapChainEtc sc _ imageViews framebuffers depthBuffer commandbuffers frameresources dPool _dSets dLayout pipe _) = swETC
   destroyImageFrameResources device frameresources allocator
+  unmakeDepthBuffer device depthBuffer allocator
   freeCommandBuffers device cpool commandbuffers
   mapM (\fb -> destroyFramebuffer device fb Nothing) framebuffers
   destroyPipelineEtc device pipe allocator
@@ -161,11 +165,11 @@ createImageViews device swapchainInfo images =
       mkView img = createImageView device (mkImageCreateInfo img) Nothing
    in traverse mkView images
 
-makeFramebuffers :: Device -> PipelineEtc -> SwapchainCreateInfoKHR '[] -> Vector ImageView -> IO (Vector Framebuffer)
-makeFramebuffers device pipe sce imageViews = do
+makeFramebuffers :: Device -> PipelineEtc -> SwapchainCreateInfoKHR '[] -> Vector ImageView -> DepthBuffer -> IO (Vector Framebuffer)
+makeFramebuffers device pipe sce imageViews (DepthBuffer _  _ depthImageView) = do
   let (Extent2D w h) = (VKSWAPCHAIN.imageExtent $ sce)
   let rPass = rendPass pipe
-  let mkFramebuffers iv = createFramebuffer device (FramebufferCreateInfo () zero rPass (fromList [iv]) w h 1) Nothing
+  let mkFramebuffers iv = createFramebuffer device (FramebufferCreateInfo () zero rPass (fromList [iv, depthImageView]) w h 1) Nothing
   fbs <- mapM mkFramebuffers imageViews
   return fbs
 
