@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -29,6 +30,7 @@ module Fomorian.Vulkan.TransientResources (
   ) where
 
 import Control.Exception
+
 import Data.Bits
 import Data.ByteString (readFile)
 import Data.Coerce (coerce)
@@ -36,11 +38,16 @@ import Data.Foldable
 import Data.Vector ((!), Vector, empty, fromList, findIndex)
 import qualified Data.Vector.Storable as VS
 import Data.Word (Word8, Word16, Word32)
+import Data.Row ((.!))
+
 import Foreign.Marshal
 import Foreign.Ptr
 import Foreign.Storable
+
 import Linear (V2 (..), V3 (..), V4(..), M44, identity, (!*!), mkTransformation, mkTransformationMat, Quaternion, axisAngle, lookAt, perspective, ortho, transpose)
+
 import System.FilePath
+
 import Vulkan.CStruct.Extends
 import Vulkan.Core10 as VKCORE
 import Vulkan.Core10.MemoryManagement as VKMEM
@@ -50,11 +57,14 @@ import Vulkan.Zero
 import qualified Codec.Picture as JUICY
 import qualified Codec.Picture.Types as JC
 
+import qualified Fomorian.ProcessWavefront as WF
+
 -- | Holds all resources that should then be unloaded later
 data TransientResources = TransientResources
   { 
     vertexBuffer :: VBuffer,
     indexBuffer :: VBuffer,
+    indexBufferSize :: Int,
     textureImage :: IMGBuffer
   }
 
@@ -74,13 +84,14 @@ withTransientResources d pd cPool gq allocator wrapper = wrapper rStart rEnd
 
 loadTransientResources :: Device -> PhysicalDevice -> CommandPool -> Queue -> Maybe AllocationCallbacks -> IO TransientResources
 loadTransientResources d pd cPool gq allocator = do
+  (vertexData, indexData) <- loadGeometry "viking_room.obj"
   v <- createLocalVertexBuffer d pd cPool gq vertexData allocator
   ix <- createLocalIndexBuffer d pd cPool gq indexData allocator
-  img <- makeTextureImage d pd cPool gq ("resources" </> "textures" </> "owl.png") allocator
-  return (TransientResources v ix img)
+  img <- makeTextureImage d pd cPool gq ("resources" </> "textures" </> "viking_room.png") allocator
+  return (TransientResources v ix (length indexData) img)
 
 unloadTransientResources :: Device -> TransientResources -> Maybe AllocationCallbacks -> IO ()
-unloadTransientResources d (TransientResources vb ix img) allocator = do
+unloadTransientResources d (TransientResources vb ix ixSize img) allocator = do
   destroyVertexBuffer d vb allocator
   destroyIndexBuffer d ix allocator
   unmakeTextureImage d img allocator
@@ -280,7 +291,7 @@ data StagingBuffer = StagingBuffer Buffer DeviceMemory
 
 
 
-
+-- | Position, Color, texCoord
 data OneVertex = OneVertex (V3 Float) (V3 Float) (V2 Float)
 
 blankVertex :: OneVertex
@@ -299,8 +310,18 @@ instance Storable OneVertex where
     pokeByteOff p 12 a2
     pokeByteOff p 24 a3
 
+vertexDataBinding :: VertexInputBindingDescription
+vertexDataBinding = VertexInputBindingDescription 0 (fromIntegral $ sizeOf blankVertex) VERTEX_INPUT_RATE_VERTEX
+
+vertexInputAttrs :: [VertexInputAttributeDescription]
+vertexInputAttrs =
+  [ (VertexInputAttributeDescription 0 0 FORMAT_R32G32B32_SFLOAT 0),
+    (VertexInputAttributeDescription 1 0 FORMAT_R32G32B32_SFLOAT 12),
+    (VertexInputAttributeDescription 2 0 FORMAT_R32G32_SFLOAT 24)
+  ]
+
 -- Vertex data for drawing
-vertexData :: [OneVertex]
+{-- vertexData :: [OneVertex]
 vertexData =
   [ 
     (OneVertex (V3 (-0.5) (-0.5) 0.0) (V3 1.0 0.0 0.0) (V2 1.0 0.0)),
@@ -314,19 +335,32 @@ vertexData =
     (OneVertex (V3 (-0.5) (0.5)  (-0.5)) (V3 0.0 0.0 1.0) (V2 1.0 1.0))
   ]
 
-vertexDataBinding :: VertexInputBindingDescription
-vertexDataBinding = VertexInputBindingDescription 0 (fromIntegral $ sizeOf blankVertex) VERTEX_INPUT_RATE_VERTEX
-
-vertexInputAttrs :: [VertexInputAttributeDescription]
-vertexInputAttrs =
-  [ (VertexInputAttributeDescription 0 0 FORMAT_R32G32B32_SFLOAT 0),
-    (VertexInputAttributeDescription 1 0 FORMAT_R32G32B32_SFLOAT 12),
-    (VertexInputAttributeDescription 2 0 FORMAT_R32G32_SFLOAT 24)
-  ]
-
-indexData :: [Word16]
+indexData :: [Word32]
 indexData = [0, 1, 2, 2, 3, 0,
              4, 5, 6, 6, 7, 4]
+--}
+
+loadGeometry :: String -> IO ([OneVertex], [Word32])
+loadGeometry fileName = do
+  objData <- WF.loadWavefrontOBJFile ("resources" </> "geometry" </> fileName)
+  case objData of
+    Left s -> fail s
+    Right (vertices, indices) -> do
+      putStrLn (show (length vertices) ++ " vertices!")
+      let vertices' = fmap toOneVertex vertices
+      let indices' = fmap fromIntegral indices
+      return (vertices', indices')
+  where
+    toOneVertex :: WF.OBJBufferRecord -> OneVertex
+    toOneVertex (WF.OBJBufferRecord rec) =
+      let pos3 = rec .! #pos3
+          (V2 tu tv) = rec .! #texCoord
+          tex2 = (V2 tu (1-tv))
+          color3 = (V3 1 1 1)
+      in OneVertex pos3 color3 tex2
+
+
+
 
 newtype MemoryTypeMask = MemoryTypeMask Word32
   deriving (Eq, Show)
@@ -588,7 +622,7 @@ unmakeDescriptorSets :: Device -> DescriptorPool -> (Vector DescriptorSet) -> IO
 unmakeDescriptorSets device dPool dSets = freeDescriptorSets device dPool dSets
 
 syncDescriptorSets :: Device -> Vector UBuffer -> IMGBuffer -> Vector DescriptorSet -> IO ()
-syncDescriptorSets device dBufs (IMGBuffer _ _ iView iSampler) dSets = mapM_ sync1 $ zip (toList dBufs) (toList dSets)
+syncDescriptorSets device dBufs (IMGBuffer _ _ _ iView iSampler) dSets = mapM_ sync1 $ zip (toList dBufs) (toList dSets)
   where
     sync1 ((UBuffer dBuf _), dSet) = do
       let bufferInfo = DescriptorBufferInfo dBuf 0 (fromIntegral $ sizeOf (undefined :: UniformBufferObject))
@@ -603,7 +637,7 @@ syncDescriptorSets device dBufs (IMGBuffer _ _ iView iSampler) dSets = mapM_ syn
 -- images
 --
 
-data IMGBuffer = IMGBuffer Image DeviceMemory ImageView Sampler
+data IMGBuffer = IMGBuffer Image Int DeviceMemory ImageView Sampler
 
 
 partialLoadImage :: FilePath -> IO (Either String (JUICY.Image JUICY.PixelRGBA8, Int, Int))
@@ -622,14 +656,14 @@ partialLoadImage filePath = do
     toRGBA8 (JC.ImageRGB8 img)  = JC.promoteImage img
     toRGBA8 _                   = undefined
 
-makeImageParts :: Device -> PhysicalDevice -> Int -> Int -> Format -> ImageTiling -> ImageUsageFlags -> ImageAspectFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO (Image, DeviceMemory, ImageView)
-makeImageParts device phy w h imgFormat imgTiling imgUsage imgAspect memoryProps allocator = do
+makeImageParts :: Device -> PhysicalDevice -> Int -> Int -> Int -> Format -> ImageTiling -> ImageUsageFlags -> ImageAspectFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO (Image, DeviceMemory, ImageView)
+makeImageParts device phy w h mipmaps imgFormat imgTiling imgUsage imgAspect memoryProps allocator = do
   let imgInfo = ImageCreateInfo ()
                   zero
                   IMAGE_TYPE_2D
                   imgFormat
                   (Extent3D (fromIntegral w) (fromIntegral h) 1)
-                  1 -- mipLevels
+                  (fromIntegral mipmaps) -- mipLevels
                   1 -- arrayLayers
                   SAMPLE_COUNT_1_BIT
                   imgTiling --IMAGE_TILING_OPTIMAL
@@ -647,13 +681,13 @@ makeImageParts device phy w h imgFormat imgTiling imgUsage imgAspect memoryProps
   let allocInfo = MemoryAllocateInfo () (VKMEM.size memReq) memIndex
   iMem <- allocateMemory device allocInfo allocator
   bindImageMemory device imageHandle iMem 0
-  let viewInfo = ImageViewCreateInfo () zero imageHandle IMAGE_VIEW_TYPE_2D imgFormat zero (ImageSubresourceRange imgAspect 0 1 0 1)
+  let viewInfo = ImageViewCreateInfo () zero imageHandle IMAGE_VIEW_TYPE_2D imgFormat zero (ImageSubresourceRange imgAspect 0 (fromIntegral mipmaps) 0 1)
   imgView <- createImageView device viewInfo allocator
   return (imageHandle, iMem, imgView)
 
-makeIMGBuffer :: Device -> PhysicalDevice -> Int -> Int -> Format -> ImageTiling -> ImageUsageFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO IMGBuffer
-makeIMGBuffer device phy w h imgFormat imgTiling imgUsage memoryProps allocator = do
-  (imageHandle, iMem, imgView) <- makeImageParts device phy w h imgFormat imgTiling imgUsage IMAGE_ASPECT_COLOR_BIT memoryProps allocator
+makeIMGBuffer :: Device -> PhysicalDevice -> Int -> Int -> Int -> Format -> ImageTiling -> ImageUsageFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO IMGBuffer
+makeIMGBuffer device phy w h mipLevels imgFormat imgTiling imgUsage memoryProps allocator = do
+  (imageHandle, iMem, imgView) <- makeImageParts device phy w h mipLevels imgFormat imgTiling imgUsage IMAGE_ASPECT_COLOR_BIT memoryProps allocator
   phyProps <- getPhysicalDeviceProperties phy
   let samplerInfo = SamplerCreateInfo () zero 
                       FILTER_LINEAR -- magFilter
@@ -668,11 +702,11 @@ makeIMGBuffer device phy w h imgFormat imgTiling imgUsage memoryProps allocator 
                       False -- compareEnable
                       COMPARE_OP_ALWAYS -- compareOp
                       0.0 -- minLod
-                      0.0 -- maxLod
+                      (fromIntegral mipLevels) -- maxLod
                       BORDER_COLOR_INT_OPAQUE_BLACK -- borderColor
                       False -- unnormalizedCoordinates
   imgSampler <- createSampler device samplerInfo allocator
-  return (IMGBuffer imageHandle iMem imgView imgSampler)
+  return (IMGBuffer imageHandle mipLevels iMem imgView imgSampler)
 
 
 makeTextureImage :: Device -> PhysicalDevice -> CommandPool -> Queue -> FilePath -> Maybe AllocationCallbacks -> IO IMGBuffer
@@ -682,34 +716,94 @@ makeTextureImage device phy cPool gQueue filePath allocator = do
     Left errString -> fail errString
     Right (imgRGBA, w, h) -> do
       let imageByteSize = fromIntegral (w * h * 4)
+      let mipLevels = 1 + (floor (log (fromIntegral $ max w h) / log 2.0))
       let imagePixels = (JC.imageData imgRGBA) :: VS.Vector Word8
       let imageBytes = VS.toList imagePixels
       staging@(StagingBuffer sBuf _) <- createStagingBuffer device phy imageBytes allocator
-      imgBuffer@(IMGBuffer img _ _ _) <- makeIMGBuffer device phy w h FORMAT_R8G8B8A8_SRGB IMAGE_TILING_OPTIMAL (IMAGE_USAGE_TRANSFER_DST_BIT .|. IMAGE_USAGE_SAMPLED_BIT) MEMORY_PROPERTY_DEVICE_LOCAL_BIT allocator
-      transitionImageLayout device cPool gQueue img FORMAT_R8G8B8A8_SRGB IMAGE_LAYOUT_UNDEFINED IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+      imgBuffer@(IMGBuffer img _ _ _ _) <- makeIMGBuffer device phy w h mipLevels 
+                                              FORMAT_R8G8B8A8_SRGB
+                                              IMAGE_TILING_OPTIMAL 
+                                              (IMAGE_USAGE_TRANSFER_SRC_BIT .|. IMAGE_USAGE_TRANSFER_DST_BIT .|. IMAGE_USAGE_SAMPLED_BIT) 
+                                              MEMORY_PROPERTY_DEVICE_LOCAL_BIT 
+                                              allocator
+      
+      transitionImageLayout device cPool gQueue img mipLevels FORMAT_R8G8B8A8_SRGB IMAGE_LAYOUT_UNDEFINED IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
       copyBufferToImage device cPool gQueue sBuf img w h
-      transitionImageLayout device cPool gQueue img FORMAT_R8G8B8A8_SRGB IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+      generateMipmaps device phy cPool gQueue img FORMAT_R8G8B8A8_SRGB w h  mipLevels
+      --transitionImageLayout device cPool gQueue img mipLevels FORMAT_R8G8B8A8_SRGB IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
       destroyStagingBuffer device staging allocator
       return imgBuffer
 
-
+generateMipmaps :: Device -> PhysicalDevice -> CommandPool -> Queue -> Image -> Format -> Int -> Int -> Int -> IO ()
+generateMipmaps device phy cPool gQueue img mipFormat w h mipLevels = do
+  formatProps <- getPhysicalDeviceFormatProperties phy mipFormat
+  if (optimalTilingFeatures formatProps .&. FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) > zero
+  then return ()
+  else fail "Linear filtering not supported!"
+  withOneTimeCommand device cPool gQueue bracket $ \cBuf -> do
+    forM_ [1..(mipLevels-1)] $ \thisLevel -> do
+      let baseLevel = thisLevel - 1
+      let mipWidth = max 1 (w `div` (2 ^ baseLevel))
+      let mipHeight = max 1 (h `div` (2 ^ baseLevel))
+      let nextMipWidth = max 1 (mipWidth `div`2)
+      let nextMipHeight = max 1 (mipHeight `div` 2)
+      let barrier1 = SomeStruct $ ImageMemoryBarrier () 
+                        ACCESS_TRANSFER_WRITE_BIT 
+                        ACCESS_TRANSFER_READ_BIT 
+                        IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                        IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+                        QUEUE_FAMILY_IGNORED
+                        QUEUE_FAMILY_IGNORED
+                        img
+                        (ImageSubresourceRange IMAGE_ASPECT_COLOR_BIT (fromIntegral baseLevel) 1 0 1)
+      cmdPipelineBarrier cBuf PIPELINE_STAGE_TRANSFER_BIT PIPELINE_STAGE_TRANSFER_BIT zero empty empty (fromList [barrier1])                       
+      let blit = ImageBlit
+                   (ImageSubresourceLayers IMAGE_ASPECT_COLOR_BIT (fromIntegral baseLevel) 0 1)
+                   ((Offset3D 0 0 0), (Offset3D (fromIntegral mipWidth) (fromIntegral mipHeight) 1))
+                   (ImageSubresourceLayers IMAGE_ASPECT_COLOR_BIT (fromIntegral thisLevel) 0 1)
+                   ((Offset3D 0 0 0), (Offset3D (fromIntegral nextMipWidth) (fromIntegral nextMipHeight) 1))
+      cmdBlitImage cBuf img IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+                        img IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                        (fromList [blit])
+                        FILTER_LINEAR
+      let barrier2 = SomeStruct $ ImageMemoryBarrier () 
+                        ACCESS_TRANSFER_READ_BIT 
+                        ACCESS_SHADER_READ_BIT 
+                        IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+                        IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                        QUEUE_FAMILY_IGNORED
+                        QUEUE_FAMILY_IGNORED
+                        img
+                        (ImageSubresourceRange IMAGE_ASPECT_COLOR_BIT (fromIntegral baseLevel) 1 0 1)
+      cmdPipelineBarrier cBuf PIPELINE_STAGE_TRANSFER_BIT PIPELINE_STAGE_FRAGMENT_SHADER_BIT zero empty empty (fromList [barrier2])
+    -- outside the form_
+    let barrier3 = SomeStruct $ ImageMemoryBarrier () 
+                        ACCESS_TRANSFER_WRITE_BIT 
+                        ACCESS_SHADER_READ_BIT 
+                        IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                        IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                        QUEUE_FAMILY_IGNORED
+                        QUEUE_FAMILY_IGNORED
+                        img
+                        (ImageSubresourceRange IMAGE_ASPECT_COLOR_BIT (fromIntegral (mipLevels-1)) 1 0 1)
+    cmdPipelineBarrier cBuf PIPELINE_STAGE_TRANSFER_BIT PIPELINE_STAGE_FRAGMENT_SHADER_BIT zero empty empty (fromList [barrier3])  
 
 unmakeTextureImage :: Device -> IMGBuffer -> Maybe AllocationCallbacks -> IO ()
 unmakeTextureImage = unmakeIMGBuffer
 
 unmakeIMGBuffer :: Device -> IMGBuffer -> Maybe AllocationCallbacks -> IO ()
-unmakeIMGBuffer device (IMGBuffer imgHandle imgMem imgView imgSampler) allocator = do
+unmakeIMGBuffer device (IMGBuffer imgHandle _mipmaps imgMem imgView imgSampler) allocator = do
   destroySampler device imgSampler allocator
   destroyImageView device imgView allocator
   destroyImage device imgHandle allocator
   freeMemory device imgMem allocator
   return ()
 
-transitionImageLayout :: Device -> CommandPool -> Queue -> Image -> Format -> ImageLayout -> ImageLayout -> IO ()
-transitionImageLayout device cPool gQueue img format oldLayout newLayout =
+transitionImageLayout :: Device -> CommandPool -> Queue -> Image -> Int -> Format -> ImageLayout -> ImageLayout -> IO ()
+transitionImageLayout device cPool gQueue img mipLevels format oldLayout newLayout =
   withOneTimeCommand device cPool gQueue bracket $ \cBuf -> do
     let (srcMask, dstMask,srcStage,dstStage) = computeBarrierValues oldLayout newLayout
-    let barrier = ImageMemoryBarrier () srcMask dstMask oldLayout newLayout QUEUE_FAMILY_IGNORED QUEUE_FAMILY_IGNORED img (ImageSubresourceRange IMAGE_ASPECT_COLOR_BIT 0 1 0 1)
+    let barrier = ImageMemoryBarrier () srcMask dstMask oldLayout newLayout QUEUE_FAMILY_IGNORED QUEUE_FAMILY_IGNORED img (ImageSubresourceRange IMAGE_ASPECT_COLOR_BIT 0 (fromIntegral mipLevels) 0 1)
     cmdPipelineBarrier cBuf srcStage dstStage zero empty empty (fromList [SomeStruct barrier])
     return ()
   where
@@ -734,12 +828,12 @@ data DepthBuffer = DepthBuffer Image DeviceMemory ImageView
 makeDepthBuffer :: Device -> PhysicalDevice -> Int -> Int -> Maybe AllocationCallbacks -> IO DepthBuffer
 makeDepthBuffer device phy w h allocator = do
   depthFormat <- findDepthFormat phy
-  (img, iMem, imgView) <- makeImageParts device phy w h depthFormat
-                            IMAGE_TILING_OPTIMAL
-                            IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
-                            IMAGE_ASPECT_DEPTH_BIT
-                            MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-                            allocator
+  (img, iMem, imgView) <- makeImageParts device phy w h 1 depthFormat
+                              IMAGE_TILING_OPTIMAL
+                              IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+                              IMAGE_ASPECT_DEPTH_BIT
+                              MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+                              allocator
   return (DepthBuffer img iMem imgView)
 
 unmakeDepthBuffer :: Device -> DepthBuffer -> Maybe AllocationCallbacks -> IO ()
@@ -802,9 +896,9 @@ recordCommands buf tRes sce pass pipe fb pLayout dSet = do
   let offsets = [0]
   cmdBindVertexBuffers buf 0 (fromList vBufs) (fromList offsets)
   let (VBuffer ixBuf _) = indexBuffer tRes
-  cmdBindIndexBuffer buf ixBuf 0 INDEX_TYPE_UINT16
+  cmdBindIndexBuffer buf ixBuf 0 INDEX_TYPE_UINT32
   cmdBindDescriptorSets buf PIPELINE_BIND_POINT_GRAPHICS pLayout 0 (fromList [dSet]) empty
-  cmdDrawIndexed buf (fromIntegral $ length indexData) 1 0 0 0
+  cmdDrawIndexed buf (fromIntegral $ indexBufferSize tRes) 1 0 0 0
   cmdEndRenderPass buf
   endCommandBuffer buf
 

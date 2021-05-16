@@ -5,7 +5,7 @@
 {-# LANGUAGE OverloadedLabels #-}
 
 module Fomorian.ProcessWavefront 
-  (OBJBufferRecord, 
+  (OBJBufferRecord(..), 
    OBJBufferFormat, 
    loadWavefrontOBJFile,
    emptyOBJ)
