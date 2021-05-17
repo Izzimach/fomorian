@@ -25,8 +25,11 @@ module Fomorian.Vulkan.TransientResources (
   syncDescriptorSets,
   recordCommandBuffers,
   DepthBuffer(..),
+  ColorBuffer(..),
   makeDepthBuffer,
-  unmakeDepthBuffer
+  unmakeDepthBuffer,
+  makeColorBuffer,
+  unmakeColorBuffer
   ) where
 
 import Control.Exception
@@ -135,8 +138,8 @@ readSPIRV dev shaderPath = do
 --   - front face culling
 --   - one color attachment
 --   - one simple renderpass
-buildSimplePipeline :: Device -> PhysicalDevice -> Maybe AllocationCallbacks -> DescriptorSetLayout -> SwapchainCreateInfoKHR '[] -> IO PipelineEtc
-buildSimplePipeline device phy allocator descriptorLayout swapchainInfo = do
+buildSimplePipeline :: Device -> PhysicalDevice -> SampleCountFlagBits -> Maybe AllocationCallbacks -> DescriptorSetLayout -> SwapchainCreateInfoKHR '[] -> IO PipelineEtc
+buildSimplePipeline device phy sampleCount allocator descriptorLayout swapchainInfo = do
   (vm, fm) <- readSPIRV device "tut"
   let shaderStages =
         fromList
@@ -157,7 +160,7 @@ buildSimplePipeline device phy allocator descriptorLayout swapchainInfo = do
   -- use simple fill mode and culling
   let rasterizerState = PipelineRasterizationStateCreateInfo () zero False False POLYGON_MODE_FILL CULL_MODE_BACK_BIT FRONT_FACE_COUNTER_CLOCKWISE False 0 0 0 1.0
   -- multisample is basically disabled
-  let initMultisampleState = PipelineMultisampleStateCreateInfo () zero SAMPLE_COUNT_1_BIT False 1.0 empty False False
+  let initMultisampleState = PipelineMultisampleStateCreateInfo () zero sampleCount False 1.0 empty False False
   let blendAllBits = (COLOR_COMPONENT_R_BIT .|. COLOR_COMPONENT_G_BIT .|. COLOR_COMPONENT_B_BIT .|. COLOR_COMPONENT_A_BIT)
   let initColorBlendState =
         PipelineColorBlendAttachmentState
@@ -178,19 +181,30 @@ buildSimplePipeline device phy allocator descriptorLayout swapchainInfo = do
         AttachmentDescription
           zero
           swapchainFormat
-          SAMPLE_COUNT_1_BIT
+          sampleCount
           ATTACHMENT_LOAD_OP_CLEAR -- load
           ATTACHMENT_STORE_OP_STORE  -- store
           ATTACHMENT_LOAD_OP_DONT_CARE  -- stencil load
           ATTACHMENT_STORE_OP_DONT_CARE -- stencil store
-          IMAGE_LAYOUT_UNDEFINED
-          IMAGE_LAYOUT_PRESENT_SRC_KHR
+          IMAGE_LAYOUT_UNDEFINED  -- initialLayout
+          IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL  -- finalLayout
+  let colorAttachmentResolve =
+        AttachmentDescription
+          zero
+          swapchainFormat
+          SAMPLE_COUNT_1_BIT
+          ATTACHMENT_LOAD_OP_DONT_CARE  -- load
+          ATTACHMENT_STORE_OP_DONT_CARE -- store
+          ATTACHMENT_LOAD_OP_DONT_CARE  -- stencil load
+          ATTACHMENT_STORE_OP_DONT_CARE -- stencil store
+          IMAGE_LAYOUT_UNDEFINED        -- initialLayout
+          IMAGE_LAYOUT_PRESENT_SRC_KHR  -- finalLayout
   depthFormat <- findDepthFormat phy
   let depthAttachmentDescription =
         AttachmentDescription
           zero
           depthFormat
-          SAMPLE_COUNT_1_BIT
+          sampleCount
           ATTACHMENT_LOAD_OP_CLEAR  -- load
           ATTACHMENT_STORE_OP_DONT_CARE -- store
           ATTACHMENT_LOAD_OP_DONT_CARE  -- stencil load
@@ -199,6 +213,7 @@ buildSimplePipeline device phy allocator descriptorLayout swapchainInfo = do
           IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
   let colorAttachmentReference = AttachmentReference 0 IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
   let depthAttachmentReference = AttachmentReference 1 IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+  let colorAttachmentResolveRef = AttachmentReference 2 IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
   let depthStencil =
         PipelineDepthStencilStateCreateInfo
           zero
@@ -217,7 +232,7 @@ buildSimplePipeline device phy allocator descriptorLayout swapchainInfo = do
           PIPELINE_BIND_POINT_GRAPHICS
           empty -- inputAttachments
           (fromList [colorAttachmentReference]) -- colorAttachments
-          empty -- resolveAttachments
+          (fromList [colorAttachmentResolveRef]) -- resolveAttachments
           (Just depthAttachmentReference) -- depthStencilAttachment
           empty -- preserveAttachments
   let subpassDependency =
@@ -233,7 +248,7 @@ buildSimplePipeline device phy allocator descriptorLayout swapchainInfo = do
         RenderPassCreateInfo
           ()
           zero
-          (fromList [colorAttachmentDescription, depthAttachmentDescription])
+          (fromList [colorAttachmentDescription, depthAttachmentDescription, colorAttachmentResolve])
           (fromList [subpassDescription])
           (fromList [subpassDependency])
   initRenderPass <- createRenderPass device renderPassCreateInfo allocator
@@ -656,8 +671,8 @@ partialLoadImage filePath = do
     toRGBA8 (JC.ImageRGB8 img)  = JC.promoteImage img
     toRGBA8 _                   = undefined
 
-makeImageParts :: Device -> PhysicalDevice -> Int -> Int -> Int -> Format -> ImageTiling -> ImageUsageFlags -> ImageAspectFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO (Image, DeviceMemory, ImageView)
-makeImageParts device phy w h mipmaps imgFormat imgTiling imgUsage imgAspect memoryProps allocator = do
+makeImageParts :: Device -> PhysicalDevice -> Int -> Int -> Int -> SampleCountFlagBits -> Format -> ImageTiling -> ImageUsageFlags -> ImageAspectFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO (Image, DeviceMemory, ImageView)
+makeImageParts device phy w h mipmaps numSamples imgFormat imgTiling imgUsage imgAspect memoryProps allocator = do
   let imgInfo = ImageCreateInfo ()
                   zero
                   IMAGE_TYPE_2D
@@ -665,7 +680,7 @@ makeImageParts device phy w h mipmaps imgFormat imgTiling imgUsage imgAspect mem
                   (Extent3D (fromIntegral w) (fromIntegral h) 1)
                   (fromIntegral mipmaps) -- mipLevels
                   1 -- arrayLayers
-                  SAMPLE_COUNT_1_BIT
+                  numSamples -- sample
                   imgTiling --IMAGE_TILING_OPTIMAL
                   imgUsage --(IMAGE_USAGE_TRANSFER_DST_BIT .|. IMAGE_USAGE_SAMPLED_BIT)
                   SHARING_MODE_EXCLUSIVE
@@ -687,7 +702,7 @@ makeImageParts device phy w h mipmaps imgFormat imgTiling imgUsage imgAspect mem
 
 makeIMGBuffer :: Device -> PhysicalDevice -> Int -> Int -> Int -> Format -> ImageTiling -> ImageUsageFlags -> MemoryPropertyFlags -> Maybe AllocationCallbacks -> IO IMGBuffer
 makeIMGBuffer device phy w h mipLevels imgFormat imgTiling imgUsage memoryProps allocator = do
-  (imageHandle, iMem, imgView) <- makeImageParts device phy w h mipLevels imgFormat imgTiling imgUsage IMAGE_ASPECT_COLOR_BIT memoryProps allocator
+  (imageHandle, iMem, imgView) <- makeImageParts device phy w h mipLevels SAMPLE_COUNT_1_BIT imgFormat imgTiling imgUsage IMAGE_ASPECT_COLOR_BIT memoryProps allocator
   phyProps <- getPhysicalDeviceProperties phy
   let samplerInfo = SamplerCreateInfo () zero 
                       FILTER_LINEAR -- magFilter
@@ -697,7 +712,7 @@ makeIMGBuffer device phy w h mipLevels imgFormat imgTiling imgUsage memoryProps 
                       SAMPLER_ADDRESS_MODE_REPEAT -- addressModeV
                       SAMPLER_ADDRESS_MODE_REPEAT -- addressModeW
                       0.0 -- mipLodBias
-                      True -- anisotopryEnable
+                      True -- anisotropyEnable
                       (maxSamplerAnisotropy $ limits phyProps)  -- maxAnisotropy
                       False -- compareEnable
                       COMPARE_OP_ALWAYS -- compareOp
@@ -707,6 +722,14 @@ makeIMGBuffer device phy w h mipLevels imgFormat imgTiling imgUsage memoryProps 
                       False -- unnormalizedCoordinates
   imgSampler <- createSampler device samplerInfo allocator
   return (IMGBuffer imageHandle mipLevels iMem imgView imgSampler)
+
+unmakeIMGBuffer :: Device -> IMGBuffer -> Maybe AllocationCallbacks -> IO ()
+unmakeIMGBuffer device (IMGBuffer imgHandle _mipmaps imgMem imgView imgSampler) allocator = do
+  destroySampler device imgSampler allocator
+  destroyImageView device imgView allocator
+  destroyImage device imgHandle allocator
+  freeMemory device imgMem allocator
+  return ()
 
 
 makeTextureImage :: Device -> PhysicalDevice -> CommandPool -> Queue -> FilePath -> Maybe AllocationCallbacks -> IO IMGBuffer
@@ -791,14 +814,6 @@ generateMipmaps device phy cPool gQueue img mipFormat w h mipLevels = do
 unmakeTextureImage :: Device -> IMGBuffer -> Maybe AllocationCallbacks -> IO ()
 unmakeTextureImage = unmakeIMGBuffer
 
-unmakeIMGBuffer :: Device -> IMGBuffer -> Maybe AllocationCallbacks -> IO ()
-unmakeIMGBuffer device (IMGBuffer imgHandle _mipmaps imgMem imgView imgSampler) allocator = do
-  destroySampler device imgSampler allocator
-  destroyImageView device imgView allocator
-  destroyImage device imgHandle allocator
-  freeMemory device imgMem allocator
-  return ()
-
 transitionImageLayout :: Device -> CommandPool -> Queue -> Image -> Int -> Format -> ImageLayout -> ImageLayout -> IO ()
 transitionImageLayout device cPool gQueue img mipLevels format oldLayout newLayout =
   withOneTimeCommand device cPool gQueue bracket $ \cBuf -> do
@@ -822,13 +837,34 @@ copyBufferToImage device cPool gQueue iBuf img width height =
     cmdCopyBufferToImage cBuf iBuf img IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL (fromList [copyInfo])
 
 
+data ColorBuffer = ColorBuffer Image DeviceMemory ImageView
+  deriving Show
+
+makeColorBuffer :: Device -> PhysicalDevice -> Int -> Int -> SampleCountFlagBits -> Format -> Maybe AllocationCallbacks -> IO ColorBuffer
+makeColorBuffer device phy w h numSamples colorFormat allocator = do
+  (img, iMem, imgView) <- makeImageParts device phy w h 1 numSamples colorFormat
+                              IMAGE_TILING_OPTIMAL
+                              (IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT .|. IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+                              IMAGE_ASPECT_COLOR_BIT
+                              MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+                              allocator
+  return (ColorBuffer img iMem imgView)
+
+
+unmakeColorBuffer :: Device -> ColorBuffer -> Maybe AllocationCallbacks -> IO ()
+unmakeColorBuffer device (ColorBuffer cBuf cMem cView) allocator = do
+  destroyImageView device cView allocator
+  destroyImage device cBuf allocator
+  freeMemory device cMem allocator
+
+
 data DepthBuffer = DepthBuffer Image DeviceMemory ImageView
   deriving Show
 
-makeDepthBuffer :: Device -> PhysicalDevice -> Int -> Int -> Maybe AllocationCallbacks -> IO DepthBuffer
-makeDepthBuffer device phy w h allocator = do
+makeDepthBuffer :: Device -> PhysicalDevice -> Int -> Int -> SampleCountFlagBits -> Maybe AllocationCallbacks -> IO DepthBuffer
+makeDepthBuffer device phy w h numSamples allocator = do
   depthFormat <- findDepthFormat phy
-  (img, iMem, imgView) <- makeImageParts device phy w h 1 depthFormat
+  (img, iMem, imgView) <- makeImageParts device phy w h 1 numSamples depthFormat
                               IMAGE_TILING_OPTIMAL
                               IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
                               IMAGE_ASPECT_DEPTH_BIT

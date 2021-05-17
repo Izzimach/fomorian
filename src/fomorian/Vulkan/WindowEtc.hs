@@ -18,16 +18,21 @@ where
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Maybe
+
 import Data.Bits
 import Data.ByteString (ByteString)
+import Data.Foldable (find)
 import Data.IORef
 import Data.Vector ((!), Vector, empty, findIndex, fromList)
 import Data.Word (Word32, Word64)
+
 import Foreign.Marshal
 import Foreign.Ptr
 import Foreign.Storable
 import GHC.Int
+
 import qualified Graphics.UI.GLFW as GLFW
+
 import Vulkan.CStruct.Extends
 import Vulkan.Core10 as VKCORE
 import Vulkan.Core10.DeviceInitialization as VKDI
@@ -55,6 +60,7 @@ data WindowEtc = WindowEtc
     fences :: Vector Fence,
     cmdPool :: CommandPool,
     transients :: TransientResources,
+    msaaSamples :: SampleCountFlagBits,
     swapChainRef :: IORef SwapChainEtc
   }
 
@@ -147,6 +153,7 @@ withWindowEtc vCfg wid allocator wrapper wrapped = wrapper startWindow endWindow
           case choice of
             Nothing -> return ()
             Just chosen@(DeviceEtc h gq pq) -> do
+              msaaBits <- getMaxUsableSampleCount h
               withDevice h (chosenDeviceCreateInfo chosen) allocator wrapper $ \device -> do
                 graphicsQ <- getDeviceQueue device gq 0
                 presentQ <- getDeviceQueue device pq 0
@@ -155,9 +162,9 @@ withWindowEtc vCfg wid allocator wrapper wrapped = wrapper startWindow endWindow
                   withCommandPool device commandPoolInfo Nothing wrapper $ \cmdpool -> do
                     withTransientResources device h cmdpool graphicsQ Nothing wrapper $ \tRes -> do
                       swapchainInfo <- generateSwapChainInfo chosen surfaceH
-                      withSwapChainEtc device h cmdpool tRes graphicsQ swapchainInfo Nothing wrapper $ \swapchainEtc -> do
+                      withSwapChainEtc device h cmdpool tRes graphicsQ msaaBits swapchainInfo Nothing wrapper $ \swapchainEtc -> do
                         let (SyncObjects imageAvailables renderingFinisheds localFences) = syncs
-                        wrapped (WindowEtc inst w device chosen surfaceH graphicsQ presentQ imageAvailables renderingFinisheds localFences cmdpool tRes swapchainEtc)
+                        wrapped (WindowEtc inst w device chosen surfaceH graphicsQ presentQ imageAvailables renderingFinisheds localFences cmdpool tRes msaaBits swapchainEtc)
 
 -- | Creates the vulkan surface via GLFW, and deallocates it at the end using a bracketing function.
 withSurface :: Instance -> GLFW.Window -> (forall a b c. IO a -> (a -> IO b) -> (a -> IO c) -> IO c) -> (SurfaceKHR -> IO ()) -> IO ()
@@ -290,6 +297,27 @@ rebuildSwapChain windowEtc allocator =
   in
     do
       swapchainEtc <- readIORef (swapChainRef windowEtc)
-      newswapchain <- recreateSwapChainEtc device phy cpool tRes swapchainEtc chosen (surfaceRef windowEtc) allocator
+      newswapchain <- recreateSwapChainEtc device phy cpool tRes (msaaSamples windowEtc) swapchainEtc chosen (surfaceRef windowEtc) allocator
       liftIO $ writeIORef (swapChainRef windowEtc) newswapchain
 
+
+getMaxUsableSampleCount ::PhysicalDevice -> IO SampleCountFlagBits
+getMaxUsableSampleCount phy = do
+  phyProps <- getPhysicalDeviceProperties phy
+  let colorCounts = framebufferColorSampleCounts $ limits phyProps
+  let depthCounts = framebufferDepthSampleCounts $ limits phyProps
+  let allCounts = colorCounts .&. depthCounts
+  let hasCount = \c -> (allCounts .&. c) > zero
+  let sampleSizes = [
+        SAMPLE_COUNT_64_BIT,
+        SAMPLE_COUNT_32_BIT,
+        SAMPLE_COUNT_16_BIT,
+        SAMPLE_COUNT_8_BIT,
+        SAMPLE_COUNT_4_BIT,
+        SAMPLE_COUNT_2_BIT,
+        SAMPLE_COUNT_1_BIT
+        ]
+  case (find hasCount sampleSizes) of
+    -- no bits set?
+    Nothing -> return SAMPLE_COUNT_1_BIT
+    Just v -> return v
