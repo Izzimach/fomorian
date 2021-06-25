@@ -63,15 +63,13 @@ data GLDataSources = GLDataSources {
   deriving (Eq, Show, Ord, Generic)
 
 instance Semigroup GLDataSources where
-  g1 <> g2 = GLDataSources
-               (S.union (rawSources g1) (rawSources g2))
-               (S.union (combinedSources g1) (combinedSources g2))
+  g1 <> g2 = GLDataSources (S.union (rawSources g1) (rawSources g2)) (S.union (combinedSources g1) (combinedSources g2))
 
 instance Monoid GLDataSources where
   mappend = (<>)
   mempty = GLDataSources mempty mempty
 
-
+-- | Given a scene node returns the resources used
 oglResourcesAlgebra :: SceneNode dreq OpenGLTarget GLDataSources -> GLDataSources
 oglResourcesAlgebra (Invoke x) = let sh = x .! #shader
                                      v  = x .! #vertices

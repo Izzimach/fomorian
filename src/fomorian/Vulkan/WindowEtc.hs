@@ -142,8 +142,6 @@ withWindowEtc ::
   IO ()
 withWindowEtc vCfg wid allocator wrapper wrapped = wrapper startWindow endWindow goWindow
   where
-    simpleSemaphoreConfig = (SemaphoreCreateInfo () zero)
-    simpleFenceConfig = (FenceCreateInfo () FENCE_CREATE_SIGNALED_BIT)
     startWindow = initWindow wid
     endWindow w = terminateWindow w
     goWindow w =
@@ -157,6 +155,8 @@ withWindowEtc vCfg wid allocator wrapper wrapped = wrapper startWindow endWindow
               withDevice h (chosenDeviceCreateInfo chosen) allocator wrapper $ \device -> do
                 graphicsQ <- getDeviceQueue device gq 0
                 presentQ <- getDeviceQueue device pq 0
+                let simpleSemaphoreConfig = (SemaphoreCreateInfo () zero)
+                let simpleFenceConfig = (FenceCreateInfo () FENCE_CREATE_SIGNALED_BIT)
                 withSyncObjects device simpleSemaphoreConfig simpleFenceConfig Nothing (inFlightFrames vCfg) wrapper $ \syncs -> do
                   let commandPoolInfo = CommandPoolCreateInfo zero gq
                   withCommandPool device commandPoolInfo Nothing wrapper $ \cmdpool -> do

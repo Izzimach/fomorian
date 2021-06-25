@@ -41,7 +41,7 @@ packages:
     hackage: vulkan-3.10
 snapshots:
 - completed:
-    size: 498024
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/nightly/2020/6/19.yaml
-    sha256: e34917e6a8662a7fc8b9e3796de3fe7a771509907efe3ac53c4453d7cd4a57cd
-  original: nightly-2020-06-19
+    size: 585393
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/0.yaml
+    sha256: c632012da648385b9fa3c29f4e0afd56ead299f1c5528ee789058be410e883c0
+  original: lts-18.0

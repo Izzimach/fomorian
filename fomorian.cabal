@@ -27,6 +27,7 @@ common deps
                        text,
                        generic-deriving,
                        generic-data,
+                       data-fix,
                        recursion-schemes,
                        distributive,
                        vector,
@@ -78,3 +79,4 @@ executable example
   hs-source-dirs: src
   c-sources: csrc/VulkanCallback.c
   include-dirs: /c/VulkanSDK/1.2.170.0/include
+

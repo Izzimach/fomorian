@@ -28,6 +28,7 @@ import Linear
 
 import Data.Kind (Constraint)
 import Data.Functor.Foldable
+import Data.Fix (Fix(..))
 
 import Control.Monad
 import Control.Monad.Reader
