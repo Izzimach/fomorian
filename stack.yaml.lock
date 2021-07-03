@@ -19,19 +19,19 @@ packages:
   original:
     hackage: wavefront-0.7.1.4@sha256:0a1e4bc3de7a450c8da2c3b962ebc0b54acdeb9664e73cdd4649861740d96024,1999
 - completed:
-    hackage: constrained-categories-0.4.0.0@sha256:478e481b2ae62f3ff21c900ab9f26a5f01cc0b5b8f4a96f44c6e005970ed2639,3534
+    hackage: constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
     pantry-tree:
       size: 1054
-      sha256: 4236e14c148a99b171e81eb21fd3cab9b999fd521280beb890dc37046408cd06
+      sha256: 0747857df2bcc667534607a740b41ab3701cd6fc4c52f13254319a486c8de02c
   original:
-    hackage: constrained-categories-0.4.0.0@sha256:478e481b2ae62f3ff21c900ab9f26a5f01cc0b5b8f4a96f44c6e005970ed2639,3534
+    hackage: constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
 - completed:
-    hackage: row-types-0.4.0.0@sha256:adf9dcf41e44e61c443a02cb9927740ea211e4cf60e68fb9d7b312da7bdd33be,3579
+    hackage: row-types-1.0.1.0@sha256:62d274be07da06aafe2d94b58818234e89e53864d2f65956da2903784c0005a7,2865
     pantry-tree:
-      size: 777
-      sha256: 505cd5e903b359f800f7fc14776df4e1d03c18c4ebfa1dfa657754c73365f0df
+      size: 931
+      sha256: 0982996f259a250f4524466af479a8ca90ff72b143a3b9095ace24b1c371c4d5
   original:
-    hackage: row-types-0.4.0.0@sha256:adf9dcf41e44e61c443a02cb9927740ea211e4cf60e68fb9d7b312da7bdd33be,3579
+    hackage: row-types-1.0.1.0@sha256:62d274be07da06aafe2d94b58818234e89e53864d2f65956da2903784c0005a7,2865
 - completed:
     hackage: vulkan-3.10@sha256:176e30e9f79b76b184ea5349bf83d419a329c942bba0d720fede43f948dbd29d,24500
     pantry-tree:
@@ -39,6 +39,17 @@ packages:
       sha256: b7b0b2eea08d075af6739be07daadae2fe1fdbb69513a1b2dac4c284902180db
   original:
     hackage: vulkan-3.10
+- completed:
+    name: zorja
+    version: 0.1.0.0
+    git: https://github.com/Izzimach/zorja.git
+    pantry-tree:
+      size: 1756
+      sha256: 557dc929e4a7fb382c13cfbca735537147a2cf4b3952e76cddb47bcc1ec5f9b2
+    commit: ddf713c278bb44ef66ccf1327f5c9d3e9161120a
+  original:
+    git: https://github.com/Izzimach/zorja.git
+    commit: ddf713c278bb44ef66ccf1327f5c9d3e9161120a
 snapshots:
 - completed:
     size: 585393

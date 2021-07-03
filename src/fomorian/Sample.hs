@@ -51,9 +51,8 @@ testScene2d = pixelOrtho2DView $
   where
     sinFunc t = V3 (10 * (sin t)) (10 * (cos t)) 0
     someTriangle :: SceneGraph TopLevel3DRow OpenGLTarget
-    someTriangle = invoke (#shader   .== MaterialData (ShaderPath "linez") .+
-                           #vertices .== GeometryData (RawV2 [V2 0 0, V2 10 0, V2 10 10, V2 0 0, V2 0 10, V2 10 10]) .+
-                           #textures .== [])
+    someTriangle = invoke (  #geometry .== ("linez", DataSource (IsJust #coordinates2d [(0,0), (10,0), (10,10), (0, 0), (0, 10), (10, 10)]))
+                          .+ #textures .== [])
 
 testScene3d :: SceneGraph TopLevel3DRow OpenGLTarget
 testScene3d = perspectiveProject config $
@@ -67,26 +66,13 @@ testScene3d = perspectiveProject config $
                       ]
   where
     config = (PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 100 {-far plane-})
-    someCube = invoke (#shader .== MaterialData (ShaderPath "unlit3d") .+
-                       #vertices .== GeometryData (OBJFile "testcube.obj") .+
-                       #textures .== ([MaterialData (TexturePath "salamander.png")]))
+    someCube :: SceneGraph TopLevel3DRow OpenGLTarget
+    someCube = invoke (   #geometry .== ("unlit3d", DataSource (IsJust #wavefrontPath "testcube.obj"))
+                       .+ #textures .== [DataSource (IsJust #texturePath "salamander.png")])
 
 myAdd :: Int32 -> Int32
 myAdd x = x + 3
 
-foreign import ccall unsafe "foo" hFoo :: Int32 -> IO Int32
-foreign import ccall safe "foo2" hFoo2 :: FunPtr (Int32 -> Int32) -> IO Int32
-foreign import ccall "wrapper" createAddPtr :: (Int32 -> Int32) -> IO (FunPtr (Int32 -> Int32))
-
-
-main2 :: IO ()
-main2 = simpleApp (600,400) (const testScene3d)
 
 main :: IO ()
-main = do
-  x <- hFoo 41
-  putStrLn (show x)
-  myAddPtr <- createAddPtr myAdd
-  x2 <- hFoo2 myAddPtr
-  putStrLn (show x2)
-  freeHaskellFunPtr myAddPtr
+main = simpleApp (600,400) (const testScene3d)

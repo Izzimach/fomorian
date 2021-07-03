@@ -52,11 +52,13 @@ import Foreign.Storable (Storable, sizeOf)
 import qualified Data.ByteString.Lazy as B
 
 import Data.Row
+import Data.Hashable
 
-import qualified Data.HashMap.Strict as H
+import qualified Data.Map.Strict as M
 
 import GHC.Generics
 import System.FilePath
+
 
 import Linear
 
@@ -67,10 +69,16 @@ newtype DataSource r = DataSource { unDataSource :: (Var r) }
 
 instance (Forall r Eq) => Eq (DataSource r) where
   (DataSource a) == (DataSource b) =  (a == b)
+
 instance (Forall r Show) => Show (DataSource r) where
   show (DataSource a) = "[DataSource " ++ show a ++ "]"
+  
 instance (Forall r Eq, Forall r Ord) => Ord (DataSource r) where
   compare (DataSource a) (DataSource b) = compare a b
+
+instance Hashable (Var r) => Hashable (DataSource r) where
+  hashWithSalt s (DataSource x) = hashWithSalt s x
+
 
 newtype Resource r = Resource { unResource :: (Var r) }
   deriving (Generic)
@@ -81,6 +89,9 @@ instance (Forall r Show) => Show (Resource r) where
   show (Resource a) = "[Resource " ++ show a ++ "]"
 instance (Forall r Eq, Forall r Ord) => Ord (Resource r) where
   compare (Resource a) (Resource b) = compare a b
+
+instance Hashable (Var r) => Hashable (Resource r) where
+  hashWithSalt s (Resource x) = hashWithSalt s x
 
 type BasicDataSourceTypes =
      ("coordinates2d"    .== [(Float,Float)])
@@ -120,7 +131,7 @@ data GeometryResource b i atr =
   GeometryResource {
     vBuffer :: b,
     indexBuffer :: (Maybe i),
-    attributeMap ::  (H.HashMap String atr)
+    attributeMap ::  (M.Map String atr)
   }
   deriving (Eq, Show)
 
@@ -128,18 +139,18 @@ vertex2ToGeometry :: [(Float,Float)] -> GeometryResource [V3 Float] [Int] Vertex
 vertex2ToGeometry ffs = GeometryResource v2s Nothing attribs
   where
     v2s = fmap (\(x,y) -> V3 x y 0) ffs
-    attribs = H.fromList $ [("position",VertexAttribute 3 VertexFloat 3 0)]
+    attribs = M.fromList $ [("position",VertexAttribute 3 VertexFloat 3 0)]
 
 vertex3ToGeometry :: [(Float,Float,Float)] -> GeometryResource [V3 Float] [Int] VertexAttribute
 vertex3ToGeometry f3s = GeometryResource v3s Nothing attribs
   where
     v3s = fmap (\(x,y,z) -> V3 x y z) f3s
-    attribs = H.fromList $ [("position",VertexAttribute 3 VertexFloat 3 0)]
+    attribs = M.fromList $ [("position",VertexAttribute 3 VertexFloat 3 0)]
 
 v3IndexToGeometry :: [V3 Float] -> [Int] -> GeometryResource [V3 Float] [Int] VertexAttribute
 v3IndexToGeometry v3s ixs = GeometryResource v3s (Just ixs) attribs
   where
-    attribs = H.fromList $ [("position",VertexAttribute 3 VertexFloat 3 0)]
+    attribs = M.fromList $ [("position",VertexAttribute 3 VertexFloat 3 0)]
 
 flattenWavefrontVertex :: OBJBufferRecord -> [Float]
 flattenWavefrontVertex (OBJBufferRecord objR) =
@@ -156,7 +167,7 @@ wavefrontGeometry fp = do
       Right (vertdata, indexdata) -> do
         let stride = fromIntegral $ sizeOf (undefined :: OBJBufferRecord)
         let floatSize = fromIntegral $ sizeOf (undefined :: Float)
-        let attribs = H.fromList [
+        let attribs = M.fromList [
               ("position",VertexAttribute 3 VertexFloat stride 0),
               ("texCoord",VertexAttribute 2 VertexFloat stride (3*floatSize)),
               ("normal",  VertexAttribute 3 VertexFloat stride (5*floatSize))
@@ -171,8 +182,8 @@ loadBasicData (DataSource bd) = fmap Resource $ switch bd $
   .+ #coordinates3d     .== (\v3s -> return $ IsJust #vertexPositions (vertex3ToGeometry v3s))
   .+ #rawVertexAttribs  .== (\(v3s,ixs) -> return $ IsJust #vertexPositions (v3IndexToGeometry v3s ixs))
   .+ #wavefrontPath     .== (\fp -> do g <- wavefrontGeometry fp; return $ IsJust #vertexData g)
-  .+ #shaderPath        .== (\fp -> do b <- B.readFile fp; return (IsJust #shaderBytes b))
-  .+ #texturePath       .== (\fp -> do b <- B.readFile fp; return (IsJust #textureBytes b))
+  .+ #shaderPath        .== (\fp -> do b <- B.readFile ("resources" </> "shaders" </> fp); return (IsJust #shaderBytes b))
+  .+ #texturePath       .== (\fp -> do b <- B.readFile ("resources "</> "textures" </> fp); return (IsJust #textureBytes b))
 
   {-data GeometryDataSource =
     RawV2 [V2 Float]

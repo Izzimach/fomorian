@@ -38,15 +38,18 @@ resolver: lts-18.0
 # will not be run. This is useful for tweaking upstream packages.
 packages:
 - .
+- ../stm-loader
+
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
 - GLUtil-0.10.4@sha256:48f76f9c9666e45062c2fc4146162ca69dc773c742e61e06d752ca05ca1754ba,3217
 - wavefront-0.7.1.4@sha256:0a1e4bc3de7a450c8da2c3b962ebc0b54acdeb9664e73cdd4649861740d96024,1999
-- constrained-categories-0.4.0.0@sha256:478e481b2ae62f3ff21c900ab9f26a5f01cc0b5b8f4a96f44c6e005970ed2639,3534
-- row-types-0.4.0.0@sha256:adf9dcf41e44e61c443a02cb9927740ea211e4cf60e68fb9d7b312da7bdd33be,3579
+- constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
+- row-types-1.0.1.0@sha256:62d274be07da06aafe2d94b58818234e89e53864d2f65956da2903784c0005a7,2865
 - vulkan-3.10
-
+- git: https://github.com/Izzimach/zorja.git
+  commit: ddf713c278bb44ef66ccf1327f5c9d3e9161120a
 
 #
 # OH NO

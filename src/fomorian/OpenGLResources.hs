@@ -4,6 +4,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-} {- oh no -}
@@ -16,8 +17,9 @@ module Fomorian.OpenGLResources where
 import GHC.Generics
 
 import Control.Monad
+import Control.Concurrent
+import Control.Concurrent.Async.Pool
 
-import Data.Hashable
 import Data.Maybe (isJust)
 import Data.Row
 import Data.Row.Variants (view)
@@ -25,7 +27,6 @@ import Data.Functor.Foldable
 import Data.Foldable (find)
 import qualified Data.Set as S
 import qualified Data.Map as M
-import qualified Data.HashMap.Strict as H
 
 import Foreign.Storable (Storable, sizeOf)
 import Foreign.Ptr (nullPtr, plusPtr)
@@ -38,17 +39,17 @@ import Graphics.Rendering.OpenGL (($=))
 import Graphics.Rendering.OpenGL.GL.VertexArrays (VertexArrayDescriptor(..))
 import qualified Graphics.GLUtil as GLUtil
 
+import LoadUnload
+
 import Fomorian.SceneNode
 import Fomorian.SceneResources
 import Fomorian.ProcessWavefront (OBJBufferRecord, loadWavefrontOBJFile)
 
-
 data OpenGLTarget
 
-type instance (InvokeReq OpenGLTarget sreq) = (HasType "shader" (DataSource BasicDataSourceTypes) sreq,
-                                                HasType "vertices" (DataSource BasicDataSourceTypes) sreq,
-                                                HasType "textures" [DataSource BasicDataSourceTypes] sreq)
-type instance (FrameReq OpenGLTarget dreq) = (HasType "modelMatrix" (M44 Float) dreq,
+type instance (InvokeReq OpenGLTarget sreq) = (HasType "geometry" (FilePath, DataSource BasicDataSourceTypes) sreq,
+                                               HasType "textures" [DataSource BasicDataSourceTypes] sreq)
+type instance (DrawReq OpenGLTarget dreq) = (HasType "modelMatrix" (M44 Float) dreq,
                                                HasType "viewMatrix" (M44 Float) dreq,
                                                HasType "projectionMatrix" (M44 Float) dreq)
 
@@ -67,17 +68,13 @@ newtype GLDataSources = GLDataSources (S.Set (DataSource GLDataSourceTypes))
   deriving (Eq, Show)
   deriving (Monoid,Semigroup) via S.Set (DataSource GLDataSourceTypes)
 
+newtype OpenGLResources = OpenGLResources (M.Map (DataSource GLDataSourceTypes) (Resource GLResourceTypes))
+
 -- | Given a scene node returns the resources used
-oglResourcesAlgebra :: SceneNode dreq OpenGLTarget GLDataSources -> GLDataSources
-oglResourcesAlgebra (Invoke x) = let (DataSource sh) = x .! #shader
-                                     v  = x .! #vertices
-                                 -- we need to load the raw sources and also bundle them
-                                 -- together into a specific Vertex array object.
-                                 in case (sh, v) of
-                                   (view #shaderPath -> Just shfp, v') -> GLDataSources $ S.singleton $ DataSource $ IsJust #boundVertices (shfp, v')
-                                   (_,_) -> error "Bad binding of shader/vertext data"
-oglResourcesAlgebra (Group cmds) = foldl (<>) mempty cmds
-oglResourcesAlgebra (Transformer _ gr) = oglResourcesScene gr
+oglResourcesAlgebra :: SceneGraphF dreq OpenGLTarget GLDataSources -> GLDataSources
+oglResourcesAlgebra (InvokeF x) = GLDataSources $ S.singleton $ DataSource $ IsJust #boundVertices (x .! #geometry)
+oglResourcesAlgebra (GroupF cmds) = foldl (<>) mempty cmds
+oglResourcesAlgebra (TransformerF _ gr) = oglResourcesScene gr
 
 oglResourcesScene :: SceneGraph dreq OpenGLTarget -> GLDataSources
 oglResourcesScene sg = cata oglResourcesAlgebra sg
@@ -131,16 +128,24 @@ loadOBJFile fileName =
         return (GLVertexArray attribs (Just ibuf) ilength)
 -}
 
-
+computeGLDependencies :: DataSource GLDataSourceTypes -> IO [DataSource GLDataSourceTypes]
+computeGLDependencies (DataSource (view #boundVertices -> Just bv)) = 
+  let sp  = DataSource (IsJust #shaderPath (fst bv))
+      vd = bumpVert (snd bv)
+  in return [ sp, vd ]
+  where
+    bumpVert :: DataSource BasicDataSourceTypes -> DataSource GLDataSourceTypes
+    bumpVert (DataSource vd) = DataSource (diversify @("boundVertices" .== (FilePath, DataSource BasicDataSourceTypes)) vd)
+computeGLDependencies _ = return []
 
 loadGLResource :: DataSource GLDataSourceTypes -> [Resource GLResourceTypes] -> IO (Resource GLResourceTypes)
-loadGLResource (DataSource r) deps =
+loadGLResource (DataSource r) deps = 
   case (trial r #boundVertices) of
-    Left x -> loadBoundVertices deps
-    Right x -> loadBasicGLResource (DataSource x)
+    Right x -> loadBoundVertices deps
+    Left x -> loadBasicGLResource (DataSource x)
 
-unloadGLResource :: Resource GLResourceTypes -> IO ()
-unloadGLResource (Resource r) = switch r $
+unloadGLResource :: DataSource GLDataSourceTypes -> Resource GLResourceTypes -> IO ()
+unloadGLResource _ (Resource r) = switch r $
      (#vertexBuffer      .== unloadVertexBuffer)
   .+ (#shaderProgram     .== unloadShaderProgram)
   .+ (#textureObject     .== unloadTextureObject)
@@ -153,6 +158,7 @@ unloadGLResource (Resource r) = switch r $
     unloadBoundVertices (vao,_s,_va) = GL.deleteObjectName vao     -- s and va are resources that get unloaded separately
 
 
+
 loadBoundVertices :: [Resource GLResourceTypes] -> IO (Resource GLResourceTypes)
 loadBoundVertices deps =
   let sh = findResource #shaderProgram deps
@@ -161,7 +167,7 @@ loadBoundVertices deps =
        (Just s, Just v) -> generateBoundVertices s v
        (_,_)            -> error "Argh"
   where
-    findResource l [] = Nothing
+    findResource _ [] = Nothing
     findResource l (Resource (view l -> Just x) : _) = Just x
     findResource l (_ : xs) = findResource l xs
 
@@ -169,9 +175,9 @@ generateBoundVertices :: GLUtil.ShaderProgram -> GeometryResource GL.BufferObjec
 generateBoundVertices s v = do
   [vao] <- GL.genObjectNames 1
   putStrLn $ "vao: " ++ show vao
+  let vSources = M.mapWithKey (\k a -> GLVertexSource k (vBuffer v) a) (attributeMap v)
   GL.bindVertexArrayObject $= Just vao
   -- look up each vertex attribute in the shader to find it's index
-  let vSources = H.mapWithKey (\k a -> GLVertexSource k (vBuffer v) a) (attributeMap v)
   mapM_ (bindVertexSource s) vSources
   GL.bindVertexArrayObject $= Nothing
   return $ Resource $ IsJust #boundVertices (vao, s, v)
@@ -179,7 +185,7 @@ generateBoundVertices s v = do
 -- | Given a 'GLVertexSource' checks to see if the shader uses a vertex attribute with
 --   the same name as the 'GLVertexSource' and if so, binds it to the appropriate attribute.
 bindVertexSource :: GLUtil.ShaderProgram -> GLVertexSource -> IO ()
-bindVertexSource (GLUtil.ShaderProgram attribs uniforms prog) (GLVertexSource name bufferObj vad) =
+bindVertexSource (GLUtil.ShaderProgram attribs _uniforms _prog) (GLVertexSource name bufferObj vad) =
   do
     -- look up the vertex source name to see if it is in the list of attributes for this program
     case (M.lookup name attribs) of
@@ -194,13 +200,18 @@ bindVertexSource (GLUtil.ShaderProgram attribs uniforms prog) (GLVertexSource na
 
 
 loadBasicGLResource :: DataSource BasicDataSourceTypes -> IO (Resource GLResourceTypes)
-loadBasicGLResource ds = do
-  (Resource bd) <- loadBasicData ds
-  switch bd $
-       (#vertexPositions .== loadGLVertexPositions)
-    .+ (#vertexData      .== loadGLVertexData)
-    .+ (#shaderBytes     .== undefined)
-    .+ (#textureBytes    .== undefined)
+loadBasicGLResource (DataSource (view #shaderPath -> Just sp)) =
+  do s <- GLUtil.simpleShaderProgram
+            ("./resources" </> "shaders" </> sp ++ ".vert")
+            ("./resources" </> "shaders" </> sp ++ ".frag")
+     return $ Resource (IsJust #shaderProgram s)
+loadBasicGLResource ds =
+  do (Resource rs) <- loadBasicData ds
+     switch rs $
+         (#vertexPositions .== loadGLVertexPositions)
+      .+ (#vertexData      .== loadGLVertexData)
+      .+ (#shaderBytes     .== undefined)
+      .+ (#textureBytes    .== undefined)
 
 {-
 loadBuffer :: (Storable a) => GL.BufferTarget -> String -> GL.GLint -> [a] -> IO GLResourceRecord
@@ -226,14 +237,14 @@ loadGLVertexPositions :: GeometryResource [V3 Float] [Int] VertexAttribute -> IO
 loadGLVertexPositions (GeometryResource vs ix a) = do
   vBuf <- GLUtil.makeBuffer GL.ArrayBuffer vs
   iBuf <- traverse (\x -> GLUtil.makeBuffer GL.ElementArrayBuffer ((fmap fromIntegral x) :: [GLUtil.Word32])) ix
-  let attr = H.map attributesToGL a
+  let attr = M.map attributesToGL a
   return $ Resource $ IsJust #vertexBuffer (GeometryResource vBuf iBuf attr)
 
 loadGLVertexData :: GeometryResource [Float] [Int] VertexAttribute -> IO (Resource GLResourceTypes)
 loadGLVertexData (GeometryResource vs ix a) = do
   vBuf <- GLUtil.makeBuffer GL.ArrayBuffer vs
   iBuf <- traverse (\x -> GLUtil.makeBuffer GL.ElementArrayBuffer ((fmap fromIntegral x) :: [GLUtil.Word32])) ix
-  let attr = H.map attributesToGL a
+  let attr = M.map attributesToGL a
   return $ Resource $ IsJust #vertexBuffer (GeometryResource vBuf iBuf attr)
 
 {-
@@ -280,12 +291,6 @@ unloadGLResource (GLShaderProgram p)     = GL.deleteObjectName (GLUtil.program p
 unloadGLResource (GLTextureObject o)     = GL.deleteObjectName o
 
 
-findLabelInList :: [Var r] -> Label l -> Maybe (r .! l)
-findLabelInList [] _ = Nothing
-findLabelInList (r:rs) l = case (trial r l) of
-                             Left _ -> findLabelInList rs l
-                             Right x -> x
-
 
 -- | Given a 'GLVertexSource' checks to see if the shader uses a vertex attribute with
 --   the same name as the 'GLVertexSource' and if so, binds it to the appropriate attribute.
@@ -327,20 +332,25 @@ syncBindVAO r m b@(BoundVertices s v) =
               return (insertResource b newR m)
           (_,_)                -> undefined
 
+-}
+
+loaderGLConfig :: ResourceLoaderConfig (DataSource GLDataSourceTypes) (Resource GLResourceTypes)
+loaderGLConfig = ResourceLoaderConfig {
+  loadIO = loadGLResource,
+  unloadIO = unloadGLResource,
+  dependenciesIO = computeGLDependencies
+  }
+
 
 -- | Given a scene and a set of already-loaded resources, makes sure all the resources are loaded for this scene. Synchronously loads
 --   any resources needed for the scene.
-loadOpenGLResourcesScene :: SceneGraph dreq OpenGLTarget -> OpenGLResources -> IO OpenGLResources
-loadOpenGLResourcesScene sg (OpenGLResources generalR combinedR) =
+loadOpenGLResourcesScene :: SceneGraph dreq OpenGLTarget -> LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes) -> IO (LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes))
+loadOpenGLResourcesScene sg lr =
   do
-    let needsResources = oglResourcesScene sg
-    let sources = S.toList $ rawSources needsResources
-    let derivedSources = S.toList $ combinedSources needsResources
-    generalR' <- syncLoadAll loadGLResource generalR (S.toList $ rawSources needsResources)
-    combinedR' <- foldM (syncBindVAO generalR') combinedR (S.toList $ combinedSources needsResources)
-    return (OpenGLResources generalR' combinedR')
+    let (GLDataSources needsResources) = oglResourcesScene sg
+    let needAdds = S.toList $ needsResources `S.difference` (topLevelResources lr)
+    withTaskGroup 4 $ \tg -> fullLoad tg loaderGLConfig lr needAdds
 
--}
 
 
 

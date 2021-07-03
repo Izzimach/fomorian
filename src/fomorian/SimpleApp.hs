@@ -15,6 +15,7 @@ import Control.Exception (try, SomeException, displayException, bracket)
 
 import Data.Row
 import Data.Row.Records
+import qualified Data.Map as M
 import Data.IORef
 
 import Fomorian.SceneNode
@@ -22,11 +23,14 @@ import Fomorian.SceneResources
 import Fomorian.OpenGLResources
 import Fomorian.Windowing
 import Fomorian.OpenGLCommand
+
+import LoadUnload
+
 import Control.Monad (unless)
 
 type OuterAppRow = ("window"     .== GLFW.Window .+
                     "windowSize" .== (Int,Int)   .+
-                    "resources"  .== OpenGLResources .+
+                    "resources"  .== LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes) .+
                     "curTime"    .== Float       .+
                     "shouldTerminate" .== Bool)
 
@@ -54,7 +58,7 @@ initAppState (WindowInitData w h _ _) win =
 
     let initialAppState =  (#window .== win)
                         .+ (#windowSize .== (w,h))
-                        .+ (#resources .== OpenGLResources emptyResources emptyResources)
+                        .+ (#resources .== noLoadedResources)
                         .+ (#curTime .== (0 :: Float))
                         .+ (#shouldTerminate .== False)
     appIORef <- newIORef initialAppState
@@ -109,7 +113,8 @@ renderLoop appref buildScene genFD = loop
       writeIORef appref appstate'
 
       -- generate the draw commands
-      let sceneCommand = oglToCommand resources' sceneTarget
+      let rawResources = OpenGLResources $ M.map value (resourceMap resources')
+      let sceneCommand = oglToCommand rawResources sceneTarget
       let frameData = genFD appstate'
       renderOneFrame sceneCommand frameData
 

@@ -25,8 +25,6 @@ import Linear
 
 import Graphics.Rendering.OpenGL (GLfloat)
 
-import Data.Functor.Foldable
-
 import Data.Row
 import Data.Row.Records
 
@@ -81,7 +79,7 @@ orthoConvert r = (#projectionMatrix .== orthoForWindowSize r)
 --
 pixelOrtho2DView :: (HasType "windowX" Integer r, HasType "windowY" Integer r) =>
   SceneGraph ("projectionMatrix" .== M44 Float .// r) cmd -> SceneGraph r cmd
-pixelOrtho2DView sg = Fix $ setFields orthoConvert sg
+pixelOrtho2DView sg = setFields orthoConvert sg
 
 data PerspectiveProjectConfig =
   PerspectiveProject
@@ -95,14 +93,14 @@ data PerspectiveProjectConfig =
 -- | Generate a perspective projection representing the camera looking down the -z axis from the origin.
 perspectiveProject :: PerspectiveProjectConfig ->
   SceneGraph ("projectionMatrix" .== M44 Float .// r) cmd -> SceneGraph r cmd
-perspectiveProject (PerspectiveProject v a n f) sg = Fix $ setFields setPerspective sg
+perspectiveProject (PerspectiveProject v a n f) sg = setFields setPerspective sg
   where
     setPerspective :: Rec r -> Rec ("projectionMatrix" .== M44 Float)
     setPerspective _ = (#projectionMatrix .== perspective v a n f)
 
 autoAspect :: (HasType "windowX" Integer r, HasType "windowY" Integer r, HasType "projectionMatrix" (M44 Float) r) =>
   SceneGraph r cmd -> SceneGraph r cmd
-autoAspect sg = Fix $ Transformer correctAspect sg
+autoAspect sg = Transformer correctAspect sg
   where
     correctAspect r =
       let x = r .! #windowX
@@ -113,7 +111,7 @@ autoAspect sg = Fix $ Transformer correctAspect sg
       in update #projectionMatrix (scaleAspect !*! m) r
 
 cameraLookAt :: (HasType "viewMatrix" (M44 Float) r) => V3 Float -> V3 Float -> V3 Float -> SceneGraph r cmd -> SceneGraph r cmd
-cameraLookAt camat lookat upvector sg = Fix $ Transformer setLookAt sg
+cameraLookAt camat lookat upvector sg = Transformer setLookAt sg
   where
     setLookAt r = update #viewMatrix (lookAt camat lookat upvector) r
 
@@ -128,15 +126,15 @@ translateBy (V3 tx ty tz) r =
 
 -- | Applies a 2 dimensional translation to the modelMatrix frame parameter.
 translate2d :: (HasType "modelMatrix" (M44 Float) r) => V2 Float -> SceneGraph r cmd -> SceneGraph r cmd
-translate2d (V2 tx ty) sg = Fix $ Transformer (translateBy (V3 tx ty 0)) sg
+translate2d (V2 tx ty) sg = Transformer (translateBy (V3 tx ty 0)) sg
 
 -- | Applies a 3 dimensional translation to the modelMatrix frame parameter
 translate3d :: (HasType "modelMatrix" (M44 Float) r) => V3 Float -> SceneGraph r cmd -> SceneGraph r cmd
-translate3d tr sg = Fix $ Transformer (translateBy tr) sg
+translate3d tr sg = Transformer (translateBy tr) sg
 
 -- | Applies a time-varying translation. Uses a function that takes in the current time and returns the translation for that time.
 translateWithFunc :: (HasType "curTime" Float r, HasType "modelMatrix" (M44 Float) r) => (Float -> V3 Float) -> SceneGraph r cmd -> SceneGraph r cmd
-translateWithFunc f sg = Fix $ Transformer (translateFunc f) sg
+translateWithFunc f sg = Transformer (translateFunc f) sg
   where
     translateFunc ft = \r -> let t = r .! #curTime
                                  (V3 dx dy dz) = ft t
@@ -156,10 +154,10 @@ rotateAxisAngle axis ang r =
       xform' = xform !*! rotationMatrix
   in update #modelMatrix xform' r
 
-rotate3d :: (HasType "modelMatrix" (M44 Float) r) => V3 GLfloat -> Float -> SceneGraph r cmd -> Fix (SceneNode r cmd)
+rotate3d :: (HasType "modelMatrix" (M44 Float) r) => V3 GLfloat -> Float -> SceneGraph r cmd -> SceneGraph r cmd
 rotate3d axis ang = transformer (rotateAxisAngle axis ang)
 
-spin3d :: (HasType "curTime" Float r, HasType "modelMatrix" (M44 Float) r) => V3 GLfloat -> Float -> SceneGraph r cmd -> Fix (SceneNode r cmd)
+spin3d :: (HasType "curTime" Float r, HasType "modelMatrix" (M44 Float) r) => V3 GLfloat -> Float -> SceneGraph r cmd -> SceneGraph r cmd
 spin3d axis spinspeed = transformer (spinAxis spinspeed)
   where
     spinAxis spin r =

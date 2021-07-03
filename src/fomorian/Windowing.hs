@@ -19,6 +19,8 @@ module Fomorian.Windowing where
 
 import qualified Graphics.UI.GLFW as GLFW
 
+import qualified Graphics.Rendering.OpenGL as GL
+
 data OpenGLBinding = UseOpenGL | NoOpenGL deriving (Eq, Show)
 
 data WindowInitData = WindowInitData
@@ -83,3 +85,7 @@ runWithGL go =
      terminateWindow w
      return ret
 
+testRun :: IO ()
+testRun = do
+  x <- (GL.createShader GL.VertexShader)
+  return ()

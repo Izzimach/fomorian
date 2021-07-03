@@ -45,7 +45,9 @@ common deps
                        unordered-containers,
                        wavefront,
                        row-types,
-                       JuicyPixels
+                       JuicyPixels,
+                       stm-loader,
+                       async-pool
 
 
 library

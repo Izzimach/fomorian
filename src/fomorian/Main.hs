@@ -5,5 +5,5 @@ import qualified Fomorian.Vulkan.Example (main)
 
 main :: IO ()
 main = do
-  Fomorian.Vulkan.Example.main
+  Fomorian.Sample.main
 

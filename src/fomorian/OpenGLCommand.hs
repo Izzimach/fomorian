@@ -1,22 +1,26 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedLabels #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Fomorian.OpenGLCommand where
 
 import Linear
 
 import Data.Functor.Foldable
-
 import Data.Row
+import Data.Row.Variants (view)
+import qualified Data.Map.Strict as M
 
 import Foreign.Ptr (nullPtr)
 
@@ -36,22 +40,37 @@ type instance (InvokeReq OpenGLCommand sreq) = (HasType "shader" GLUtil.ShaderPr
                                                 HasType "vertexCount" GL.GLint sreq,
                                                 HasType "indexBuffer" (Maybe (GL.BufferObject)) sreq,
                                                 HasType "textures" [GL.TextureObject] sreq)
-type instance (FrameReq OpenGLCommand dreq) = (HasType "modelMatrix" (M44 Float) dreq,
+type instance (DrawReq OpenGLCommand dreq) = (HasType "modelMatrix" (M44 Float) dreq,
                                                HasType "viewMatrix" (M44 Float) dreq,
                                                HasType "projectionMatrix" (M44 Float) dreq)
 
 -- | Given an OpenGLTarget scene graph and loaded resources, builds an OpenGlCommand scene graph which can be directly
 --   converted into a monad to draw the scene
-oglCommandAlgebra :: OpenGLResources -> SceneNode dreq OpenGLTarget (SceneGraph dreq OpenGLCommand) -> SceneGraph dreq OpenGLCommand
-oglCommandAlgebra (OpenGLResources r r') (Invoke x) =
+oglCommandAlgebra :: OpenGLResources -> SceneGraphF dreq OpenGLTarget (SceneGraph dreq OpenGLCommand) -> SceneGraph dreq OpenGLCommand
+oglCommandAlgebra (OpenGLResources h) (InvokeF x) =
   -- these are pulled from the InvokeReq for OpenGLTarget
-  let shaderGLSource = x .! #shader
-      vertexGLSource = x .! #vertices
+  let vaoSource = x .! #geometry
+      vaoResource = M.lookup (DataSource $ IsJust #boundVertices vaoSource) h
       textureGLSource = x .! #textures
-      shaderRecord = lookupResource shaderGLSource r
-      vertexRecord = lookupResource vertexGLSource r
-      textureList = traverse (flip lookupResource r) textureGLSource
-  in case (shaderGLSource, vertexGLSource) of
+      {-textureList =  do t <- traverse (\r -> H.lookup (bumpVert r) h) textureGLSource
+                        t2 <- traverse (view #textureObject . unResource) t
+                        return t2-}
+      textureList = do t <- traverse (\r -> M.lookup (bumpVert r) h) textureGLSource
+                       t2 <- traverse (view #textureObject . unResource) t
+                       return t2
+      --tl = traverse (view #textureObject . unResource) textureList
+      --textureList =  (traverse (\r -> H.lookup (bumpVert r) h) textureGLSource) >>= (traverse (view #textureObject . unResource))
+  in
+    case (vaoResource, textureList) of
+      (Just (Resource (view #boundVertices -> Just (vao,sp,geo))), Just tl) ->
+        Invoke (   #shader .== sp
+                .+ #vao .== vao
+                .+ #vertexCount .== 0
+                .+ #indexBuffer .== (indexBuffer geo)
+                .+ #textures .== tl
+               )
+      _ -> Group []
+    {-case (shaderGLSource, vertexGLSource) of
     (MaterialData ss, GeometryData vs) -> 
       case (shaderRecord, vertexRecord) of
           (Just (GLShaderProgram sR), Just (GLVertexArray _va ix len)) ->
@@ -63,12 +82,16 @@ oglCommandAlgebra (OpenGLResources r r') (Invoke x) =
                                                                 #textures    .== [])
               _                          -> undefined
           (_,_) -> undefined
-    (_,_) -> undefined
-oglCommandAlgebra _ (Group cmds) = Fix $ Group cmds
-oglCommandAlgebra r (Transformer t gr) = Fix $ Transformer t (oglToCommand r gr)
+    (_,_) -> undefined-}
+oglCommandAlgebra _ (GroupF cmds) = Group cmds
+oglCommandAlgebra r (TransformerF t gr) = Transformer t (oglToCommand r gr)
 
 oglToCommand :: OpenGLResources -> SceneGraph dreq OpenGLTarget -> SceneGraph dreq OpenGLCommand
 oglToCommand r sg = cata (oglCommandAlgebra r) sg
+
+
+bumpVert :: DataSource BasicDataSourceTypes -> DataSource GLDataSourceTypes
+bumpVert (DataSource vd) = DataSource (diversify @("boundVertices" .== (FilePath, DataSource BasicDataSourceTypes)) vd)
 
 
 --
@@ -76,7 +99,7 @@ oglToCommand r sg = cata (oglCommandAlgebra r) sg
 -- means they are GLfloat, GLint, or vectors (V2,V3,V4) or matrices
 --
 
-invokeGL :: (InvokeReq OpenGLCommand r, FrameReq OpenGLCommand dreq) => Rec r -> DrawCmd dreq IO ()
+invokeGL :: (InvokeReq OpenGLCommand r, DrawReq OpenGLCommand dreq) => Rec r -> DrawCmd dreq IO ()
 invokeGL r = DC $ \dr ->
   do
     let s = r .! #shader
@@ -102,10 +125,10 @@ invokeGL r = DC $ \dr ->
                       _ -> return ()
 
 
-openGLAlgebra :: SceneNode r OpenGLCommand (DrawCmd r IO ()) -> DrawCmd r IO ()
-openGLAlgebra (Invoke x)     = invokeGL x
-openGLAlgebra (Group cmds)   = foldl (>>) (DC $ \_ -> return ()) cmds
-openGLAlgebra (Transformer t gr) = DC $ \fd ->
+openGLAlgebra :: SceneGraphF r OpenGLCommand (DrawCmd r IO ()) -> DrawCmd r IO ()
+openGLAlgebra (InvokeF x)     = invokeGL x
+openGLAlgebra (GroupF cmds)   = foldl (>>) (DC $ \_ -> return ()) cmds
+openGLAlgebra (TransformerF t gr) = DC $ \fd ->
          let fd2  = t fd
              scmd = cata openGLAlgebra gr
              in runDC scmd fd2
