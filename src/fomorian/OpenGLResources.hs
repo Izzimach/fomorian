@@ -72,7 +72,13 @@ newtype OpenGLResources = OpenGLResources (M.Map (DataSource GLDataSourceTypes) 
 
 -- | Given a scene node returns the resources used
 oglResourcesAlgebra :: SceneGraphF dreq OpenGLTarget GLDataSources -> GLDataSources
-oglResourcesAlgebra (InvokeF x) = GLDataSources $ S.singleton $ DataSource $ IsJust #boundVertices (x .! #geometry)
+oglResourcesAlgebra (InvokeF x) =
+  let geo = x .! #geometry
+      txs = fmap bumpTex (x .! #textures)
+  in
+    GLDataSources $ S.fromList ([DataSource $ IsJust #boundVertices geo] ++ txs)
+  where
+    bumpTex (DataSource t) = DataSource $ diversify @("boundVertices" .== (FilePath, DataSource BasicDataSourceTypes)) t
 oglResourcesAlgebra (GroupF cmds) = foldl (<>) mempty cmds
 oglResourcesAlgebra (TransformerF _ gr) = oglResourcesScene gr
 
@@ -205,7 +211,14 @@ loadBasicGLResource (DataSource (view #shaderPath -> Just sp)) =
             ("./resources" </> "shaders" </> sp ++ ".vert")
             ("./resources" </> "shaders" </> sp ++ ".frag")
      return $ Resource (IsJust #shaderProgram s)
-loadBasicGLResource ds =
+loadBasicGLResource (DataSource (view #texturePath -> Just tp)) =
+  do v <- GLUtil.readTexture ("./resources" </> "textures" </> tp)
+     case v of
+        Left err -> error ("Error loading texture " ++ tp ++ ": " ++ err)
+        Right obj -> do GL.textureFilter GL.Texture2D $= ((GL.Nearest,Nothing), GL.Nearest)
+                        GLUtil.texture2DWrap $= (GL.Repeated, GL.ClampToEdge)
+                        return $ Resource $ IsJust #textureObject obj
+loadBasicGLResource ds = 
   do (Resource rs) <- loadBasicData ds
      putStrLn $ "Loading thing " ++ show rs
      switch rs $
@@ -213,6 +226,7 @@ loadBasicGLResource ds =
       .+ (#vertexData      .== loadGLVertexData)
       .+ (#shaderBytes     .== undefined)
       .+ (#textureBytes    .== undefined)
+
 
 {-
 loadBuffer :: (Storable a) => GL.BufferTarget -> String -> GL.GLint -> [a] -> IO GLResourceRecord

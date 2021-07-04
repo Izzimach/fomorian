@@ -6,15 +6,15 @@
 uniform mat4 viewMatrix;
 uniform mat4 modelMatrix;
 uniform mat4 projectionMatrix;
-in vec3 pos3;
-//in vec2 texCoord;
-//in vec3 normal;
+in vec3 position;
+in vec2 texCoord;
+in vec3 normal;
 
-//out vec2 texCoordFrag;
-//out vec3 normalFrag;
+out vec2 texCoordFrag;
+out vec3 normalFrag;
 
 void main() {
-  gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(pos3, 1);
-  //texCoordFrag = texCoord;
-  //normalFrag = normal;
+  gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1);
+  texCoordFrag = texCoord;
+  normalFrag = normal;
 }

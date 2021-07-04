@@ -106,16 +106,18 @@ invokeGL r = DC $ \dr ->
     let vao = r .! #vao
     let ib = r .! #indexBuffer
     let vc = r .! #vertexCount
+    let txs = r .! #textures
     GL.currentProgram $= Just (GLUtil.program s)
     GL.bindVertexArrayObject $= Just vao
     setUniform s "modelMatrix" ((dr .! #modelMatrix) :: M44 GL.GLfloat)
     setUniform s "viewMatrix" ((dr .! #viewMatrix) :: M44 GL.GLfloat)
     setUniform s "projectionMatrix" ((dr .! #projectionMatrix) :: M44 GL.GLfloat)
     GL.bindBuffer GL.ElementArrayBuffer $= ib
-    case ib of
-      Just _ -> GL.drawElements GL.Triangles vc GL.UnsignedInt nullPtr
-      Nothing -> GL.drawArrays GL.Triangles 0 vc
-    checkError
+    GLUtil.withTextures2D txs $ do
+      case ib of
+        Just _ -> GL.drawElements GL.Triangles vc GL.UnsignedInt nullPtr
+        Nothing -> GL.drawArrays GL.Triangles 0 vc
+      checkError
     GL.bindVertexArrayObject $= Nothing
     return ()
   where

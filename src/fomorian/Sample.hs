@@ -75,4 +75,4 @@ myAdd x = x + 3
 
 
 main :: IO ()
-main = simpleApp (600,400) (const testScene2d)
+main = simpleApp (600,400) (const testScene3d)
