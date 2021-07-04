@@ -152,7 +152,7 @@ unloadGLResource _ (Resource r) = switch r $
   .+ (#boundVertices     .== unloadBoundVertices)
   where
      -- iBuf is a maybe, so use mapM to delete if it's a 'Just'
-    unloadVertexBuffer (GeometryResource vBuf iBuf _) = do GL.deleteObjectName vBuf; mapM_ GL.deleteObjectName iBuf
+    unloadVertexBuffer (GeometryResource vBuf iBuf vc _) = do GL.deleteObjectName vBuf; mapM_ GL.deleteObjectName iBuf
     unloadShaderProgram p = GL.deleteObjectName (GLUtil.program p)
     unloadTextureObject o = GL.deleteObjectName o
     unloadBoundVertices (vao,_s,_va) = GL.deleteObjectName vao     -- s and va are resources that get unloaded separately
@@ -207,6 +207,7 @@ loadBasicGLResource (DataSource (view #shaderPath -> Just sp)) =
      return $ Resource (IsJust #shaderProgram s)
 loadBasicGLResource ds =
   do (Resource rs) <- loadBasicData ds
+     putStrLn $ "Loading thing " ++ show rs
      switch rs $
          (#vertexPositions .== loadGLVertexPositions)
       .+ (#vertexData      .== loadGLVertexData)
@@ -234,18 +235,19 @@ attributesToGL (VertexAttribute comp dType str offs) =
     convertDataType VertexInt = GL.Int
 
 loadGLVertexPositions :: GeometryResource [V3 Float] [Int] VertexAttribute -> IO (Resource GLResourceTypes)
-loadGLVertexPositions (GeometryResource vs ix a) = do
+loadGLVertexPositions (GeometryResource vs ix vc a) = do
   vBuf <- GLUtil.makeBuffer GL.ArrayBuffer vs
+  -- we use 'traverse' since ix is a Maybe. So this make an index buffer if ix is a Just
   iBuf <- traverse (\x -> GLUtil.makeBuffer GL.ElementArrayBuffer ((fmap fromIntegral x) :: [GLUtil.Word32])) ix
   let attr = M.map attributesToGL a
-  return $ Resource $ IsJust #vertexBuffer (GeometryResource vBuf iBuf attr)
+  return $ Resource $ IsJust #vertexBuffer (GeometryResource vBuf iBuf vc attr)
 
 loadGLVertexData :: GeometryResource [Float] [Int] VertexAttribute -> IO (Resource GLResourceTypes)
-loadGLVertexData (GeometryResource vs ix a) = do
+loadGLVertexData (GeometryResource vs ix vc a) = do
   vBuf <- GLUtil.makeBuffer GL.ArrayBuffer vs
   iBuf <- traverse (\x -> GLUtil.makeBuffer GL.ElementArrayBuffer ((fmap fromIntegral x) :: [GLUtil.Word32])) ix
   let attr = M.map attributesToGL a
-  return $ Resource $ IsJust #vertexBuffer (GeometryResource vBuf iBuf attr)
+  return $ Resource $ IsJust #vertexBuffer (GeometryResource vBuf iBuf vc attr)
 
 {-
 loadGLGeometry :: GeometryDataSource -> IO GLResourceRecord
@@ -349,7 +351,7 @@ loadOpenGLResourcesScene sg lr =
   do
     let (GLDataSources needsResources) = oglResourcesScene sg
     let needAdds = S.toList $ needsResources `S.difference` (topLevelResources lr)
-    withTaskGroup 4 $ \tg -> fullLoad tg loaderGLConfig lr needAdds
+    syncLoad loaderGLConfig lr needAdds
 
 
 

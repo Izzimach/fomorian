@@ -20,6 +20,8 @@ module Fomorian.Windowing where
 import qualified Graphics.UI.GLFW as GLFW
 
 import qualified Graphics.Rendering.OpenGL as GL
+import Control.Concurrent
+import Control.Concurrent.Async.Pool
 
 data OpenGLBinding = UseOpenGL | NoOpenGL deriving (Eq, Show)
 
@@ -87,5 +89,13 @@ runWithGL go =
 
 testRun :: IO ()
 testRun = do
-  x <- (GL.createShader GL.VertexShader)
+  _ <- withTaskGroup 4 $ \tg -> do
+    x <- async tg $
+            do threadDelay 50000
+               GL.createShader GL.VertexShader
+    y <- async tg $
+            do _ <- wait x
+               threadDelay 50000
+               GL.createShader GL.VertexShader
+    wait y
   return ()

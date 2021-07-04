@@ -131,26 +131,27 @@ data GeometryResource b i atr =
   GeometryResource {
     vBuffer :: b,
     indexBuffer :: (Maybe i),
+    elementCount :: Int,
     attributeMap ::  (M.Map String atr)
   }
   deriving (Eq, Show)
 
 vertex2ToGeometry :: [(Float,Float)] -> GeometryResource [V3 Float] [Int] VertexAttribute
-vertex2ToGeometry ffs = GeometryResource v2s Nothing attribs
+vertex2ToGeometry ffs = GeometryResource v2s Nothing (length ffs) attribs
   where
     v2s = fmap (\(x,y) -> V3 x y 0) ffs
-    attribs = M.fromList $ [("position",VertexAttribute 3 VertexFloat 3 0)]
+    attribs = M.fromList $ [("position",VertexAttribute 3 VertexFloat 12 0)]
 
 vertex3ToGeometry :: [(Float,Float,Float)] -> GeometryResource [V3 Float] [Int] VertexAttribute
-vertex3ToGeometry f3s = GeometryResource v3s Nothing attribs
+vertex3ToGeometry f3s = GeometryResource v3s Nothing (length f3s) attribs
   where
     v3s = fmap (\(x,y,z) -> V3 x y z) f3s
-    attribs = M.fromList $ [("position",VertexAttribute 3 VertexFloat 3 0)]
+    attribs = M.fromList $ [("position",VertexAttribute 3 VertexFloat 12 0)]
 
 v3IndexToGeometry :: [V3 Float] -> [Int] -> GeometryResource [V3 Float] [Int] VertexAttribute
-v3IndexToGeometry v3s ixs = GeometryResource v3s (Just ixs) attribs
+v3IndexToGeometry v3s ixs = GeometryResource v3s (Just ixs) (length v3s) attribs
   where
-    attribs = M.fromList $ [("position",VertexAttribute 3 VertexFloat 3 0)]
+    attribs = M.fromList $ [("position",VertexAttribute 3 VertexFloat 12 0)]
 
 flattenWavefrontVertex :: OBJBufferRecord -> [Float]
 flattenWavefrontVertex (OBJBufferRecord objR) =
@@ -173,7 +174,7 @@ wavefrontGeometry fp = do
               ("normal",  VertexAttribute 3 VertexFloat stride (5*floatSize))
               ]
         let rawVerts = concatMap flattenWavefrontVertex vertdata
-        return $ GeometryResource rawVerts (Just indexdata) attribs
+        return $ GeometryResource rawVerts (Just indexdata) (length vertdata)attribs
 
 
 loadBasicData ::  DataSource BasicDataSourceTypes -> IO (Resource BasicResourceTypes)

@@ -38,7 +38,6 @@ resolver: lts-18.0
 # will not be run. This is useful for tweaking upstream packages.
 packages:
 - .
-- ../stm-loader
 
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
@@ -50,6 +49,7 @@ extra-deps:
 - vulkan-3.10
 - git: https://github.com/Izzimach/zorja.git
   commit: ddf713c278bb44ef66ccf1327f5c9d3e9161120a
+- ../stm-loader
 
 #
 # OH NO

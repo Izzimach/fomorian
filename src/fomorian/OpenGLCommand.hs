@@ -65,7 +65,7 @@ oglCommandAlgebra (OpenGLResources h) (InvokeF x) =
       (Just (Resource (view #boundVertices -> Just (vao,sp,geo))), Just tl) ->
         Invoke (   #shader .== sp
                 .+ #vao .== vao
-                .+ #vertexCount .== 0
+                .+ #vertexCount .== (fromIntegral $ elementCount geo)
                 .+ #indexBuffer .== (indexBuffer geo)
                 .+ #textures .== tl
                )
