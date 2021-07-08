@@ -43,30 +43,23 @@ resizeWindow ref = \_ w h -> windowResizeEvent ref w h
 
 
 windowResizeEvent :: IORef AppInfo -> Int -> Int -> IO ()
-windowResizeEvent ref w h =
-  do
-    GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
-    modifyIORef' ref $ \r -> update #windowSize (w,h) r
+windowResizeEvent ref w h = do
+  GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
+  modifyIORef' ref $ \r -> update #windowSize (w,h) r
 
 
 -- | Initializes the app state and OpenGL. Call after you open the window.
 initAppState :: WindowInitData -> GLFW.Window -> IO (IORef AppInfo)
-initAppState (WindowInitData w h _ _) win =
-  do
-    defaultVAO <- fmap head (genObjectNames 1)
-    bindVertexArrayObject $= Just defaultVAO
-
-    let initialAppState =  (#window .== win)
+initAppState (WindowInitData w h _ _) win = do
+  let initialAppState =    (#window .== win)
                         .+ (#windowSize .== (w,h))
                         .+ (#resources .== noLoadedResources)
                         .+ (#curTime .== (0 :: Float))
                         .+ (#shouldTerminate .== False)
-    appIORef <- newIORef initialAppState
-    GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
-
-    GLFW.setWindowSizeCallback win (Just $ resizeWindow appIORef)
-
-    return appIORef
+  appIORef <- newIORef initialAppState
+  GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
+  GLFW.setWindowSizeCallback win (Just $ resizeWindow appIORef)
+  return appIORef
 
 
 -- | Checks for end events. Specifically any close events from GLFW or hitting the escapse key.
@@ -121,7 +114,6 @@ renderLoop appref buildScene genFD = loop
       GLFW.swapBuffers win
       shouldTerminate <- shouldEndProgram appstate'
       unless shouldTerminate loop
-
 
 
 type TopLevel3DRow = ("modelMatrix" .== (M44 Float) .+ "viewMatrix" .== (M44 Float) .+ "projectionMatrix" .== (M44 Float) .+ "curTime" .== Float .+ "windowX" .== Integer .+ "windowY" .== Integer)

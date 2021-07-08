@@ -21,7 +21,12 @@ import qualified Graphics.UI.GLFW as GLFW
 
 import qualified Graphics.Rendering.OpenGL as GL
 import Control.Concurrent
+import Control.Concurrent.STM
+import Control.Exception
+import Control.Concurrent.STM.TMVar
 import Control.Concurrent.Async.Pool
+
+import Fomorian.GLBoundThread
 
 data OpenGLBinding = UseOpenGL | NoOpenGL deriving (Eq, Show)
 
@@ -80,22 +85,29 @@ terminateWindow windowID = do
 --              by OpenGL will have
 --              been destroyed by the time you see it, since the window is killed after your code is run. What you will see is the ID that was used while the window was open.
 --
-runWithGL :: (IO a) -> IO a
+runWithGL :: (BoundGLThread -> IO a) -> IO a
 runWithGL go =
-  do w <- initWindow (WindowInitData 600 400 "Test" UseOpenGL)
-     ret <- go
-     terminateWindow w
-     return ret
+  do let initwin = initWindow (WindowInitData 600 400 "Test" UseOpenGL)
+     glThreadData <- forkBoundGLThread initwin terminateWindow
+     goResult <- go glThreadData
+     throwTo (boundID glThreadData) GLEndedException
+     glThreadResult <- atomically $ takeTMVar (completionVar glThreadData)
+     case glThreadResult of
+       Right () -> putStrLn "GLThread shutdown successfully"
+       Left e -> putStrLn $ "GLThread shutdown exception: " ++  show e
+     return goResult
 
-testRun :: IO ()
-testRun = do
-  _ <- withTaskGroup 4 $ \tg -> do
-    x <- async tg $
-            do threadDelay 50000
-               GL.createShader GL.VertexShader
-    y <- async tg $
-            do _ <- wait x
-               threadDelay 50000
-               GL.createShader GL.VertexShader
-    wait y
+testRun :: BoundGLThread -> IO ()
+testRun glThread = do
+  submitPriorityGLTask glThread (putStrLn "Gl Priority")
+  submitGLTask glThread (putStrLn "Gl default")
+  let computation = do threadDelay 50000
+                       GL.createShader GL.VertexShader
+  computeResult <- submitGLComputation glThread computation
+  case computeResult of
+    Left e -> putStrLn $ "compute error " ++ show e
+    Right r -> do
+      putStrLn $ "compute Result " ++ show computeResult
+      _ <- submitGLComputation glThread $ GL.deleteObjectName r
+      return ()
   return ()

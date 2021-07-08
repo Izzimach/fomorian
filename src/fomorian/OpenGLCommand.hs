@@ -119,6 +119,7 @@ invokeGL r = DC $ \dr ->
         Nothing -> GL.drawArrays GL.Triangles 0 vc
       checkError
     GL.bindVertexArrayObject $= Nothing
+    GL.bindBuffer GL.ElementArrayBuffer $= Nothing
     return ()
   where
     checkError = do e <- GL.get GLU.errors

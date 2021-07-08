@@ -174,7 +174,7 @@ wavefrontGeometry fp = do
               ("normal",  VertexAttribute 3 VertexFloat stride (5*floatSize))
               ]
         let rawVerts = concatMap flattenWavefrontVertex vertdata
-        return $ GeometryResource rawVerts (Just indexdata) (length vertdata)attribs
+        return $ GeometryResource rawVerts (Just indexdata) (length indexdata) attribs
 
 
 loadBasicData ::  DataSource BasicDataSourceTypes -> IO (Resource BasicResourceTypes)

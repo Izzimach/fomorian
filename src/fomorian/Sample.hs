@@ -19,8 +19,6 @@ module Fomorian.Sample where
 
 import Linear
 import Data.Row
-import Data.Int
-import Foreign.Ptr
 
 
 import Fomorian.SceneNode
@@ -59,20 +57,16 @@ testScene3d = perspectiveProject config $
                 -- We set the static aspect in 'PerspectiveProject' to 1.0 and let 'autoAspect' handle
                 -- the aspect to work with window resizing.
                 autoAspect $
-                  cameraLookAt (V3 0 5 5) (V3 0 0 0) (V3 0 0 1) $ 
+                  cameraLookAt (V3 0 4 4) (V3 0 0 0) (V3 0 0 1) $ 
                     group [
                       someCube,
-                      translate3d (V3 4 0 0) $ someCube
+                      translate3d (V3 3 0 0) $ spin3d (V3 0.7071 0.7071 0) 2 $ someCube
                       ]
   where
     config = (PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 100 {-far plane-})
     someCube :: SceneGraph TopLevel3DRow OpenGLTarget
     someCube = invoke (   #geometry .== ("unlit3d", DataSource (IsJust #wavefrontPath "testcube.obj"))
                        .+ #textures .== [DataSource (IsJust #texturePath "salamander.png")])
-
-myAdd :: Int32 -> Int32
-myAdd x = x + 3
-
 
 main :: IO ()
 main = simpleApp (600,400) (const testScene3d)

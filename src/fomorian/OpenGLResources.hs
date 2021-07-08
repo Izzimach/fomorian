@@ -364,8 +364,12 @@ loadOpenGLResourcesScene :: SceneGraph dreq OpenGLTarget -> LoadedResources (Dat
 loadOpenGLResourcesScene sg lr =
   do
     let (GLDataSources needsResources) = oglResourcesScene sg
-    let needAdds = S.toList $ needsResources `S.difference` (topLevelResources lr)
-    syncLoad loaderGLConfig lr needAdds
+    let currentlyLoaded = (topLevelResources lr)
+    let needAdds = S.toList $ needsResources `S.difference` currentlyLoaded
+    let needDeletes = S.toList $ currentlyLoaded `S.difference` needsResources
+    -- feed lr through both the loading and unloading functions
+    lr' <- syncLoad loaderGLConfig lr needAdds
+    syncUnload loaderGLConfig lr' needDeletes
 
 
 

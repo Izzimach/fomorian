@@ -47,6 +47,7 @@ common deps
                        row-types,
                        JuicyPixels,
                        stm-loader,
+                       stm,
                        async,
                        async-pool
 
