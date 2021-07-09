@@ -85,7 +85,7 @@ terminateWindow windowID = do
 --              by OpenGL will have
 --              been destroyed by the time you see it, since the window is killed after your code is run. What you will see is the ID that was used while the window was open.
 --
-runWithGL :: (BoundGLThread -> IO a) -> IO a
+runWithGL :: (BoundGLThread GLFW.Window -> IO a) -> IO a
 runWithGL go =
   do let initwin = initWindow (WindowInitData 600 400 "Test" UseOpenGL)
      glThreadData <- forkBoundGLThread initwin terminateWindow
@@ -97,7 +97,7 @@ runWithGL go =
        Left e -> putStrLn $ "GLThread shutdown exception: " ++  show e
      return goResult
 
-testRun :: BoundGLThread -> IO ()
+testRun :: BoundGLThread GLFW.Window -> IO ()
 testRun glThread = do
   submitPriorityGLTask glThread (putStrLn "Gl Priority")
   submitGLTask glThread (putStrLn "Gl default")
