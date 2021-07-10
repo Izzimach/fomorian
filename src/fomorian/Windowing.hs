@@ -22,9 +22,6 @@ import qualified Graphics.UI.GLFW as GLFW
 import qualified Graphics.Rendering.OpenGL as GL
 import Control.Concurrent
 import Control.Concurrent.STM
-import Control.Exception
-import Control.Concurrent.STM.TMVar
-import Control.Concurrent.Async.Pool
 
 import Fomorian.GLBoundThread
 

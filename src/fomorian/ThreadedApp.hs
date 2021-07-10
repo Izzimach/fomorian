@@ -91,4 +91,4 @@ renderLoopThreaded appref buildScene genFD boundGL loaderInfo = loop
       unless shouldTerminate loop
 
 threadTest :: IO ()
-threadTest = simpleApp (600,400) (const testScene3d)
+threadTest = simpleApp (600,400) (const $ neutralToGLTarget testScene3d)
