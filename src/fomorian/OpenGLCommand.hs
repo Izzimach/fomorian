@@ -49,17 +49,12 @@ type instance (DrawReq OpenGLCommand dreq) = (HasType "modelMatrix" (M44 Float) 
 oglCommandAlgebra :: OpenGLResources -> SceneGraphF dreq OpenGLTarget (SceneGraph dreq OpenGLCommand) -> SceneGraph dreq OpenGLCommand
 oglCommandAlgebra (OpenGLResources h) (InvokeF x) =
   -- these are pulled from the InvokeReq for OpenGLTarget
-  let vaoSource = x .! #geometry
-      vaoResource = M.lookup (DataSource $ IsJust #boundVertices vaoSource) h
+  let vaoSource = x .! #vertexarray
+      vaoResource = M.lookup (DataSource $ IsJust #vertexarray vaoSource) h
       textureGLSource = x .! #textures
-      {-textureList =  do t <- traverse (\r -> H.lookup (bumpVert r) h) textureGLSource
-                        t2 <- traverse (view #textureObject . unResource) t
-                        return t2-}
       textureList = do t <- traverse (\r -> M.lookup (bumpVert r) h) textureGLSource
                        t2 <- traverse (view #textureObject . unResource) t
                        return t2
-      --tl = traverse (view #textureObject . unResource) textureList
-      --textureList =  (traverse (\r -> H.lookup (bumpVert r) h) textureGLSource) >>= (traverse (view #textureObject . unResource))
   in
     case (vaoResource, textureList) of
       (Just (Resource (view #boundVertices -> Just (vao,sp,geo))), Just tl) ->
@@ -69,20 +64,8 @@ oglCommandAlgebra (OpenGLResources h) (InvokeF x) =
                 .+ #indexBuffer .== (indexBuffer geo)
                 .+ #textures .== tl
                )
+      -- not loaded yet
       _ -> Group []
-    {-case (shaderGLSource, vertexGLSource) of
-    (MaterialData ss, GeometryData vs) -> 
-      case (shaderRecord, vertexRecord) of
-          (Just (GLShaderProgram sR), Just (GLVertexArray _va ix len)) ->
-            case (lookupResource (BoundVertices ss vs) r') of
-              (Just (GLBoundVertices vao _ _)) -> Fix $ Invoke (#shader      .== sR .+
-                                                                #vao         .== vao .+ 
-                                                                #vertexCount .== len .+ 
-                                                                #indexBuffer .== ix .+ 
-                                                                #textures    .== [])
-              _                          -> undefined
-          (_,_) -> undefined
-    (_,_) -> undefined-}
 oglCommandAlgebra _ (GroupF cmds) = Group cmds
 oglCommandAlgebra r (TransformerF t gr) = Transformer t (oglToCommand r gr)
 
@@ -91,7 +74,7 @@ oglToCommand r sg = cata (oglCommandAlgebra r) sg
 
 
 bumpVert :: DataSource BasicDataSourceTypes -> DataSource GLDataSourceTypes
-bumpVert (DataSource vd) = DataSource (diversify @("boundVertices" .== (FilePath, DataSource BasicDataSourceTypes)) vd)
+bumpVert (DataSource vd) = DataSource (diversify @("vertexarray" .== (FilePath, DataSource BasicDataSourceTypes)) vd)
 
 
 --

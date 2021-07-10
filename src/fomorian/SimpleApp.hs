@@ -28,11 +28,13 @@ import LoadUnload
 
 import Control.Monad (unless)
 
+
 type OuterAppRow = ("window"     .== GLFW.Window .+
                     "windowSize" .== (Int,Int)   .+
                     "resources"  .== LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes) .+
                     "curTime"    .== Float       .+
                     "shouldTerminate" .== Bool)
+
 
 -- | Parameters stored as App state that persists between frames.
 type AppInfo = Rec OuterAppRow

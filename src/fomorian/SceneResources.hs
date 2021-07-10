@@ -24,23 +24,6 @@ module Fomorian.SceneResources
     VertexAttribute(..),
     VertexDataType(..),
     loadBasicData
-    --ResourceMap,
-   -- get various resources from the resource map, used by a renderer invoke node
-   --shaders, v2Buffers, v3Buffers, indexBuffers, textures, texCoordBuffers, objFileBuffers,
-   --emptyResourceMap,
-   --loadResources,
-   {-syncLoadResource,
-   syncUnloadResource,
-   syncLoadAll,
-   syncUnloadAll,
-   GeneralDataSource(..),
-   GeometryDataSource(..),
-   MaterialDataSource(..),
-   Resources(..),
-   lookupResource,
-   insertResource,
-   deleteResource,
-   emptyResources-}
   )
   where
 
@@ -93,6 +76,7 @@ instance (Forall r Eq, Forall r Ord) => Ord (Resource r) where
 instance Hashable (Var r) => Hashable (Resource r) where
   hashWithSalt s (Resource x) = hashWithSalt s x
 
+
 type BasicDataSourceTypes =
      ("coordinates2d"    .== [(Float,Float)])
   .+ ("coordinates3d"    .== [(Float,Float,Float)])
@@ -101,14 +85,11 @@ type BasicDataSourceTypes =
   .+ ("shaderPath"    .== FilePath)
   .+ ("texturePath"   .== FilePath)
 
-
-
 type BasicResourceTypes =
      ("vertexPositions"  .== GeometryResource [V3 Float] [Int] VertexAttribute)
   .+ ("vertexData"       .== GeometryResource [Float] [Int] VertexAttribute)
   .+ ("shaderBytes"      .== B.ByteString)
   .+ ("textureBytes"     .== B.ByteString)
-
 
 -- | backend-agnostic representation of vertex data type
 data VertexDataType =
@@ -135,6 +116,7 @@ data GeometryResource b i atr =
     attributeMap ::  (M.Map String atr)
   }
   deriving (Eq, Show)
+
 
 vertex2ToGeometry :: [(Float,Float)] -> GeometryResource [V3 Float] [Int] VertexAttribute
 vertex2ToGeometry ffs = GeometryResource v2s Nothing (length ffs) attribs
@@ -186,67 +168,3 @@ loadBasicData (DataSource bd) = fmap Resource $ switch bd $
   .+ #shaderPath        .== (\fp -> do b <- B.readFile ("resources" </> "shaders" </> fp); return (IsJust #shaderBytes b))
   .+ #texturePath       .== (\fp -> do b <- B.readFile ("resources "</> "textures" </> fp); return (IsJust #textureBytes b))
 
-  {-data GeometryDataSource =
-    RawV2 [V2 Float]
-  | RawV3 [V3 Float]
-  | RawIndexedV3 [V3 Float] [Int]
-  | OBJFile String
-  deriving (Eq, Show, Ord, Generic)
-
-data MaterialDataSource =
-    ShaderPath String
-  | TexturePath String
-  | TextureBytes ByteString
-  deriving (Eq, Show, Ord, Generic)
-
-data GeneralDataSource =
-    GeometryData GeometryDataSource
-  | MaterialData MaterialDataSource
-  deriving (Eq, Show, Generic, Ord)
-
-instance Hashable GeometryDataSource
-instance Hashable MaterialDataSource
-instance Hashable GeneralDataSource
-
-newtype Resources d r = Resources { unResources :: (H.HashMap d r) }
-  deriving (Eq, Show)
-
-
-emptyResources :: Resources d r
-emptyResources = Resources H.empty
-
-lookupResource :: (Eq d,Hashable d) => d -> Resources d r -> Maybe r
-lookupResource d (Resources m) = H.lookup d m
-
-insertResource :: (Eq d, Hashable d) => d -> r -> Resources d r -> Resources d r
-insertResource d r (Resources m) = Resources $ H.insert d r m
-
-deleteResource :: (Eq d, Hashable d) => d -> Resources d r -> Resources d r
-deleteResource d (Resources m) = Resources $ H.delete d m
-
-syncLoadResource :: (Eq d, Hashable d) => (d -> IO r) -> Resources d r -> d -> IO (Resources d r)
-syncLoadResource loader rm d =
-  case (lookupResource d rm) of
-    Just _ -> return rm    -- ^ if already loaded do nothing
-    Nothing ->             -- ^ resource not found so we must load it
-      do
-        r <- loader d
-        return (insertResource d r rm)
-
-syncUnloadResource :: (Eq d, Hashable d) => (r -> IO ()) -> Resources d r -> d -> IO (Resources d r)
-syncUnloadResource unloader rm d =
-  case (lookupResource d rm) of
-    Nothing -> return rm
-    Just r ->
-      do
-        unloader r
-        return (deleteResource d rm)
-
-syncLoadAll :: (Eq d, Hashable d) => (d -> IO r) -> Resources d r -> [d] -> IO (Resources d r)
-syncLoadAll loader rm d = foldM (syncLoadResource loader) rm d
-
-syncUnloadAll :: (r -> IO ()) -> Resources d r -> IO ()
-syncUnloadAll unloader (Resources m) =
-  do mapM_ unloader m
-     return ()
--}
