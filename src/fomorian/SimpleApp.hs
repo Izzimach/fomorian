@@ -76,7 +76,7 @@ shouldEndProgram r = do
 
 
 -- | Given a scene graph, draw a single frame on an OpenGL canvas.
-renderOneFrame :: SceneGraph r OpenGLCommand -> Rec r -> IO ()
+renderOneFrame :: SceneGraph OpenGLCommand dr -> Rec dr -> IO ()
 renderOneFrame scene frameData = do
   GL.clearColor $= Color4 0 0.5 0.5 1
   GL.clear [GL.ColorBuffer, GL.DepthBuffer]
@@ -90,7 +90,7 @@ renderOneFrame scene frameData = do
 
 
 -- | Runs a render loop by generating a scene graph and frame parameters from app state.
-renderLoop :: IORef AppInfo -> (AppInfo -> SceneGraph r OpenGLTarget ) -> (AppInfo -> Rec r) -> IO ()
+renderLoop :: IORef AppInfo -> (AppInfo -> SceneGraph OpenGLTarget dr) -> (AppInfo -> Rec dr) -> IO ()
 renderLoop appref buildScene genFD = loop
   where
     loop = do
@@ -98,13 +98,14 @@ renderLoop appref buildScene genFD = loop
       let win = appstate .! #window
       let sceneTarget = buildScene appstate
 
-      -- generate new resources list and time and put them into the appstate
+      -- generate new resources list and time
       resources' <- loadOpenGLResourcesScene sceneTarget (appstate .! #resources)
       let curTime' = (appstate .! #curTime) + 0.016
+
+      -- put these new values back into the app state
       let appstate' = update #curTime curTime' $ 
                       update #resources resources' $
                       appstate
-
       writeIORef appref appstate'
 
       -- generate the draw commands
@@ -135,7 +136,7 @@ simpleAppRenderParams appstate =
 
 
 -- | A basic app that just runs a render function over and over.
-simpleApp :: (Int, Int) -> (AppInfo -> SceneGraph TopLevel3DRow OpenGLTarget) -> IO ()
+simpleApp :: (Int, Int) -> (AppInfo -> SceneGraph OpenGLTarget TopLevel3DRow) -> IO ()
 simpleApp (w,h) renderFunc = do
   let initData = WindowInitData w h "Haskell App" UseOpenGL
   let initfunc = initWindow initData

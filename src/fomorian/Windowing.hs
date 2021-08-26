@@ -13,8 +13,9 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 
 
-
--- 
+{-
+Functions to create/destroy a window and (optionally) create and bind an OpenGL context.
+-} 
 module Fomorian.Windowing where
 
 import qualified Graphics.UI.GLFW as GLFW
@@ -25,6 +26,7 @@ import Control.Concurrent.STM
 
 import Fomorian.GLBoundThread
 
+-- | Use this to dictate whether or not you want an OpenGL context bound when initializing the window.
 data OpenGLBinding = UseOpenGL | NoOpenGL deriving (Eq, Show)
 
 data WindowInitData = WindowInitData
@@ -36,7 +38,7 @@ data WindowInitData = WindowInitData
   } deriving (Eq, Show)
 
 
--- | Create a window, maybe bind an OpenGL context to that window depending on
+-- | Create a window using GLFW.  Also maybe bind an OpenGL context to that window depending on
 --   the value of 'openGLContext' in 'WindowInitData'. Returns the window handle
 initWindow :: WindowInitData -> IO GLFW.Window
 initWindow (WindowInitData w h t o) = do
@@ -63,7 +65,7 @@ initWindow (WindowInitData w h t o) = do
 
 
 
--- | Close a currently-active window.
+-- | Close a currently-active window and then end the program.
 terminateWindow :: GLFW.Window -> IO ()
 terminateWindow windowID = do
   GLFW.destroyWindow windowID

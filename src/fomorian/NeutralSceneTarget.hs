@@ -2,6 +2,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-} {- oh no -}
 
+{-|
+The 'NeutralSceneTarget' is meant to be a generic target that describes stuff to draw without having
+any hardware or API-specific reference. The constraints here only require some simple values to draw stuff.
+-}
 module Fomorian.NeutralSceneTarget where
 
 import Data.Row
@@ -11,20 +15,24 @@ import Linear
 import Fomorian.SceneNode
 import Fomorian.SceneResources
 
+-- | NeutralSceneTarget requires
+--   - (shader,geometry,textures) for invoke and
+--   - (modelMAtrix,viewMatrix,projectionMatrix) for draw
 data NeutralSceneTarget
 
-type instance (InvokeReq NeutralSceneTarget sreq) =
+type instance (InvokeReq NeutralSceneTarget ir) =
   (
-    HasType "shader" FilePath sreq,
-    HasType "geometry" (DataSource BasicDataSourceTypes) sreq,
-    HasType "textures" [DataSource BasicDataSourceTypes] sreq
+    HasType "shader" FilePath ir,
+    HasType "geometry" (DataSource BasicDataSourceTypes) ir,
+    HasType "textures" [DataSource BasicDataSourceTypes] ir
   )
 
-type instance (DrawReq NeutralSceneTarget dreq) =
+
+type instance (DrawReq NeutralSceneTarget dr) =
   (
-    HasType "modelMatrix" (M44 Float) dreq,
-    HasType "viewMatrix" (M44 Float) dreq,
-    HasType "projectionMatrix" (M44 Float) dreq
+    HasType "modelMatrix" (M44 Float) dr,
+    HasType "viewMatrix" (M44 Float) dr,
+    HasType "projectionMatrix" (M44 Float) dr
   )
 
 

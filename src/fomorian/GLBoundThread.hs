@@ -1,18 +1,29 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
 
+{-|
+Module      : Fomorian.GLBoundThread
+Description : Handles forking and running a bound thread to run OpenGL commands.
+
+All OpenGL commands must run in the same thread, which is also the thread that originally created the OpenGL context.
+However the GHC runtime normal behavior is to just Haskell tasks on whatever thread is available, possibly
+switching OS threads as needed. To prevent this we need to create a 'bound thread' which will stick to one OS thread.
+Then all OpenGL code gets run on this thread.
+
+Also, there are multiple tasks that need to call OpenGL for resource loading and unloading, as well as for rendering.
+To allow this the OpenGL bound thread runs in a simple loop where it runs functions submitted by other tasks.
+-}
 module Fomorian.GLBoundThread where
 
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception
 
-
 data GLEndedException = GLEndedException deriving (Eq, Show)
 
 instance Exception GLEndedException
 
-
+-- | Record describing a bound OpenGL thread. Contains channels where you can submit data.
 data BoundGLThread w = BoundGLThread {
     boundID :: ThreadId
   , windowValue :: TMVar w
@@ -21,6 +32,8 @@ data BoundGLThread w = BoundGLThread {
   , completionVar :: TMVar (Either SomeException ())
 }
 
+-- | Starts up the OpenGL bound thread, using the provided parameters to initialize and cleanup the OpenGL context. Use the returned
+--   'BoundGLThread' to submit stuff to run.
 forkBoundGLThread :: IO a -> (a -> IO ()) -> IO (BoundGLThread a)
 forkBoundGLThread initwin cleanup = do
   windowVar <- atomically newEmptyTMVar
@@ -40,6 +53,7 @@ forkBoundGLThread initwin cleanup = do
     atomically (putTMVar completionSync loopResult)
   return (BoundGLThread boundThread windowVar queue1 queue2 completionSync) 
 
+-- | End the OpenGL thread. Swallows any exceptions in the OpenGL thread.
 endBoundGLThread :: BoundGLThread a -> IO ()
 endBoundGLThread bgl = do
   throwTo (boundID bgl) GLEndedException
@@ -48,19 +62,22 @@ endBoundGLThread bgl = do
     Left e -> putStrLn "Error in bound GL thread"
     Right () -> return ()
 
+-- | Code that gets run in the OpenGL bound thread. Really it just runs anything in the queues,
+--   preferring to run stuff in the priority queue.
 glThreadLoop :: a -> TChan (IO()) -> TChan (IO ()) -> IO (Either SomeException ())
-glThreadLoop w q1 q2 = do
+glThreadLoop w priorityQ stdQ = do
   nextTask <- atomically $ do
-    t1 <- tryReadTChan q1
+    t1 <- tryReadTChan priorityQ
     case t1 of
       Just t -> return t
       Nothing -> do
-        t2 <- tryReadTChan q2
+        t2 <- tryReadTChan stdQ
         case t2 of
           Just t -> return t
           Nothing -> retry
   nextTask
-  glThreadLoop w q1 q2
+  glThreadLoop w priorityQ stdQ
+
 
 submitPriorityGLTask :: BoundGLThread w -> IO () -> IO ()
 submitPriorityGLTask bgl task = atomically $ writeTChan (priorityQueue bgl) task
@@ -104,4 +121,4 @@ submitGLComputationThrow bgl compute = do
   case result of
     Left ex -> throw ex
     Right val -> return val
-  
+

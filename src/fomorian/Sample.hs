@@ -44,7 +44,7 @@ genRenderParams appstate =
 
 
 
-testScene2d :: SceneGraph TopLevel3DRow NeutralSceneTarget
+testScene2d :: SceneGraph NeutralSceneTarget TopLevel3DRow 
 testScene2d = pixelOrtho2DView $
                 group [
                   someTriangle,
@@ -52,12 +52,12 @@ testScene2d = pixelOrtho2DView $
                   ]
   where
     sinFunc t = V3 (10 * (sin t)) (10 * (cos t)) 0
-    someTriangle :: SceneGraph TopLevel3DRow NeutralSceneTarget
+    someTriangle :: SceneGraph NeutralSceneTarget TopLevel3DRow
     someTriangle = invoke (  #shader   .== "linez"
                           .+ #geometry .== DataSource (IsJust #coordinates2d [(0,0), (10,0), (10,10), (0, 0), (0, 10), (10, 10)])
                           .+ #textures .== [])
 
-testScene3d :: SceneGraph TopLevel3DRow NeutralSceneTarget
+testScene3d :: SceneGraph NeutralSceneTarget TopLevel3DRow 
 testScene3d = perspectiveProject config $
                 -- We set the static aspect in 'PerspectiveProject' to 1.0 and let 'autoAspect' handle
                 -- the aspect to work with window resizing.
@@ -69,10 +69,13 @@ testScene3d = perspectiveProject config $
                       ]
   where
     config = (PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 100 {-far plane-})
-    someCube :: SceneGraph TopLevel3DRow NeutralSceneTarget
+    someCube :: SceneGraph NeutralSceneTarget TopLevel3DRow
     someCube = invoke (   #shader   .== "unlit3d"
                        .+ #geometry .== DataSource (IsJust #wavefrontPath "testcube.obj")
                        .+ #textures .== [DataSource (IsJust #texturePath "salamander.png")])
+
+dynamicsTestScene3d :: SceneGraph NeutralSceneTarget TopLevel3DRow
+dynamicsTestScene3d = undefined
 
 main :: IO ()
 main = simpleApp (600,400) (const (neutralToGLTarget testScene3d))

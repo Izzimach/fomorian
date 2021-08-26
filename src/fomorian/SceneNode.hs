@@ -18,18 +18,17 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 {-|
-Description: Scene node description as a recursive datatype.
+Description: Scene node description as a recursive datatype. It can be a graph (DAG) but is usually simply a tree.
+To "draw" the scene graph is to fold the tree; usually this is @cata alg@ where the type of @alg@ dictates the result
+of the draw/fold.
 -}
 module Fomorian.SceneNode where
 
 import qualified GHC.Generics as GHC
 
-import Linear
-
 import Data.Constraint
-import Data.Kind (Constraint, Type)
+import Data.Kind (Type)
 import Data.Functor.Foldable
-import Data.Fix (Fix(..))
 
 import Control.Monad
 import Control.Monad.Reader
@@ -41,60 +40,65 @@ import Data.Row
 import Data.Row.Records
 
 
--- | The type 'cmdProxy' is a type describing the eventual product that gets generated on a draw.  Often this will be a monad such as
+-- | The type 'target' is a type describing the eventual product that gets generated on a draw (fold).
+--   Often this will be a monad such as
 --   'DrawCmd' but it could also be a pure result like a text dump. The kinds 'ir' and 'dr' are type-level lists
---   of the values needed to generate the draw caommdn. 'ir' is used when creating the 'Invoke' nodes in the scene graph.
---   'dr' is used when drawing, which in this case means converting a scenegraph into a draw command.
+--   of the values needed to generate the draw command. 'ir' is used when creating the 'Invoke' nodes in the scene graph.
+--   'dr' is used during the actual draw, which in this case means converting a scenegraph into a draw command that takes 'dr' as input.
 --   Some examples:
 --   - 'NoDrawCmd' has an empty list of requrements 'Empty' for generating a draw command that does nothing.
 --   - 'DebugDumpCmd' just prints out the labels on invoke nodes, so it requires a string label on invoke nodes.
-type family InvokeReq cmdProxy (ir :: Row Type) :: Constraint
-type family DrawReq cmdProxy (dr :: Row Type) :: Constraint
+type family InvokeReq target (ir :: Row Type) :: Constraint
+type family DrawReq target (dr :: Row Type) :: Constraint
 
--- | Empty draw command 
-data NoDrawProxy
-type instance InvokeReq NoDrawProxy s = ()
-type instance DrawReq NoDrawProxy s = ()
+-- | Empty draw target - drawing produces unit @()@ and per-frame input 'dr' is ignored
+data NilTarget
+type instance InvokeReq NilTarget ir = ()
+type instance DrawReq NilTarget dr = ()
 
 -- | DebugDump is a draw command for dumping out text to view the tree structure. See 'dumpScene'. Each node has a label.
-data DebugDumpProxy
-type instance InvokeReq DebugDumpProxy s = (HasType "label" String s)
-type instance DrawReq DebugDumpProxy s = ()
+data DebugDumpTarget
+type instance InvokeReq DebugDumpTarget ir = (HasType "label" String ir)
+type instance DrawReq DebugDumpTarget dr = ()
 
 
 
 
 -- | A node of a scene graph. The type has two sets of constraints:
---   - 'dParam' are draw parameters, basically witness of the dynamic per-frame inputs needed by this node/graph to draw a frame.
---     So when you "call" this graph using some sort of draw command you will need to provide a record holding all the parameters listed in 'dreq'.
---     Examples of dynamic parameters typically needed: viewport size, current time
---   - 'cmd' is the draw command to use. This restricts the record that you can use in 'Invoke' nodes and the set of parameters in 'dParam' when you
---     hit an invoke node.
+--   - 'target' is the draw target. Different targets produce different out when you "draw" them. Targets that are Graphics APIs will typically produce
+--     a monad that does the actual drawing. Other targets might produce a list of resources or simply a text string.
+--     The target dictates what parameters are in 'ir', which is the set of parameters you need when you build an 'Invoke' node.
+--   - 'dr' are required draw parameters, basically witness of the dynamic per-frame inputs needed by this node/graph to draw a frame. This would
+--     include things like the current time, window size/aspect, etc. Anything that changes from frame to frame.
+--     So when you "call" this graph using some sort of draw command you will need to provide a record holding all the parameters listed in 'dr'.
 --
-data SceneGraph (dr :: Row Type) cmdProxy where
+--   'dr' = draw record, record that is needed to draw a single frame
+--   'ir' = invoke record, record that is needed to build an 'Invoke' node
+--
+data SceneGraph target (dr :: Row Type) where
   -- | Here is where the actual drawing happens. Static parameters in the scene graph are combined with
   --   dynamic parameters provided by the caller to produce output. Typically this is a monad that runs draw commands.
-  Invoke :: (InvokeReq cmdProxy ir, DrawReq cmdProxy dr) => Rec ir -> SceneGraph dr cmdProxy
+  Invoke :: (InvokeReq target ir, DrawReq target dr) => Rec ir -> SceneGraph target dr
   -- | Translates the dynamic data, adding or removing elements from the dynamic record that is
   --   per-frame data. Use this to compute per-frame values or override defaults that were passed in at the top.
-  Transformer :: (Rec dr -> Rec dr2) -> SceneGraph dr2 cmd -> SceneGraph dr cmd
+  Transformer :: (Rec dr -> Rec dr2) -> SceneGraph target dr2 -> SceneGraph target dr
   -- | Holds a bunch of children nodes. All children need to be of the same type.
-  Group :: [SceneGraph dr cmd] -> SceneGraph dr cmd
+  Group :: [SceneGraph target dr] -> SceneGraph target dr
 
 -- | Non-recursive functor version of SceneGraphF for recursion-schemes
-data SceneGraphF dreq cmd x where
-  InvokeF :: (InvokeReq cmd s, DrawReq cmd dReq) => Rec s -> SceneGraphF dReq cmd x
-  TransformerF :: (Rec dr -> Rec dr2) -> SceneGraph dr2 cmd -> SceneGraphF dr cmd x
-  GroupF :: [x] -> SceneGraphF dReq cmd x
+data SceneGraphF target (dr :: Row Type) x where
+  InvokeF :: (InvokeReq target ir, DrawReq target dr) => Rec ir -> SceneGraphF target dr x
+  TransformerF :: (Rec dr -> Rec dr2) -> SceneGraph target dr2 -> SceneGraphF target dr x
+  GroupF :: [x] -> SceneGraphF dr target x
 
-type instance Base (SceneGraph dReq cmd) = SceneGraphF dReq cmd
+type instance Base (SceneGraph target dr) = SceneGraphF target dr
 
-instance Functor (SceneGraphF dReq cmd) where
+instance Functor (SceneGraphF target dr) where
   fmap _ (InvokeF r)        = InvokeF r
   fmap _ (TransformerF t s) = TransformerF t s
   fmap f (GroupF xs)        = GroupF (fmap f xs)
 
-instance Recursive (SceneGraph dreq sreq) where
+instance Recursive (SceneGraph target dr) where
   project (Invoke s) = InvokeF s
   project (Transformer t s) = TransformerF t s
   project (Group xs) = GroupF xs
@@ -102,9 +106,12 @@ instance Recursive (SceneGraph dreq sreq) where
 modifyFields :: (Rec rowin -> Rec rowadd) -> Rec rowin -> Rec (rowadd .// rowin)
 modifyFields f x = (f x) .// x
 
-setFields :: (Rec rowin -> Rec rowmodify) -> SceneGraph (rowmodify .// rowin) cmd -> SceneGraph (rowin) cmd
+-- | Transforms the 'dr' row in a scene graph. Takes in a function that works the record 'dr' and then applies it to the scene graph.
+--   Kinda like a lens?
+setFields :: (Rec rowin -> Rec rowmodify) -> SceneGraph target (rowmodify .// rowin) -> SceneGraph target rowin
 setFields f m = Transformer (modifyFields f) m
 
+{-
 setViewMatrix :: (HasType "x" (V3 Float) r) => Rec r -> Rec ("viewMatrix" .== Float)
 setViewMatrix r =
   let (V3 x _ _) = r .! #x
@@ -112,47 +119,47 @@ setViewMatrix r =
 
 viewMatrixNode :: (HasType "x" (V3 Float) r) => SceneGraph (("viewMatrix" .== Float) .// r) cmd -> SceneGraph r cmd
 viewMatrixNode p = setFields setViewMatrix p
-
+-}
 
 --
--- DrawCmd is basically a ReaderT monad, where the input @r@
+-- DrawCmd is basically a ReaderT monad, where the input @dr@
 -- is the set of render parameters for the scene graph.
 --
-newtype DrawCmd r m a = DC { runDC :: Rec r -> m a }
+newtype DrawCmd dr m a = DC { runDC :: Rec dr -> m a }
 
-noopDraw :: (Monad m) => a -> DrawCmd r m a
+noopDraw :: (Monad m) => a -> DrawCmd dr m a
 noopDraw x = return x
 
-instance (Functor m) => Functor (DrawCmd r m) where
+instance (Functor m) => Functor (DrawCmd dr m) where
   fmap f dc = DC $ \r -> fmap f (runDC dc r)
 
-instance (Applicative m) => Applicative (DrawCmd r m) where
+instance (Applicative m) => Applicative (DrawCmd dr m) where
   pure x             = DC $ \_ -> pure x
   (DC fa) <*> (DC b) = DC $ \r -> (fa r) <*> (b r)
 
-instance (Monad m) => Monad (DrawCmd r m) where
+instance (Monad m) => Monad (DrawCmd dr m) where
   return     = pure
   a >>= b    = DC $ \r -> do a' <- runDC a r
                              runDC (b a') r
 
-instance (MonadIO m) => MonadIO (DrawCmd r m) where
+instance (MonadIO m) => MonadIO (DrawCmd dr m) where
   liftIO x = DC $ \_ -> liftIO x
   
-instance (Alternative m) => Alternative (DrawCmd r m) where
+instance (Alternative m) => Alternative (DrawCmd dr m) where
   empty             = DC $ \_ -> Control.Applicative.empty
   (DC a) <|> (DC b) = DC $ \r -> (a r) <|> (b r)
 
-instance (MonadPlus m) => MonadPlus (DrawCmd r m) where
+instance (MonadPlus m) => MonadPlus (DrawCmd dr m) where
   mzero     = DC $ \_ -> mzero
   mplus m n = DC $ \r -> mplus (runDC m r) (runDC n r)
 
-type DrawCmdAlgebra   dreq sreq m =                SceneGraphF dreq sreq (DrawCmd dreq m ()) -> DrawCmd dreq m ()
-type DrawCmdAlgebraIO dreq sreq m = (MonadIO m) => SceneGraphF dreq sreq (DrawCmd dreq m ()) -> DrawCmd dreq m ()
+type DrawCmdAlgebra   target dr m =                SceneGraphF target dr (DrawCmd dr m ()) -> DrawCmd dr m ()
+type DrawCmdAlgebraIO target dr m = (MonadIO m) => SceneGraphF target dr (DrawCmd dr m ()) -> DrawCmd dr m ()
 
-cataDrawCmd :: SceneGraph dreq sreq -> DrawCmdAlgebra dreq sreq m -> DrawCmd dreq m ()
+cataDrawCmd :: SceneGraph target dr -> DrawCmdAlgebra target dr m -> DrawCmd dr m ()
 cataDrawCmd sg alg = cata alg sg
 
-dumpAlgebra :: (MonadIO m) => SceneGraphF dreq DebugDumpProxy (DrawCmd dreq m ()) -> DrawCmd dreq m ()
+dumpAlgebra :: (MonadIO m) => SceneGraphF DebugDumpTarget dr (DrawCmd dr m ()) -> DrawCmd dr m ()
 dumpAlgebra (InvokeF x)         = liftIO $ do putStrLn $ show (x .! #label)
                                               return ()
 dumpAlgebra (GroupF cmds)       = foldl (>>) (DC $ \_ -> return ()) cmds
@@ -162,10 +169,10 @@ dumpAlgebra (TransformerF t gr) = DC $ \r ->
     in runDC scmd s
 
 -- | Just dumps out labels of the node in order to stdout
-dumpScene :: (MonadIO m) => SceneGraph Empty DebugDumpProxy -> DrawCmd Empty m ()
+dumpScene :: (MonadIO m) => SceneGraph DebugDumpTarget Empty-> DrawCmd Empty m ()
 dumpScene sg = cata dumpAlgebra sg
 
-sceneLabels :: (MonadIO m) => SceneGraph Empty DebugDumpProxy -> m ()
+sceneLabels :: (MonadIO m) => SceneGraph DebugDumpTarget Empty-> m ()
 sceneLabels sg = (runDC $ dumpScene sg) Data.Row.Records.empty
                  
 
@@ -184,7 +191,7 @@ combineNodeViz nodelabel childrenvizdata =
       child_edgestrings = concat (fmap edgeStrings childrenvizdata)
   in NodeVizData nodelabel ([nodelabel ++ "\n"] ++ my_edgestrings ++ child_edgestrings)
 
-dumpDotAlgebra :: SceneGraphF dreq DebugDumpProxy (State Integer NodeVizData) -> State Integer NodeVizData
+dumpDotAlgebra :: SceneGraphF DebugDumpTarget dr (State Integer NodeVizData) -> State Integer NodeVizData
 dumpDotAlgebra (InvokeF x)   = let l = x .! #label
                                in return $ NodeVizData l [l ++ "\n"]
 dumpDotAlgebra (GroupF cmds) = do i <- get
@@ -199,10 +206,10 @@ dumpDotAlgebra (TransformerF _ gr) = do i <- get
                                         put i'
                                         return d
 
-dumpDotScene :: SceneGraph dreq DebugDumpProxy -> State Integer NodeVizData
+dumpDotScene :: SceneGraph DebugDumpTarget dr -> State Integer NodeVizData
 dumpDotScene sg = cata dumpDotAlgebra sg
                       
-dotStringScene :: SceneGraph dreq DebugDumpProxy -> String
+dotStringScene :: SceneGraph DebugDumpTarget dr -> String
 dotStringScene sg =
   let ((NodeVizData _ edges),_) = runState (dumpDotScene sg) 0
   in "digraph {\n" ++ (concat edges) ++ "}"
@@ -210,12 +217,12 @@ dotStringScene sg =
 
 
 -- | Shortcut you can use instead of calling constructors and 'Fix' directly
-transformer :: (Rec dreq -> Rec dreq2) -> (SceneGraph dreq2 cmd) -> SceneGraph dreq cmd
+transformer :: (Rec dr -> Rec dr2) -> (SceneGraph target dr2) -> SceneGraph target dr
 transformer t sg = Transformer t sg
 
-group :: [SceneGraph dreq cmd] -> SceneGraph dreq cmd
+group :: [SceneGraph dr target] -> SceneGraph dr target
 group xs = Group xs
 
-invoke :: (InvokeReq cmd s, DrawReq cmd dReq) => Rec s -> SceneGraph dReq cmd
+invoke :: (InvokeReq target s, DrawReq target dr) => Rec s -> SceneGraph target dr
 invoke r = Invoke r
 

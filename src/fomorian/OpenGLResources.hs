@@ -48,20 +48,21 @@ import Fomorian.ProcessWavefront (OBJBufferRecord, loadWavefrontOBJFile)
 
 data OpenGLTarget
 
-type instance (InvokeReq OpenGLTarget sreq) = (HasType "vertexarray" (FilePath, DataSource BasicDataSourceTypes) sreq,
-                                               HasType "textures" [DataSource BasicDataSourceTypes] sreq)
-type instance (DrawReq OpenGLTarget dreq) = (HasType "modelMatrix" (M44 Float) dreq,
-                                               HasType "viewMatrix" (M44 Float) dreq,
-                                               HasType "projectionMatrix" (M44 Float) dreq)
+type instance (InvokeReq OpenGLTarget ir) = (HasType "vertexarray" (FilePath, DataSource BasicDataSourceTypes) ir,
+                                               HasType "textures" [DataSource BasicDataSourceTypes] ir)
+type instance (DrawReq OpenGLTarget dr) = (HasType "modelMatrix" (M44 Float) dr,
+                                               HasType "viewMatrix" (M44 Float) dr,
+                                               HasType "projectionMatrix" (M44 Float) dr)
 
-neutralToGLTargetAlg :: SceneGraphF dreq NeutralSceneTarget (SceneGraph dreq OpenGLTarget) -> SceneGraph dreq OpenGLTarget
-neutralToGLTargetAlg (InvokeF x) = let combinedVAO = (x .! #shader, x .! #geometry)
-                                in Invoke $   (#vertexarray .== combinedVAO)
-                                           .+ (#textures    .== (x .! #textures))
+neutralToGLTargetAlg :: SceneGraphF NeutralSceneTarget dr (SceneGraph OpenGLTarget dr) -> SceneGraph OpenGLTarget dr
+neutralToGLTargetAlg (InvokeF x) =
+  let combinedVAO = (x .! #shader, x .! #geometry)
+  in Invoke $   (#vertexarray .== combinedVAO)
+             .+ (#textures    .== (x .! #textures))
 neutralToGLTargetAlg (GroupF xs) = Group xs
 neutralToGLTargetAlg (TransformerF f gr) = Transformer f (neutralToGLTarget gr)
 
-neutralToGLTarget :: SceneGraph dreq NeutralSceneTarget -> SceneGraph dreq OpenGLTarget
+neutralToGLTarget :: SceneGraph NeutralSceneTarget dr -> SceneGraph OpenGLTarget dr
 neutralToGLTarget sg = cata neutralToGLTargetAlg sg
 
 -- normally we can just load each resource separately. However,
@@ -80,7 +81,7 @@ newtype GLDataSources = GLDataSources (S.Set (DataSource GLDataSourceTypes))
 newtype OpenGLResources = OpenGLResources (M.Map (DataSource GLDataSourceTypes) (Resource GLResourceTypes))
 
 -- | Given a scene node returns the resources used
-oglResourcesAlgebra :: SceneGraphF dreq OpenGLTarget GLDataSources -> GLDataSources
+oglResourcesAlgebra :: SceneGraphF OpenGLTarget dr GLDataSources -> GLDataSources
 oglResourcesAlgebra (InvokeF x) =
   let geo = x .! #vertexarray
       txs = fmap bumpTex (x .! #textures)
@@ -91,7 +92,7 @@ oglResourcesAlgebra (InvokeF x) =
 oglResourcesAlgebra (GroupF cmds) = foldl (<>) mempty cmds
 oglResourcesAlgebra (TransformerF _ gr) = oglResourcesScene gr
 
-oglResourcesScene :: SceneGraph dreq OpenGLTarget -> GLDataSources
+oglResourcesScene :: SceneGraph OpenGLTarget dr -> GLDataSources
 oglResourcesScene sg = cata oglResourcesAlgebra sg
 
 
@@ -224,7 +225,7 @@ attributesToGL (VertexAttribute comp dType str offs) =
 loadGLVertexPositions :: GeometryResource [V3 Float] [Int] VertexAttribute -> IO (Resource GLResourceTypes)
 loadGLVertexPositions (GeometryResource vs ix vc a) = do
   vBuf <- GLUtil.makeBuffer GL.ArrayBuffer vs
-  -- we use 'traverse' since ix is a Maybe. So this make an index buffer if ix is a Just
+  -- we use 'traverse' since ix is a Maybe. So this makes an index buffer if ix is a Just
   iBuf <- traverse (\x -> GLUtil.makeBuffer GL.ElementArrayBuffer ((fmap fromIntegral x) :: [GLUtil.Word32])) ix
   let attr = M.map attributesToGL a
   return $ Resource $ IsJust #vertexBuffer (GeometryResource vBuf iBuf vc attr)
@@ -236,6 +237,8 @@ loadGLVertexData (GeometryResource vs ix vc a) = do
   let attr = M.map attributesToGL a
   return $ Resource $ IsJust #vertexBuffer (GeometryResource vBuf iBuf vc attr)
 
+
+
 loaderGLConfig :: ResourceLoaderConfig (DataSource GLDataSourceTypes) (Resource GLResourceTypes)
 loaderGLConfig = ResourceLoaderConfig {
   loadIO = loadGLResource,
@@ -244,15 +247,18 @@ loaderGLConfig = ResourceLoaderConfig {
   }
 
 
--- | Given a scene and a set of already-loaded resources, makes sure all the resources are loaded for this scene. Synchronously loads
---   any resources needed for the scene.
-loadOpenGLResourcesScene :: SceneGraph dreq OpenGLTarget -> LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes) -> IO (LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes))
+-- | Given a scene and a set of already-loaded resources, synchronously loads and unloads resources to match resources needed for the scene.
+loadOpenGLResourcesScene :: SceneGraph OpenGLTarget dr -> LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes) -> IO (LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes))
 loadOpenGLResourcesScene sg lr =
   do
+    -- find the resources we need and the resources we have
     let (GLDataSources needsResources) = oglResourcesScene sg
     let currentlyLoaded = (topLevelResources lr)
+
+    -- figure out what needs to be loaded/unloaded
     let needAdds = S.toList $ needsResources `S.difference` currentlyLoaded
     let needDeletes = S.toList $ currentlyLoaded `S.difference` needsResources
+
     -- feed lr through both the loading and unloading functions
     lr' <- syncLoad loaderGLConfig lr needAdds
     syncUnload loaderGLConfig lr' needDeletes

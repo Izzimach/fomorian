@@ -13,6 +13,11 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ViewPatterns #-}
 
+{-
+The 'OpenGLCommand' target represents a scene graph that is ready to draw to an OpenGL frame buffer.
+You create an 'OpenGLCommand' target by combining the 'OpenGLTarget' with a set of loaded resources.
+You can convert this scene graph into a 'DrawCmd' that draws to the OpenGL framebuffer (see 'openGLgo')
+-}
 module Fomorian.OpenGLCommand where
 
 import Linear
@@ -35,18 +40,19 @@ import Fomorian.SceneResources
 import Fomorian.OpenGLResources
 
 data OpenGLCommand
-type instance (InvokeReq OpenGLCommand sreq) = (HasType "shader" GLUtil.ShaderProgram sreq,
-                                                HasType "vao" GL.VertexArrayObject sreq,
-                                                HasType "vertexCount" GL.GLint sreq,
-                                                HasType "indexBuffer" (Maybe (GL.BufferObject)) sreq,
-                                                HasType "textures" [GL.TextureObject] sreq)
-type instance (DrawReq OpenGLCommand dreq) = (HasType "modelMatrix" (M44 Float) dreq,
-                                               HasType "viewMatrix" (M44 Float) dreq,
-                                               HasType "projectionMatrix" (M44 Float) dreq)
+
+type instance (InvokeReq OpenGLCommand ir) = (HasType "shader" GLUtil.ShaderProgram ir,
+                                                HasType "vao" GL.VertexArrayObject ir,
+                                                HasType "vertexCount" GL.GLint ir,
+                                                HasType "indexBuffer" (Maybe (GL.BufferObject)) ir,
+                                                HasType "textures" [GL.TextureObject] ir)
+type instance (DrawReq OpenGLCommand dr) = (HasType "modelMatrix" (M44 Float) dr,
+                                               HasType "viewMatrix" (M44 Float) dr,
+                                               HasType "projectionMatrix" (M44 Float) dr)
 
 -- | Given an OpenGLTarget scene graph and loaded resources, builds an OpenGlCommand scene graph which can be directly
 --   converted into a monad to draw the scene
-oglCommandAlgebra :: OpenGLResources -> SceneGraphF dreq OpenGLTarget (SceneGraph dreq OpenGLCommand) -> SceneGraph dreq OpenGLCommand
+oglCommandAlgebra :: OpenGLResources -> SceneGraphF OpenGLTarget dr (SceneGraph OpenGLCommand dr) -> SceneGraph OpenGLCommand dr
 oglCommandAlgebra (OpenGLResources h) (InvokeF x) =
   -- these are pulled from the InvokeReq for OpenGLTarget
   let vaoSource = x .! #vertexarray
@@ -69,7 +75,8 @@ oglCommandAlgebra (OpenGLResources h) (InvokeF x) =
 oglCommandAlgebra _ (GroupF cmds) = Group cmds
 oglCommandAlgebra r (TransformerF t gr) = Transformer t (oglToCommand r gr)
 
-oglToCommand :: OpenGLResources -> SceneGraph dreq OpenGLTarget -> SceneGraph dreq OpenGLCommand
+
+oglToCommand :: OpenGLResources -> SceneGraph OpenGLTarget dr -> SceneGraph OpenGLCommand dr
 oglToCommand r sg = cata (oglCommandAlgebra r) sg
 
 
@@ -77,12 +84,10 @@ bumpVert :: DataSource BasicDataSourceTypes -> DataSource GLDataSourceTypes
 bumpVert (DataSource vd) = DataSource (diversify @("vertexarray" .== (FilePath, DataSource BasicDataSourceTypes)) vd)
 
 
---
--- Drawing with OpenGL - shader parameters must be Uniform-valid, which
--- means they are GLfloat, GLint, or vectors (V2,V3,V4) or matrices
---
 
-invokeGL :: (InvokeReq OpenGLCommand r, DrawReq OpenGLCommand dreq) => Rec r -> DrawCmd dreq IO ()
+-- | Drawing a single thing with OpenGL - shader parameters must be Uniform-valid, which
+--   means they are GLfloat, GLint, or vectors (V2,V3,V4) or matrices.
+invokeGL :: (InvokeReq OpenGLCommand ir, DrawReq OpenGLCommand dr) => Rec ir -> DrawCmd dr IO ()
 invokeGL r = DC $ \dr ->
   do
     let s = r .! #shader
@@ -111,7 +116,8 @@ invokeGL r = DC $ \dr ->
                       _ -> return ()
 
 
-openGLAlgebra :: SceneGraphF r OpenGLCommand (DrawCmd r IO ()) -> DrawCmd r IO ()
+
+openGLAlgebra :: SceneGraphF OpenGLCommand dr (DrawCmd dr IO ()) -> DrawCmd dr IO ()
 openGLAlgebra (InvokeF x)     = invokeGL x
 openGLAlgebra (GroupF cmds)   = foldl (>>) (DC $ \_ -> return ()) cmds
 openGLAlgebra (TransformerF t gr) = DC $ \fd ->
@@ -120,6 +126,6 @@ openGLAlgebra (TransformerF t gr) = DC $ \fd ->
              in runDC scmd fd2
 
 
-openGLgo :: SceneGraph r OpenGLCommand -> Rec r -> IO ()
+openGLgo :: SceneGraph OpenGLCommand dr -> Rec dr -> IO ()
 openGLgo sg fd = let sm = cata openGLAlgebra sg
                  in runDC sm fd
