@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -80,10 +81,10 @@ glThreadLoop w priorityQ stdQ = do
 
 
 submitPriorityGLTask :: BoundGLThread w -> IO () -> IO ()
-submitPriorityGLTask bgl task = atomically $ writeTChan (priorityQueue bgl) task
+submitPriorityGLTask bgl !task = atomically $ writeTChan (priorityQueue bgl) task
 
 waitForPriorityGLTask :: BoundGLThread w -> IO () -> IO ()
-waitForPriorityGLTask bgl task = do
+waitForPriorityGLTask bgl !task = do
   resultVar <- atomically newEmptyTMVar
   let computation = catch @SomeException
                         (do task
@@ -97,12 +98,12 @@ waitForPriorityGLTask bgl task = do
 
 
 submitGLTask :: BoundGLThread w -> IO () -> IO ()
-submitGLTask bgl task = atomically $ writeTChan (defaultQueue bgl) task
+submitGLTask bgl !task = atomically $ writeTChan (defaultQueue bgl) task
 
 -- | Submit code to run in the GL thread. If an exception happens in the GL thread this returns a 'Left'.
 --   If you want the GL exception to propagate back to the original submitter use 'submitGLComputationThrow'
 submitGLComputation :: BoundGLThread w -> IO a -> IO (Either SomeException a)
-submitGLComputation bgl compute = do
+submitGLComputation bgl !compute = do
   resultVar <- atomically newEmptyTMVar
   let computeResult = catch
                         (do result <- compute
@@ -116,7 +117,7 @@ submitGLComputation bgl compute = do
 
 -- | Run 'submitGLComputation' and if an exception happens in the GL thread, throw an exception in the original calling thread.
 submitGLComputationThrow :: BoundGLThread w -> IO a -> IO a
-submitGLComputationThrow bgl compute = do
+submitGLComputationThrow bgl !compute = do
   result <- submitGLComputation bgl compute
   case result of
     Left ex -> throw ex

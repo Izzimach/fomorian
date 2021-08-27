@@ -204,7 +204,7 @@ loadBasicGLResource (DataSource (view #texturePath -> Just tp)) =
                         return $ Resource $ IsJust #textureObject obj
 loadBasicGLResource ds = 
   do (Resource rs) <- loadBasicData ds
-     putStrLn $ "Loading thing " ++ show rs
+     --putStrLn $ "Loading thing " ++ show rs
      switch rs $
          (#vertexPositions .== loadGLVertexPositions)
       .+ (#vertexData      .== loadGLVertexData)

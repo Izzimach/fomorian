@@ -65,9 +65,8 @@ initAppState (WindowInitData w h _ _) win = do
 
 
 -- | Checks for end events. Specifically any close events from GLFW or hitting the escapse key.
-shouldEndProgram :: (HasType "window" GLFW.Window r) => Rec r -> IO Bool
-shouldEndProgram r = do
-  let win = r .! #window
+shouldEndProgram :: GLFW.Window -> IO Bool
+shouldEndProgram win = do
   p <- GLFW.getKey win GLFW.Key'Escape
   GLFW.pollEvents
   windowKill <- GLFW.windowShouldClose win
@@ -115,7 +114,7 @@ renderLoop appref buildScene genFD = loop
       renderOneFrame sceneCommand frameData
 
       GLFW.swapBuffers win
-      shouldTerminate <- shouldEndProgram appstate'
+      shouldTerminate <- shouldEndProgram win
       unless shouldTerminate loop
 
 

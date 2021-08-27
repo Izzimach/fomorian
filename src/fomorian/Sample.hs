@@ -62,17 +62,15 @@ testScene3d = perspectiveProject config $
                 -- We set the static aspect in 'PerspectiveProject' to 1.0 and let 'autoAspect' handle
                 -- the aspect to work with window resizing.
                 autoAspect $
-                  cameraLookAt (V3 0 4 4) (V3 0 0 0) (V3 0 0 1) $ 
+                  cameraLookAt (V3 5 10 0) (V3 0 0 0) (V3 0 0 1) $ 
                     group [
                       someCube,
                       translate3d (V3 3 0 0) $ spin3d (V3 0.7071 0.7071 0) 2 $ someCube
                       ]
   where
-    config = (PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 100 {-far plane-})
+    config = (PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 1000 {-far plane-})
     someCube :: SceneGraph NeutralSceneTarget TopLevel3DRow
-    someCube = invoke (   #shader   .== "unlit3d"
-                       .+ #geometry .== DataSource (IsJust #wavefrontPath "testcube.obj")
-                       .+ #textures .== [DataSource (IsJust #texturePath "salamander.png")])
+    someCube = wavefrontMesh "unlit3d" "testcube.obj" ["salamander.png"]
 
 dynamicsTestScene3d :: SceneGraph NeutralSceneTarget TopLevel3DRow
 dynamicsTestScene3d = undefined

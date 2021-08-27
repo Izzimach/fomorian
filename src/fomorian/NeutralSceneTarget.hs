@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE UndecidableInstances #-} {- oh no -}
 
 {-|
@@ -14,6 +15,8 @@ import Linear
 
 import Fomorian.SceneNode
 import Fomorian.SceneResources
+import Fomorian.SceneResources
+import Fomorian.CommonSceneNodes
 
 -- | NeutralSceneTarget requires
 --   - (shader,geometry,textures) for invoke and
@@ -34,5 +37,14 @@ type instance (DrawReq NeutralSceneTarget dr) =
     HasType "viewMatrix" (M44 Float) dr,
     HasType "projectionMatrix" (M44 Float) dr
   )
+
+-- | Generate an invoke node with all the fields for neutral target, using a wavefront file for geometry
+wavefrontMesh :: (DrawReq NeutralSceneTarget dr) => FilePath -> FilePath -> [FilePath] -> SceneGraph NeutralSceneTarget dr
+wavefrontMesh sh wf texs =
+  invoke (   #shader   .== sh
+          .+ #geometry .== DataSource (IsJust #wavefrontPath wf)
+          .+ #textures .== fmap (\t -> DataSource (IsJust #texturePath t)) texs
+         )
+
 
 

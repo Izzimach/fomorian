@@ -380,18 +380,20 @@ loadGeometry fileName = do
 newtype MemoryTypeMask = MemoryTypeMask Word32
   deriving (Eq, Show)
 
--- Look through the physical device memory types and find one that matches a bit in the memoryTypeBits
--- and
+-- Look through the physical device memory types and find one that matches a bit in the MemoryTypeMAsk
+-- and has all the flags requested (set) in MemoryProperyFlags
 findMemoryType :: PhysicalDevice -> MemoryTypeMask -> MemoryPropertyFlags -> IO Word32
-findMemoryType pd (MemoryTypeMask typeBits) memFlags = do
+findMemoryType pd (MemoryTypeMask allowedTypeBits) memFlags = do
   memProps <- getPhysicalDeviceMemoryProperties pd
+  let memTypeList = memoryTypes memProps
   let typeIndices = [0 .. (fromIntegral $ memoryTypeCount memProps - 1)]
+  let isAllowedType = \i -> testBit allowedTypeBits i
   let bitsMatch b1 b2 = (b1 .&. b2) /= zeroBits
-  let matchesTypeBits = \i -> testBit typeBits i
-  let matchesProperties = \i ->
-        let memType = (memoryTypes memProps) ! i
-         in bitsMatch (propertyFlags memType) memFlags
-  let fullMatch = \i -> matchesTypeBits i && matchesProperties i
+  let matchesProperties = \i -> bitsMatch
+                                  (propertyFlags (memTypeList ! i))
+                                  memFlags
+  -- look through all the properties and find one where both type bits match and 
+  let fullMatch = \i -> isAllowedType i && matchesProperties i
   case find fullMatch typeIndices of
     Nothing -> fail "No memory type found"
     Just ix -> return $ fromIntegral ix
