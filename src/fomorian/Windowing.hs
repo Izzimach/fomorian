@@ -24,7 +24,7 @@ import qualified Graphics.Rendering.OpenGL as GL
 import Control.Concurrent
 import Control.Concurrent.STM
 
-import Fomorian.GLBoundThread
+import Fomorian.OpenGL.GLBoundThread
 
 -- | Use this to dictate whether or not you want an OpenGL context bound when initializing the window.
 data OpenGLBinding = UseOpenGL | NoOpenGL deriving (Eq, Show)

@@ -20,9 +20,9 @@ import Data.IORef
 
 import Fomorian.SceneNode
 import Fomorian.SceneResources
-import Fomorian.OpenGLResources
 import Fomorian.Windowing
-import Fomorian.OpenGLCommand
+import Fomorian.OpenGL.OpenGLResources
+import Fomorian.OpenGL.OpenGLCommand
 
 import LoadUnload
 

@@ -60,7 +60,7 @@ import Vulkan.Zero
 import qualified Codec.Picture as JUICY
 import qualified Codec.Picture.Types as JC
 
-import qualified Fomorian.ProcessWavefront as WF
+import qualified Fomorian.GraphicsLoaders.ProcessWavefront as WF
 
 -- | Holds all resources that should then be unloaded later
 data TransientResources = TransientResources

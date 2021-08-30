@@ -14,7 +14,7 @@ Then all OpenGL code gets run on this thread.
 Also, there are multiple tasks that need to call OpenGL for resource loading and unloading, as well as for rendering.
 To allow this the OpenGL bound thread runs in a simple loop where it runs functions submitted by other tasks.
 -}
-module Fomorian.GLBoundThread where
+module Fomorian.OpenGL.GLBoundThread where
 
 import Control.Concurrent
 import Control.Concurrent.STM

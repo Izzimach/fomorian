@@ -45,7 +45,7 @@ import System.FilePath
 
 import Linear
 
-import Fomorian.ProcessWavefront (OBJBufferRecord(..), loadWavefrontOBJFile)
+import Fomorian.GraphicsLoaders.ProcessWavefront (OBJBufferRecord(..), loadWavefrontOBJFile)
 
 newtype DataSource r = DataSource { unDataSource :: (Var r) }
   deriving (Generic)

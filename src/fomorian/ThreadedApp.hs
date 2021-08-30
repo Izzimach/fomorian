@@ -21,13 +21,13 @@ import AsyncLoader
 import Fomorian.SceneNode
 import Fomorian.NeutralSceneTarget
 import Fomorian.SceneResources
-import Fomorian.OpenGLResources
 import Fomorian.Windowing
-import Fomorian.OpenGLCommand
-import Fomorian.SimpleApp
-import Fomorian.OpenGLResources
-import Fomorian.GLBoundThread
 
+import Fomorian.OpenGL.OpenGLResources
+import Fomorian.OpenGL.OpenGLCommand
+import Fomorian.OpenGL.GLBoundThread
+
+import Fomorian.SimpleApp
 import Fomorian.Sample
 
 

@@ -12,7 +12,7 @@
 
 
 
-module Fomorian.OpenGLResources where
+module Fomorian.OpenGL.OpenGLResources where
 
 import GHC.Generics
 
@@ -44,7 +44,7 @@ import LoadUnload
 import Fomorian.SceneNode
 import Fomorian.NeutralSceneTarget
 import Fomorian.SceneResources
-import Fomorian.ProcessWavefront (OBJBufferRecord, loadWavefrontOBJFile)
+import Fomorian.GraphicsLoaders.ProcessWavefront (OBJBufferRecord, loadWavefrontOBJFile)
 
 data OpenGLTarget
 

@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE OverloadedLabels #-}
 
-module Fomorian.ProcessWavefront 
+module Fomorian.GraphicsLoaders.ProcessWavefront 
   (OBJBufferRecord(..), 
    OBJBufferFormat, 
    loadWavefrontOBJFile,

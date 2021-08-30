@@ -25,8 +25,8 @@ import Fomorian.SceneNode
 import Fomorian.SimpleApp
 import Fomorian.NeutralSceneTarget
 import Fomorian.SceneResources
-import Fomorian.OpenGLResources
 import Fomorian.CommonSceneNodes
+import Fomorian.OpenGL.OpenGLResources
 
 
 genRenderParams :: AppInfo -> Rec TopLevel3DRow

@@ -18,7 +18,7 @@ The 'OpenGLCommand' target represents a scene graph that is ready to draw to an 
 You create an 'OpenGLCommand' target by combining the 'OpenGLTarget' with a set of loaded resources.
 You can convert this scene graph into a 'DrawCmd' that draws to the OpenGL framebuffer (see 'openGLgo')
 -}
-module Fomorian.OpenGLCommand where
+module Fomorian.OpenGL.OpenGLCommand where
 
 import Linear
 
@@ -37,7 +37,7 @@ import Graphics.GLUtil.ShaderProgram (setUniform)
 
 import Fomorian.SceneNode
 import Fomorian.SceneResources
-import Fomorian.OpenGLResources
+import Fomorian.OpenGL.OpenGLResources
 
 data OpenGLCommand
 
