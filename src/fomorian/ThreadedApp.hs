@@ -74,9 +74,10 @@ openGLRendererFunctions =
     getAppInfo = rendererAppInfo
     ,
     runRenderFrame = \p scene frameData -> do
-      let sceneTarget = neutralToGLTarget scene
       let boundGL = rendererBoundThread p
       let loaderInfo = rendererLoader p
+
+      let sceneTarget = neutralToGLTarget scene
 
       -- generate new resource list and send to the loader
       let (GLDataSources sceneResources) = oglResourcesScene sceneTarget
@@ -104,11 +105,9 @@ openGLRendererFunctions =
   }
 
 -- | A basic app that just runs a render function over and over.
-threadedApp :: (Int, Int) -> PlatformRendererFunctions OpenGLRendererState -> (AppInfo -> SceneGraph NeutralSceneTarget TopLevel3DRow) -> IO ()
+threadedApp :: (Int, Int) -> PlatformRendererFunctions x -> (AppInfo -> SceneGraph NeutralSceneTarget TopLevel3DRow) -> IO ()
 threadedApp (w,h) p renderFunc = do
-  -- fork the OpenGL thread and the loader thread(s)
   rendererState <- (initializeRenderer p (w,h))
-  -- get window from the opengl thread and start up the render loop
   let appdata = getAppInfo p rendererState
   renderLoopThreaded appdata renderFunc simpleAppRenderParams p rendererState
   -- done, show down stuff
@@ -122,14 +121,10 @@ renderLoopThreaded ::
   (AppInfo -> SceneGraph NeutralSceneTarget TopLevel3DRow) ->
   -- | Produce frame data to pass to the render function given some app data
   (AppInfo -> Rec TopLevel3DRow) ->
-  PlatformRendererFunctions OpenGLRendererState ->
-  OpenGLRendererState -> 
-  -- | The bound OpenGL thread generated in 'forkBoundGLThread'
-  --BoundGLThread w ->
-  -- | this mess was passed back from 'forkLoader'
-  --ForkLoaderResult (LoaderRequest (DataSource GLDataSourceTypes) (Resource GLResourceTypes)) (LoaderResult (DataSource GLDataSourceTypes) (Resource GLResourceTypes)) ->
+  PlatformRendererFunctions x ->
+  x -> 
   IO ()
-renderLoopThreaded appref buildScene genFD p rST {-boundGL loaderInfo-} = loop
+renderLoopThreaded appref buildScene genFD p rST = loop
   where
     loop = do
       -- convert app state into a scene graph
