@@ -32,7 +32,7 @@ main :: IO ()
 main = do
   --let config = instanceConfig
   let allocator = Nothing
-  let vulkanConfig = VulkanConfig (validatedInstance defaultInstanceConfig) cMAX_FRAMES_IN_FLIGHT
+  let vulkanConfig = VulkanConfig (addValidation defaultInstanceConfig) cMAX_FRAMES_IN_FLIGHT
   let windowConfig = WindowInitData 600 400 "Vulkan test window" NoOpenGL
   withWindowEtc vulkanConfig windowConfig allocator bracket $ \windowETC -> do
     renderLoop windowETC allocator
