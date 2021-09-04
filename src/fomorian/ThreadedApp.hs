@@ -18,20 +18,21 @@ import Fomorian.SimpleApp
 
 data PlatformRendererFunctions x =
   PlatformRendererFunctions {
-    initializeRenderer :: (Int,Int) -> IO x,
+    wrapRenderLoop :: (Int,Int) -> (x -> IO ()) -> IO (),
     getAppInfo :: x -> IORef AppInfo,
-    runRenderFrame :: x -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool,
-    shutdownRenderer :: x -> IO ()
+    runRenderFrame :: x -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool
   }
+
+newtype PlatformRendererWrap x =
+  PlatformRendererWrap ((Int,Int) -> (x -> IO ()) -> IO ())
 
 -- | A basic app that just runs a render function over and over.
 threadedApp :: (Int, Int) -> PlatformRendererFunctions x -> (AppInfo -> SceneGraph NeutralSceneTarget TopLevel3DRow) -> IO ()
-threadedApp (w,h) p renderFunc = do
-  rendererState <- (initializeRenderer p (w,h))
-  let appdata = getAppInfo p rendererState
-  renderLoopThreaded appdata renderFunc simpleAppRenderParams p rendererState
-  -- done, show down stuff
-  shutdownRenderer p rendererState
+threadedApp (w,h) p sceneFunc = (wrapRenderLoop p (w,h) threadedGo)
+  where
+    threadedGo rendererState = do
+      let appdata = getAppInfo p rendererState
+      renderLoopThreaded appdata sceneFunc simpleAppRenderParams p rendererState
 
 -- | Runs a render loop by generating a scene graph and frame parameters from app state.
 renderLoopThreaded ::

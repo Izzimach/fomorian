@@ -10,6 +10,8 @@ module Fomorian.Vulkan.SwapChainEtc (
   DeviceEtc(..),
   TransientResources(..),
   withSwapChainEtc,
+  startSwapchainRef,
+  endSwapchainRef,
   generateSwapChainInfo,
   recreateSwapChainEtc
   ) where
@@ -96,18 +98,24 @@ generateSwapChainInfo (DeviceEtc d gq pq) s = do
 
 -- | Creates a swapchain and passes an IORef to the wrapped user function. We provide an IORef because
 --   sometimes you have to recreate the swapchain in-place without restarting the program.
-withSwapChainEtc :: Device -> PhysicalDevice -> CommandPool -> TransientResources -> Queue -> SampleCountFlagBits -> SwapchainCreateInfoKHR '[] -> Maybe AllocationCallbacks -> (IO (IORef SwapChainEtc) -> (IORef SwapChainEtc -> IO ()) -> r) -> r
-withSwapChainEtc device phy cPool tRes gq sampleCount createInfo allocator wrapper = wrapper startSwapchainRef endSwapchainRef
-  where
-    startSwapchainRef =
-      do
-        swETC <- createSwapChainEtc device phy cPool tRes sampleCount createInfo allocator
-        swRef <- liftIO $ newIORef swETC
-        return swRef
-    endSwapchainRef swRef =
-      do
-        swETC <- liftIO $ readIORef swRef
-        destroySwapChainEtc device cPool allocator swETC
+withSwapChainEtc :: Device -> PhysicalDevice -> CommandPool -> TransientResources ->SampleCountFlagBits -> SwapchainCreateInfoKHR '[] -> Maybe AllocationCallbacks -> (IO (IORef SwapChainEtc) -> (IORef SwapChainEtc -> IO ()) -> r) -> r
+withSwapChainEtc device phy cPool tRes sampleCount createInfo allocator wrapper =
+  wrapper
+    (startSwapchainRef device phy cPool tRes sampleCount createInfo allocator)
+    (endSwapchainRef device cPool allocator)
+
+startSwapchainRef :: Device -> PhysicalDevice -> CommandPool -> TransientResources -> SampleCountFlagBits -> SwapchainCreateInfoKHR '[] -> Maybe AllocationCallbacks -> IO (IORef SwapChainEtc)
+startSwapchainRef  device phy cPool tRes sampleCount createInfo allocator =
+  do
+    swETC <- createSwapChainEtc device phy cPool tRes sampleCount createInfo allocator
+    swRef <- liftIO $ newIORef swETC
+    return swRef
+
+endSwapchainRef :: Device -> CommandPool -> Maybe AllocationCallbacks -> IORef SwapChainEtc -> IO ()
+endSwapchainRef  device cPool allocator swRef =
+  do
+    swETC <- liftIO $ readIORef swRef
+    destroySwapChainEtc device cPool allocator swETC
 
 createSwapChainEtc :: Device -> PhysicalDevice -> CommandPool -> TransientResources -> SampleCountFlagBits -> SwapchainCreateInfoKHR '[] -> Maybe AllocationCallbacks -> IO SwapChainEtc
 createSwapChainEtc device phy cpool tRes sampleCount createInfo allocator = do

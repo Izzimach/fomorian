@@ -10,14 +10,16 @@ module Fomorian.Vulkan.WindowEtc
     WindowEtc (..),
     withWindowEtc,
     defaultInstanceConfig,
-    validatedInstance,
+    addValidation,
     rebuildSwapChain
   )
 where
 
 import Control.Monad
+import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Maybe
+import Control.Monad.Cont
 
 import Data.Bits
 import Data.ByteString (ByteString)
@@ -96,8 +98,8 @@ defaultInstanceConfig =
     (fromList [KHR_SURFACE_EXTENSION_NAME, KHR_WIN32_SURFACE_EXTENSION_NAME]) -- enabledExtensionNames
 
 -- | Pass in an InstanceCreateInfo and this function will modify it to add validation layers.
-validatedInstance :: InstanceCreateInfo '[] -> InstanceCreateInfo '[DebugUtilsMessengerCreateInfoEXT, ValidationFeaturesEXT]
-validatedInstance baseCreateInfo =
+addValidation :: InstanceCreateInfo '[] -> InstanceCreateInfo '[DebugUtilsMessengerCreateInfoEXT, ValidationFeaturesEXT]
+addValidation baseCreateInfo =
   let debugCreateInfo =
         DebugUtilsMessengerCreateInfoEXT
           zero
@@ -162,7 +164,7 @@ withWindowEtc vCfg wid allocator wrapper wrapped = wrapper startWindow endWindow
                   withCommandPool device commandPoolInfo Nothing wrapper $ \cmdpool -> do
                     withTransientResources device h cmdpool graphicsQ Nothing wrapper $ \tRes -> do
                       swapchainInfo <- generateSwapChainInfo chosen surfaceH
-                      withSwapChainEtc device h cmdpool tRes graphicsQ msaaBits swapchainInfo Nothing wrapper $ \swapchainEtc -> do
+                      withSwapChainEtc device h cmdpool tRes msaaBits swapchainInfo Nothing wrapper $ \swapchainEtc -> do
                         let (SyncObjects imageAvailables renderingFinisheds localFences) = syncs
                         wrapped (WindowEtc inst w device chosen surfaceH graphicsQ presentQ imageAvailables renderingFinisheds localFences cmdpool tRes msaaBits swapchainEtc)
 
@@ -272,17 +274,26 @@ withSyncObjects ::
   Int ->
   (io SyncObjects -> (SyncObjects -> io ()) -> r) ->
   r
-withSyncObjects device semcreate fencecreate alloc count wrapper = wrapper startSyncObjects endSyncObjects
-  where
-    startSyncObjects :: (MonadIO io) => io SyncObjects
-    startSyncObjects = do
+withSyncObjects device semcreate fencecreate alloc count wrapper =
+  wrapper
+    (startSyncObjects device semcreate fencecreate alloc count)
+    (endSyncObjects device alloc)
+
+startSyncObjects :: (MonadIO io) => Device ->
+  SemaphoreCreateInfo '[] ->
+  FenceCreateInfo '[] ->
+  Maybe AllocationCallbacks ->
+  Int ->
+  io SyncObjects
+startSyncObjects device semcreate fencecreate alloc count = do
       let counts = [1 .. count]
       isems <- mapM (\_ -> createSemaphore device semcreate alloc) counts
       rsems <- mapM (\_ -> createSemaphore device semcreate alloc) counts
       localFences <- mapM (\_ -> createFence device fencecreate alloc) counts
       return $ SyncObjects (fromList isems) (fromList rsems) (fromList localFences)
-    endSyncObjects :: (MonadIO io) => SyncObjects -> io ()
-    endSyncObjects (SyncObjects isems rsems localFences) = do
+
+endSyncObjects :: (MonadIO io) => Device -> Maybe AllocationCallbacks -> SyncObjects -> io ()
+endSyncObjects device alloc (SyncObjects isems rsems localFences) = do
       mapM_ (\s -> destroySemaphore device s alloc) isems
       mapM_ (\s -> destroySemaphore device s alloc) rsems
       mapM_ (\f -> destroyFence device f alloc) localFences

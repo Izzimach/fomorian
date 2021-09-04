@@ -28,6 +28,16 @@ import Fomorian.Vulkan.TransientResources
 cMAX_FRAMES_IN_FLIGHT :: Int
 cMAX_FRAMES_IN_FLIGHT = 2
 
+data InFlightTracker = InFlightTracker Int (Vector Fence)
+
+mkInFlightTracker :: WindowEtc -> IO (InFlightTracker)
+mkInFlightTracker windowEtc = do
+  swEtc <- readIORef (swapChainRef windowEtc)
+  let imageCount = length (swapchainFramebuffers swEtc)
+  let flightFences = fromList $ fmap (\_ -> NULL_HANDLE) [1 .. imageCount]
+  return (InFlightTracker 0 flightFences)
+
+
 main :: IO ()
 main = do
   --let config = instanceConfig
@@ -42,31 +52,29 @@ main = do
 --   are 'in flight' and then updates this every frame.
 renderLoop :: WindowEtc -> Maybe AllocationCallbacks -> IO ()
 renderLoop windowEtc allocator = do
-  inFlightTrackerInit >>= go 0
+  inFlightData <- mkInFlightTracker windowEtc 
+  inFlightRef <- newIORef inFlightData
+  go inFlightRef
   return ()
   where
-    inFlightTrackerInit :: IO (Vector Fence)
-    inFlightTrackerInit = do
-      swEtc <- readIORef (swapChainRef windowEtc)
-      let imageCount = length (swapchainFramebuffers swEtc)
-      return $ fromList $ fmap (\_ -> NULL_HANDLE) [1 .. imageCount]
-    go currentFrame inFlightTracker = do
+    go inFlightTrackerRef = do
       GLFW.pollEvents
       p <- GLFW.getKey (windowHandle windowEtc) GLFW.Key'Escape
       shouldClose <- GLFW.windowShouldClose (windowHandle windowEtc)
       if (shouldClose || (p == GLFW.KeyState'Pressed))
         then return ()
         else do
-          inFlightTracker' <- renderFrame windowEtc currentFrame inFlightTracker allocator
-          go (currentFrame + 1) inFlightTracker'
+          renderFrame windowEtc inFlightTrackerRef allocator
+          go inFlightTrackerRef
 
 -- | Render a single frame. Gets most of the relevant info from the 'WindowEtc'
 --   record. Also takes in and updates the vector of fences for the 'in flight' frame buffers.
-renderFrame :: WindowEtc -> Int -> Vector Fence -> Maybe AllocationCallbacks -> IO (Vector Fence)
-renderFrame windowEtc currentFrame inFlight allocator = do
+renderFrame :: WindowEtc -> IORef (InFlightTracker) {-Int -> Vector Fence-} -> Maybe AllocationCallbacks -> IO ()
+renderFrame windowEtc inFlightTrackerRef allocator = do
   swapchainEtc <- readIORef (swapChainRef windowEtc)
   let device = vkDevice windowEtc
   let swap = theSwapchain swapchainEtc
+  (InFlightTracker currentFrame inFlight) <- readIORef inFlightTrackerRef
   let frameLookup = currentFrame `mod` cMAX_FRAMES_IN_FLIGHT
   let iaSemaphore = imageAvailableSemaphores windowEtc ! frameLookup
   let sgSemaphore = renderingFinishedSemaphores windowEtc ! frameLookup
@@ -109,11 +117,11 @@ renderFrame windowEtc currentFrame inFlight allocator = do
   -- If the swapchain was invalid (ERROR_OUT_OF_DATE_KHR) we'll have an exception here,
   -- in which case we need to recreate the swapchain.
   case runResult of
-    Right result -> return result
+    Right result -> do
+      writeIORef inFlightTrackerRef (InFlightTracker (currentFrame+1) result)
     Left (VulkanException ERROR_OUT_OF_DATE_KHR) -> do
       deviceWaitIdle device -- wait until previous command/frames are done
       rebuildSwapChain windowEtc allocator
-      return inFlight
     Left exc -> throw exc
 
 

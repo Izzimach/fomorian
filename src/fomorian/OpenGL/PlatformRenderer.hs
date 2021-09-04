@@ -13,7 +13,7 @@ import qualified Graphics.UI.GLFW as GLFW
 import LoadUnload
 import AsyncLoader
 
-import Fomorian.Windowing
+import Fomorian.Windowing as W
 import Fomorian.SceneNode
 import Fomorian.SceneResources
 
@@ -24,6 +24,9 @@ import Fomorian.OpenGL.OpenGLCommand
 import Fomorian.ThreadedApp
 import Fomorian.SimpleApp
 
+-- Code to fire up the loader and bound thread, and then route scene processing through the various parts.
+--
+-- For a diagram of threads and data flow look at OpenGLFlow.svg
 
 data OpenGLRendererState =
   OpenGLRendererState {
@@ -44,21 +47,28 @@ threadedLoaderGLConfig glb = ResourceLoaderConfig {
   dependenciesIO = computeGLDependencies
   }
 
-openGLRendererFunctions :: PlatformRendererFunctions OpenGLRendererState
-openGLRendererFunctions =
-  PlatformRendererFunctions {
-
-    initializeRenderer = \(w,h) -> do
+openGLWrapRenderLoop :: (Int, Int) -> (OpenGLRendererState -> IO ()) -> IO ()
+openGLWrapRenderLoop (w,h) wrapped = bracket startGL endGL wrapped
+  where
+    startGL = do
       let initData = WindowInitData w h "Haskell App" UseOpenGL
-      glThread <- forkBoundGLThread (initWindow initData) (\win -> terminateWindow win)
+      glThread <- forkBoundGLThread (W.initWindow initData) (\win -> terminateWindow win)
       -- spin up concurrent loader
       loaderInfo <- forkLoader 4 (threadedLoaderGLConfig glThread)
       win <- atomically $ takeTMVar (windowValue glThread)
       appdata <- submitGLComputationThrow glThread $ initAppState initData win
       return $ OpenGLRendererState glThread loaderInfo appdata win
-    ,
-    getAppInfo = rendererAppInfo
-    ,
+
+    endGL (OpenGLRendererState glThread loaderInfo _ win) = do
+      shutdownLoader loaderInfo
+      endBoundGLThread glThread
+      W.terminateWindow win
+
+openGLRendererFunctions :: PlatformRendererFunctions OpenGLRendererState
+openGLRendererFunctions =
+  PlatformRendererFunctions {
+    wrapRenderLoop = openGLWrapRenderLoop,
+    getAppInfo = rendererAppInfo,
     runRenderFrame = \p scene frameData -> do
       let boundGL = rendererBoundThread p
       let loaderInfo = rendererLoader p
@@ -83,10 +93,5 @@ openGLRendererFunctions =
       
       -- check for app end, this uses OpenGL so it needs to run in the OpenGL thread
       submitGLComputationThrow boundGL $ shouldEndProgram (rendererWindow p)
-    ,
-    shutdownRenderer = \p -> do
-      shutdownLoader (rendererLoader p)
-      endBoundGLThread (rendererBoundThread p)
-
   }
 

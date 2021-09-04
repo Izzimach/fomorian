@@ -11,6 +11,8 @@ module Fomorian.Vulkan.TransientResources (
   TransientResources(..),
   ImageFrameResources(..),
   withTransientResources,
+  loadTransientResources,
+  unloadTransientResources,
   buildSimplePipeline,
   destroyPipelineEtc,
   makeImageFrameResources,
