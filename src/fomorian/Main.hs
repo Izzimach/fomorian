@@ -5,6 +5,7 @@ import qualified Fomorian.Sample (main, testScene3d)
 
 import Fomorian.ThreadedApp
 import Fomorian.OpenGL.PlatformRenderer
+--import Fomorian.Vulkan.PlatformRenderer
 
 main :: IO ()
 main = do
@@ -13,5 +14,7 @@ main = do
 
 
 threadTest :: IO ()
-threadTest = threadedApp (600,400) openGLRendererFunctions (const Fomorian.Sample.testScene3d)
+threadTest =
+  let renderer = openGLRendererFunctions {-vulkanRendererFunctions-}
+  in threadedApp (600,400) renderer (const Fomorian.Sample.testScene3d)
 

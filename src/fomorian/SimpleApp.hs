@@ -29,29 +29,30 @@ import LoadUnload
 import Control.Monad (unless)
 
 
-type OuterAppRow = ("window"     .== GLFW.Window .+
+type OuterAppRow resType = ("window"     .== GLFW.Window .+
                     "windowSize" .== (Int,Int)   .+
-                    "resources"  .== LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes) .+
+                    "resources"  .== resType .+
                     "curTime"    .== Float       .+
                     "shouldTerminate" .== Bool)
 
 
 -- | Parameters stored as App state that persists between frames.
-type AppInfo = Rec OuterAppRow
+type AppInfo resType = Rec (OuterAppRow resType)
 
+type OpenGLResType = LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes)
 
-resizeWindow :: IORef AppInfo -> GLFW.WindowSizeCallback
+resizeWindow :: IORef (AppInfo OpenGLResType) -> GLFW.WindowSizeCallback
 resizeWindow ref = \_ w h -> windowResizeEvent ref w h
 
 
-windowResizeEvent :: IORef AppInfo -> Int -> Int -> IO ()
+windowResizeEvent :: IORef (AppInfo OpenGLResType) -> Int -> Int -> IO ()
 windowResizeEvent ref w h = do
   GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
   modifyIORef' ref $ \r -> update #windowSize (w,h) r
 
 
 -- | Initializes the app state and OpenGL. Call after you open the window.
-initAppState :: WindowInitData -> GLFW.Window -> IO (IORef AppInfo)
+initAppState :: WindowInitData -> GLFW.Window -> IO (IORef (AppInfo OpenGLResType))
 initAppState (WindowInitData w h _ _) win = do
   let initialAppState =    (#window .== win)
                         .+ (#windowSize .== (w,h))
@@ -89,7 +90,7 @@ renderOneFrame scene frameData = do
 
 
 -- | Runs a render loop by generating a scene graph and frame parameters from app state.
-renderLoop :: IORef AppInfo -> (AppInfo -> SceneGraph OpenGLTarget dr) -> (AppInfo -> Rec dr) -> IO ()
+renderLoop :: IORef (AppInfo OpenGLResType) -> (AppInfo OpenGLResType -> SceneGraph OpenGLTarget dr) -> (AppInfo OpenGLResType -> Rec dr) -> IO ()
 renderLoop appref buildScene genFD = loop
   where
     loop = do
@@ -121,7 +122,7 @@ renderLoop appref buildScene genFD = loop
 type TopLevel3DRow = ("modelMatrix" .== (M44 Float) .+ "viewMatrix" .== (M44 Float) .+ "projectionMatrix" .== (M44 Float) .+ "curTime" .== Float .+ "windowX" .== Integer .+ "windowY" .== Integer)
 
 -- | Given app state generates some default frame parameters
-simpleAppRenderParams :: AppInfo -> Rec TopLevel3DRow
+simpleAppRenderParams :: AppInfo x -> Rec TopLevel3DRow
 simpleAppRenderParams appstate =
   let t     = appstate .! #curTime
       (w,h) = appstate .! #windowSize
@@ -135,7 +136,7 @@ simpleAppRenderParams appstate =
 
 
 -- | A basic app that just runs a render function over and over.
-simpleApp :: (Int, Int) -> (AppInfo -> SceneGraph OpenGLTarget TopLevel3DRow) -> IO ()
+simpleApp :: (Int, Int) -> (AppInfo OpenGLResType -> SceneGraph OpenGLTarget TopLevel3DRow) -> IO ()
 simpleApp (w,h) renderFunc = do
   let initData = WindowInitData w h "Haskell App" UseOpenGL
   let initfunc = initWindow initData

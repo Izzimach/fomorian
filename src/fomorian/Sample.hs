@@ -29,7 +29,7 @@ import Fomorian.CommonSceneNodes
 import Fomorian.OpenGL.OpenGLResources
 
 
-genRenderParams :: AppInfo -> Rec TopLevel3DRow
+genRenderParams :: AppInfo x -> Rec TopLevel3DRow
 genRenderParams appstate =
   let t     = appstate .! #curTime
       (w,h) = appstate .! #windowSize

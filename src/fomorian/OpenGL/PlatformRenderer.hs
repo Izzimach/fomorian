@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Fomorian.OpenGL.PlatformRenderer where
 
@@ -28,11 +30,14 @@ import Fomorian.SimpleApp
 --
 -- For a diagram of threads and data flow look at OpenGLFlow.svg
 
+type instance RendererResources OpenGLRendererState = LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes)
+
+
 data OpenGLRendererState =
   OpenGLRendererState {
     rendererBoundThread :: BoundGLThread GLFW.Window,
     rendererLoader :: ForkLoaderResult (LoaderRequest (DataSource GLDataSourceTypes) (Resource GLResourceTypes)) (LoaderResult (DataSource GLDataSourceTypes) (Resource GLResourceTypes)),
-    rendererAppInfo :: IORef AppInfo,
+    rendererAppInfo :: IORef (AppInfo (RendererResources OpenGLRendererState)),
     rendererWindow :: GLFW.Window
   }
 
@@ -61,8 +66,8 @@ openGLWrapRenderLoop (w,h) wrapped = bracket startGL endGL wrapped
 
     endGL (OpenGLRendererState glThread loaderInfo _ win) = do
       shutdownLoader loaderInfo
+      -- terminateWindow is already called when the boundGLThread exits, so don't call it here
       endBoundGLThread glThread
-      W.terminateWindow win
 
 openGLRendererFunctions :: PlatformRendererFunctions OpenGLRendererState
 openGLRendererFunctions =

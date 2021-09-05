@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Fomorian.ThreadedApp where
 
@@ -15,11 +16,12 @@ import Fomorian.NeutralSceneTarget
 
 import Fomorian.SimpleApp
 
+type family RendererResources x
 
 data PlatformRendererFunctions x =
   PlatformRendererFunctions {
     wrapRenderLoop :: (Int,Int) -> (x -> IO ()) -> IO (),
-    getAppInfo :: x -> IORef AppInfo,
+    getAppInfo :: x -> IORef (AppInfo (RendererResources x)),
     runRenderFrame :: x -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool
   }
 
@@ -27,7 +29,7 @@ newtype PlatformRendererWrap x =
   PlatformRendererWrap ((Int,Int) -> (x -> IO ()) -> IO ())
 
 -- | A basic app that just runs a render function over and over.
-threadedApp :: (Int, Int) -> PlatformRendererFunctions x -> (AppInfo -> SceneGraph NeutralSceneTarget TopLevel3DRow) -> IO ()
+threadedApp :: (Int, Int) -> PlatformRendererFunctions x -> (AppInfo (RendererResources x) -> SceneGraph NeutralSceneTarget TopLevel3DRow) -> IO ()
 threadedApp (w,h) p sceneFunc = (wrapRenderLoop p (w,h) threadedGo)
   where
     threadedGo rendererState = do
@@ -37,11 +39,11 @@ threadedApp (w,h) p sceneFunc = (wrapRenderLoop p (w,h) threadedGo)
 -- | Runs a render loop by generating a scene graph and frame parameters from app state.
 renderLoopThreaded ::
   -- | IORef to app data
-  IORef AppInfo ->
+  IORef (AppInfo (RendererResources x))->
   -- | function to generate a scene graph from the app data
-  (AppInfo -> SceneGraph NeutralSceneTarget TopLevel3DRow) ->
+  (AppInfo (RendererResources x)-> SceneGraph NeutralSceneTarget TopLevel3DRow) ->
   -- | Produce frame data to pass to the render function given some app data
-  (AppInfo -> Rec TopLevel3DRow) ->
+  (AppInfo (RendererResources x) -> Rec TopLevel3DRow) ->
   PlatformRendererFunctions x ->
   x -> 
   IO ()

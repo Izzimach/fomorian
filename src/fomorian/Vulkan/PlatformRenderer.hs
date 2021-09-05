@@ -1,25 +1,33 @@
+{-# LANGUAGE OverloadedLabels #-}
 
 module Fomorian.Vulkan.PlatformRenderer where
 
+import Control.Exception
+
 import Data.IORef
+import Data.Row
+import Data.Row.Records
 
 import qualified Graphics.UI.GLFW as GLFW
 
 import Fomorian.Windowing
 import Fomorian.SceneNode
 import Fomorian.SceneResources
+import Fomorian.NeutralSceneTarget
 
 import Fomorian.Vulkan.WindowEtc
-import Fomorian.Vulkan.SwapchainEtc
+import Fomorian.Vulkan.SwapChainEtc
+import Fomorian.Vulkan.Example (InFlightTracker, mkInFlightTracker, renderFrame)
 
 import Fomorian.ThreadedApp
-import Fomorian.SimpleApp
+import Fomorian.SimpleApp (AppInfo, TopLevel3DRow)
 
 data VulkanRendererState =
   VulkanRendererState {
     rendererAppInfo :: IORef AppInfo,
     rendererWindow :: GLFW.Window,
-    windowEtc :: WindowEtc
+    windowEtc :: WindowEtc,
+    flightTracker :: IORef InFlightTracker
   }
 
 initAppState :: WindowInitData -> GLFW.Window -> IO (IORef AppInfo)
@@ -29,10 +37,7 @@ initAppState (WindowInitData w h _ _) win = do
                         .+ (#resources .== noLoadedResources)
                         .+ (#curTime .== (0 :: Float))
                         .+ (#shouldTerminate .== False)
-  appIORef <- newIORef initialAppState
-  GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
-  GLFW.setWindowSizeCallback win (Just $ resizeWindow appIORef)
-  return appIORef
+  newIORef initialAppState
 
 vulkanWrapRender :: (Int,Int) -> (VulkanRendererState -> IO ()) -> IO ()
 vulkanWrapRender (w,h) wrapped = do
@@ -42,13 +47,23 @@ vulkanWrapRender (w,h) wrapped = do
   withWindowEtc vulkanConfig windowConfig allocator bracket $ \windowETC -> do
     let win = windowHandle windowETC
     appState <- initAppState windowConfig win
-    wrapped (VulkanRendererState _ win)
+    inFlightData <- mkInFlightTracker windowEtc 
+    inFlightRef <- newIORef inFlightData
+    wrapped (VulkanRendererState appState win windowETC inFlightRef)
     deviceWaitIdle (vkDevice windowETC)
+
+vulkanRenderFrame :: VulkanRendererState -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool
+vulkanRenderFrame v scene frameData = do
+  renderFrame (windowEtc v) (flightTracker v)
+  GLFW.pollEvents
+  p <- GLFW.getKey (windowHandle windowEtc) GLFW.Key'Escape
+  shouldClose <- GLFW.windowShouldClose (windowHandle windowEtc)
+  return (shouldClose || (p == GLFW.KeyState'Pressed))
 
 vulkanRendererFunctions :: PlatformRendererFunctions VulkanRendererState
 vulkanRendererFunctions =
   PlatformRendererFunctions  {
     wrapRenderLoop = vulkanWrapRender,
     getAppInfo = rendererAppInfo,
-    runRenderFrame = undefined
+    runRenderFrame = vulkanRenderFrame
   }
