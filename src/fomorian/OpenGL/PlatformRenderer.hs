@@ -3,13 +3,11 @@
 
 module Fomorian.OpenGL.PlatformRenderer where
 
-import Control.Monad
 import Control.Exception
 import Control.Concurrent.STM
 
 import Data.IORef
 
-import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 
 import LoadUnload
@@ -64,7 +62,7 @@ openGLWrapRenderLoop (w,h) wrapped = bracket startGL endGL wrapped
       appdata <- submitGLComputationThrow glThread $ initAppState initData win
       return $ OpenGLRendererState glThread loaderInfo appdata win
 
-    endGL (OpenGLRendererState glThread loaderInfo _ win) = do
+    endGL (OpenGLRendererState glThread loaderInfo _ _) = do
       shutdownLoader loaderInfo
       -- terminateWindow is already called when the boundGLThread exits, so don't call it here
       endBoundGLThread glThread

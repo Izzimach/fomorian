@@ -13,6 +13,8 @@ Then all OpenGL code gets run on this thread.
 
 Also, there are multiple tasks that need to call OpenGL for resource loading and unloading, as well as for rendering.
 To allow this the OpenGL bound thread runs in a simple loop where it runs functions submitted by other tasks.
+
+A diagram of the threads and data flows between them is in OpenGLFlow.svg
 -}
 module Fomorian.OpenGL.GLBoundThread where
 
@@ -60,7 +62,7 @@ endBoundGLThread bgl = do
   throwTo (boundID bgl) GLEndedException
   boundResult <- atomically $ takeTMVar (completionVar bgl)
   case boundResult of
-    Left e -> putStrLn "Error in bound GL thread"
+    Left _e -> putStrLn "Error in bound GL thread"
     Right () -> return ()
 
 -- | Code that gets run in the OpenGL bound thread. Really it just runs anything in the queues,
@@ -90,7 +92,7 @@ waitForPriorityGLTask bgl !task = do
                         (do task
                             atomically (putTMVar resultVar ())
                             return ())
-                        (\e -> atomically (putTMVar resultVar ()))
+                        (\_ -> atomically (putTMVar resultVar ()))
   -- put in the queue and the thread loop will run it eventually
   atomically $ writeTChan (priorityQueue bgl) computation
   -- wait for the code to run and put the result in resultVar
