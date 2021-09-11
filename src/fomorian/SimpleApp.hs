@@ -29,11 +29,14 @@ import LoadUnload
 import Control.Monad (unless)
 
 
-type OuterAppRow resType = ("window"     .== GLFW.Window .+
-                    "windowSize" .== (Int,Int)   .+
-                    "resources"  .== resType .+
-                    "curTime"    .== Float       .+
-                    "shouldTerminate" .== Bool)
+type OuterAppRow resType = 
+  (
+    "window"     .== GLFW.Window .+
+    "windowSize" .== (Int,Int)   .+
+    "resources"  .== resType .+
+    "curTime"    .== Float       .+
+    "shouldTerminate" .== Bool
+  )
 
 
 -- | Parameters stored as App state that persists between frames.
