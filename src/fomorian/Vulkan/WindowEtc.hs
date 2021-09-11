@@ -42,7 +42,7 @@ import Vulkan.Extensions.VK_EXT_debug_utils
 import Vulkan.Extensions.VK_EXT_validation_features
 import Vulkan.Extensions.VK_KHR_surface as VKSURFACE
 import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
-import Vulkan.Extensions.VK_KHR_win32_surface
+import Vulkan.Extensions.VK_KHR_win32_surface -- GLFW needs this enabled on windows. Eventually this should change to as GLFW what extensions it needs
 import Vulkan.Zero
 
 import Fomorian.Windowing
@@ -80,7 +80,7 @@ data VulkanValidation = UseValidation | NoValidation
   deriving (Eq, Show)
 
 -- | Setup for creating a Vulkan instance. Edit fields here to change your application name or version to use.
---   Notably this config enables surface extensions so that the GLFW function 'createWindowSurface' will work.
+--   Notably this config enables win32 surface extensions so that the GLFW function 'createWindowSurface' will work.
 defaultInstanceConfig :: InstanceCreateInfo '[]
 defaultInstanceConfig =
   InstanceCreateInfo
@@ -97,6 +97,7 @@ defaultInstanceConfig =
     empty -- enabledLayerNames
     (fromList [KHR_SURFACE_EXTENSION_NAME, KHR_WIN32_SURFACE_EXTENSION_NAME]) -- enabledExtensionNames
 
+
 -- | Pass in an InstanceCreateInfo and this function will modify it to add validation layers.
 addValidation :: InstanceCreateInfo '[] -> InstanceCreateInfo '[DebugUtilsMessengerCreateInfoEXT, ValidationFeaturesEXT]
 addValidation baseCreateInfo =
@@ -108,17 +109,15 @@ addValidation baseCreateInfo =
           debugCallbackPtr
           nullPtr
       validationFeatures = ValidationFeaturesEXT (fromList [VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT]) empty
-      debugLayers =
-        (VKDI.enabledLayerNames baseCreateInfo)
-          <> (fromList ["VK_LAYER_KHRONOS_validation"])
-      debugExtensions =
-        (VKDI.enabledExtensionNames baseCreateInfo)
-          <> (fromList [EXT_VALIDATION_FEATURES_EXTENSION_NAME, EXT_DEBUG_UTILS_EXTENSION_NAME])
-   in -- modify the layers and extensions fields
-      ( baseCreateInfo
-          { VKDI.enabledLayerNames = debugLayers,
-            VKDI.enabledExtensionNames = debugExtensions
-          }
+      debugLayers = (VKDI.enabledLayerNames baseCreateInfo) <> (fromList ["VK_LAYER_KHRONOS_validation"])
+      debugExtensions = (VKDI.enabledExtensionNames baseCreateInfo) <> (fromList [EXT_VALIDATION_FEATURES_EXTENSION_NAME, EXT_DEBUG_UTILS_EXTENSION_NAME])
+  in -- modify the layers and extensions fields of the original structure
+      ( 
+        baseCreateInfo
+        {
+          VKDI.enabledLayerNames = debugLayers,
+          VKDI.enabledExtensionNames = debugExtensions
+        }
       )
         -- add some extra information structs to the pNext chain
         ::& (debugCreateInfo :& validationFeatures :& ())

@@ -42,3 +42,5 @@ type VulkanDataSourceTypes = BasicDataSourceTypes
   -- | One of the pools from which you can allocate memory chunks for buffers/images
   .+ ("memoryPool" .== ())
   
+type VulkanResourceTypes =
+     ("vertexBuffer" .==  GeometryResource Int [Int] String)

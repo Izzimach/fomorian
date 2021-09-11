@@ -146,12 +146,12 @@ destroySwapChainEtc device cpool allocator swETC = do
   unmakeDepthBuffer device depthBuffer allocator
   unmakeColorBuffer device colorBuffer allocator
   freeCommandBuffers device cpool commandbuffers
-  mapM (\fb -> destroyFramebuffer device fb Nothing) framebuffers
+  mapM (\fb -> destroyFramebuffer device fb allocator) framebuffers
   destroyPipelineEtc device pipe allocator
   unmakeDescriptorPool device dPool allocator
   -- don't need to destory descriptor sets, they get destroyed when the pool is destroyed
   unmakeDescriptorSetLayout device dLayout allocator
-  mapM (\iv -> destroyImageView device iv Nothing) imageViews
+  mapM (\iv -> destroyImageView device iv allocator) imageViews
   destroySwapchainKHR device sc allocator
 
 recreateSwapChainEtc :: Device -> PhysicalDevice -> CommandPool -> TransientResources -> SampleCountFlagBits -> SwapChainEtc -> DeviceEtc -> SurfaceKHR -> Maybe AllocationCallbacks -> IO SwapChainEtc

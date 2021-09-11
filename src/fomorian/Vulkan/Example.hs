@@ -56,16 +56,16 @@ renderLoop windowEtc allocator = do
   inFlightRef <- newIORef inFlightData
   go inFlightRef
   return ()
-  where
-    go inFlightTrackerRef = do
-      GLFW.pollEvents
-      p <- GLFW.getKey (windowHandle windowEtc) GLFW.Key'Escape
-      shouldClose <- GLFW.windowShouldClose (windowHandle windowEtc)
-      if (shouldClose || (p == GLFW.KeyState'Pressed))
-        then return ()
-        else do
-          renderFrame windowEtc inFlightTrackerRef allocator
-          go inFlightTrackerRef
+    where
+      go inFlightTrackerRef = do
+        GLFW.pollEvents
+        p <- GLFW.getKey (windowHandle windowEtc) GLFW.Key'Escape
+        shouldClose <- GLFW.windowShouldClose (windowHandle windowEtc)
+        if (shouldClose || (p == GLFW.KeyState'Pressed))
+          then return ()
+          else do
+            renderFrame windowEtc inFlightTrackerRef allocator
+            go inFlightTrackerRef
 
 -- | Render a single frame. Gets most of the relevant info from the 'WindowEtc'
 --   record. Also takes in and updates the vector of fences for the 'in flight' frame buffers.
@@ -90,8 +90,8 @@ renderFrame windowEtc inFlightTrackerRef allocator = do
       -- frame was in flight and we need to wait on that fence for the relevant queue to complete.
       let imageFence = inFlight ! fromIntegral imgIndex
       _ <- if (imageFence /= NULL_HANDLE)
-            then waitForFences device (fromList [imageFence]) True maxBound
-            else return SUCCESS
+           then waitForFences device (fromList [imageFence]) True maxBound
+           else return SUCCESS
       let swcBuffer = (swapchainCommandBuffers swapchainEtc) ! (fromIntegral imgIndex)
       let uniformBuffer = (swapchainPerFrameResources swapchainEtc) ! (fromIntegral imgIndex)
       updateUniformBuffer device (uniforms uniformBuffer) ((fromIntegral currentFrame) * 0.016) (VKSWAPCHAIN.imageExtent $ swapchainCreateInfo swapchainEtc)
