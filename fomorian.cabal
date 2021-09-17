@@ -85,3 +85,12 @@ executable example
   c-sources: csrc/VulkanCallback.c
   include-dirs: /c/VulkanSDK/1.2.170.0/include
 
+
+test-suite fomorian-test
+  import:              deps
+  build-depends:       hedgehog, hedgehog-corpus
+  type:                exitcode-stdio-1.0
+  main-is:             Main.hs
+  hs-source-dirs:      test, src
+  other-modules:       Lib
+  ghc-options:         -threaded -rtsopts
