@@ -8,6 +8,7 @@
 module MemoryArenaTests where
 
 import qualified Data.Map.Strict as M
+import Data.Vector (length)
 
 import Hedgehog
 import qualified Hedgehog.Gen as Gen
@@ -105,10 +106,14 @@ prop_shuffledReturn = property $ do
   case allocResult of
     Nothing -> do footnote $ "allocations should not have failed"
                   failure
-    Just (arena', blocks) -> do
+    Just (arena', allocatedBlocks) -> do
       -- we'll return the blocks in an order different than the allocation order
-      returnOrder <- forAll $ Gen.shuffle blocks
+      returnOrder <- forAll $ Gen.shuffle allocatedBlocks
       case chainReturns returnOrder arena' of
         Nothing -> do footnote $ "returns failed"
                       failure
-        Just arena'' -> assert (usedSpace (getArenaStats arena'') == 0)
+        Just arena'' -> do
+          let stats = getArenaStats arena''
+          -- After returning all blocks, there should be one free block 100% of the time
+          classify "One free block after all blocks returned (should be 100%): " (blockCount stats == 1)
+          assert (usedSpace stats == 0)

@@ -1,4 +1,7 @@
-
+-- | Code for a basic arena used for dynamically allocating chunks of memory. The arena starts as one large free block which is
+--   divided up as needed to hand out for memory allocations. When the memory is freed (or "returned") the memory block is
+--   converted back into a free block and merged with adjacent free blocks. Alignment and padding are supported. There is no
+--   support for compaction.
 module Fomorian.SimpleMemoryArena (
   mkSimpleMemoryArena,
   allocBlock,
@@ -9,11 +12,12 @@ module Fomorian.SimpleMemoryArena (
   ArenaStats,
   getArenaStats,
   freeSpace,
-  usedSpace
+  usedSpace,
+  blockCount
   ) where
 
 
-import Data.Vector ((!), Vector, fromList, toList)
+import Data.Vector ((!), Vector, fromList)
 import qualified Data.Vector as V
 
 data MemoryBlockState = UsedBlock | FreeBlock
@@ -41,8 +45,20 @@ data SimpleMemoryArena s =
     memoryConfig :: SimpleMemoryArenaConfig s,
     blocks :: Vector (MemoryBlock s)
   }
-  deriving (Eq, Show)
+  deriving (Eq)
 
+-- | Use a compact representation of the arena for display
+instance (Show s) => Show (SimpleMemoryArena s) where
+  show arena = "SimpleMemoryArena { config = " ++ show (memoryConfig arena) ++ " blocks = [" ++ compactShow (V.toList $ blocks arena) ++ "]"
+    where
+      compactShow [] = ""
+      compactShow (b:bs) =
+        let blockType = case (isFree b) of
+                          UsedBlock -> "Used"
+                          FreeBlock -> "Free"
+        in "(" ++ blockType ++ " " ++ show (blockOffset b) ++ " " ++ show (blockSize b) ++ ")" ++ compactShow bs
+
+-- | Use this to create the initial arena. All the space in the arena is marked free initially.
 mkSimpleMemoryArena :: (Integral s) => SimpleMemoryArenaConfig s -> SimpleMemoryArena s
 mkSimpleMemoryArena config =
   let initialBlockSize = roundValueDownToAlignment (totalSize config) config
@@ -70,7 +86,8 @@ roundValueDownToAlignment x config =
   in (x `div` alignment) * alignment
 
 -- | Given a free block, split it into a used block and (possibly) a freed block with the remaining free memory.
-splitFreeBlock :: (Integral s) => s ->SimpleMemoryArenaConfig s ->  MemoryBlock s -> Maybe [MemoryBlock s]
+--   If the allocation uses up all the free space of this block it is just converted into a used block instead of splitting.
+splitFreeBlock :: (Integral s) => s -> SimpleMemoryArenaConfig s ->  MemoryBlock s -> Maybe [MemoryBlock s]
 -- can't allocate from a used block!
 splitFreeBlock _         _      (MemoryBlock UsedBlock _ _)                 = Nothing
 splitFreeBlock allocSize config (MemoryBlock FreeBlock origOffset origSize) =
@@ -86,6 +103,7 @@ splitFreeBlock allocSize config (MemoryBlock FreeBlock origOffset origSize) =
     else let b1 = MemoryBlock UsedBlock origOffset alignedAllocSize
              b2 = MemoryBlock FreeBlock (origOffset + alignedAllocSize) (origSize - alignedAllocSize)
          in Just $ [b1,b2]
+
 
 -- | Apply the given function on successive elements until one succeeds (return a 'Just') and returns the index and result. If no element
 --   produces a 'Just' then this returns 'Nothing'
@@ -117,6 +135,8 @@ mergeBlocks :: (Integral s) => MemoryBlock s -> MemoryBlock s -> MemoryBlock s
 mergeBlocks (MemoryBlock u o s) (MemoryBlock _ _ s') = MemoryBlock u o (s+s')
 
 
+-- | Take a previously-allocated block and return it to free space. Returns 'Nothing' if there
+--   was an error (most likely the block was already freed or allocated from a different arena).
 returnBlock :: (Integral s) => MemoryBlock s -> SimpleMemoryArena s -> Maybe (SimpleMemoryArena s)
 returnBlock block (SimpleMemoryArena arenaConfig arenaBlocks) =
   case (V.findIndex (== block) arenaBlocks) of
@@ -137,10 +157,12 @@ returnBlock block (SimpleMemoryArena arenaConfig arenaBlocks) =
                             else (b', pre)
           in V.concat [pre',V.singleton b'',post']
 
+-- | Some stats so you can check what's going on in the arena.
 data ArenaStats s = 
   ArenaStats {
     freeSpace :: s,
-    usedSpace :: s
+    usedSpace :: s,
+    blockCount :: Int
   }
   deriving (Eq, Show)
 
@@ -152,4 +174,4 @@ getArenaStats arena =
       isUsedBlock = \b -> isFree b == UsedBlock
       sumSomeBlocks = \f -> sum $ fmap blockSize (filter f allBlocks)
   in
-    ArenaStats (sumSomeBlocks isFreeBlock) (sumSomeBlocks isUsedBlock)
+    ArenaStats (sumSomeBlocks isFreeBlock) (sumSomeBlocks isUsedBlock) (length allBlocks)
