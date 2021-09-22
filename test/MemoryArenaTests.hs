@@ -20,16 +20,16 @@ memoryArenaTests :: IO Bool
 memoryArenaTests = checkSequential $$(discover)
 
 basicArenaConfig :: SimpleMemoryArenaConfig Int
-basicArenaConfig = SimpleMemoryArenaConfig 100000 4 8
+basicArenaConfig = SimpleMemoryArenaConfig 100000 4
 
-chainAllocations :: Integral s => [s] -> SimpleMemoryArena s -> Maybe (SimpleMemoryArena s, [MemoryBlock s])
-chainAllocations sz ar = accumulateAllocations sz ar []
+chainAllocations :: Integral s => [s] -> MemoryAlignment s -> SimpleMemoryArena s -> Maybe (SimpleMemoryArena s, [MemoryBlock s])
+chainAllocations sz alignment ar = accumulateAllocations sz alignment ar []
   where
-    accumulateAllocations [] arena x = Just (arena, x)
-    accumulateAllocations (a:as) arena x =
-      case allocBlock a arena of
+    accumulateAllocations []     align arena x = Just (arena, x)
+    accumulateAllocations (a:as) align arena x =
+      case allocBlock a align arena of
         Nothing -> Nothing
-        Just (arena', newBlock) -> accumulateAllocations as arena' (newBlock : x)
+        Just (arena', newBlock) -> accumulateAllocations as align arena' (newBlock : x)
 
 chainReturns :: Integral s => [MemoryBlock s] -> SimpleMemoryArena s -> Maybe (SimpleMemoryArena s)
 chainReturns blks ar = accumulateReturns blks ar
@@ -44,8 +44,9 @@ chainReturns blks ar = accumulateReturns blks ar
 prop_singleAlloc :: Property
 prop_singleAlloc = property $ do
   let basicArena = mkSimpleMemoryArena basicArenaConfig
+  let alignment = MemAlign 4
   allocSize <- forAll $ Gen.int (Range.linear 1 10000)
-  case allocBlock allocSize basicArena of
+  case allocBlock allocSize alignment basicArena of
     Nothing -> do footnote $ "Error attempting to make a single allocation"
                   failure
     Just _  -> pure ()
@@ -54,8 +55,9 @@ prop_singleAlloc = property $ do
 prop_singleAllocReturn :: Property
 prop_singleAllocReturn = property $ do
   let basicArena = mkSimpleMemoryArena basicArenaConfig
+  let alignment = MemAlign 4
   allocSize <- forAll $ Gen.int (Range.linear 1 10000)
-  case allocBlock allocSize basicArena of
+  case allocBlock allocSize alignment basicArena of
     Nothing -> do footnote $ "Error attempting to make a single allocation"
                   failure
     Just (arena', block) ->
@@ -67,10 +69,11 @@ prop_singleAllocReturn = property $ do
 prop_withinCapacity :: Property
 prop_withinCapacity = property $ do
   let basicArena = mkSimpleMemoryArena basicArenaConfig
+  let alignment = MemAlign 4
   -- make alloc request used up to a quarter of the free space
   allocSize <- forAll $ Gen.int (Range.linear 1 ((freeSpace (getArenaStats basicArena)) `div` 4))
   -- make three alloc requests, all should succeed
-  let allocResult = chainAllocations [allocSize, allocSize, allocSize] basicArena
+  let allocResult = chainAllocations [allocSize, allocSize, allocSize] alignment basicArena
   case allocResult of
     Just _  -> pure ()
     Nothing -> do footnote $ "allocations should not have exceeded the arena capacity"
@@ -84,9 +87,10 @@ prop_exceedCapacity = property $ do
   -- make alloc request used half the free space
   let baseAllocSize = (freeSpace (getArenaStats basicArena)) `div` 2  
   let genAllocSize = (Gen.int (Range.linear baseAllocSize (baseAllocSize+10)))
+  let alignment = MemAlign 4
   -- make three or more alloc requests, which guarantees failure
   allocSequence <- forAll $ Gen.list (Range.constant 3 6) genAllocSize
-  let allocResult = chainAllocations allocSequence basicArena
+  let allocResult = chainAllocations allocSequence alignment basicArena
   case allocResult of
     Nothing -> pure ()
     Just _ -> do footnote $ "allocations should have exceeded the arena capacity"
@@ -101,8 +105,9 @@ prop_shuffledReturn = property $ do
   allocationCount <- forAll $ Gen.int (Range.linear 3 10)
   let maxAllocSize = (freeSpace (getArenaStats basicArena)) `div` (allocationCount + 1)
   let genAllocSize = (Gen.int (Range.linear 1 maxAllocSize))
+  let alignment = MemAlign 4
   allocSizes <- forAll $ Gen.list (Range.constant allocationCount allocationCount) genAllocSize
-  let allocResult = chainAllocations allocSizes basicArena
+  let allocResult = chainAllocations allocSizes alignment basicArena
   case allocResult of
     Nothing -> do footnote $ "allocations should not have failed"
                   failure

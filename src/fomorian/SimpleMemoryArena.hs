@@ -7,9 +7,12 @@ module Fomorian.SimpleMemoryArena (
   allocBlock,
   returnBlock,
   MemoryBlock,
+  blockOffset,
+  blockSize,
   SimpleMemoryArena,
   SimpleMemoryArenaConfig(..),
   ArenaStats,
+  MemoryAlignment (..),
   getArenaStats,
   freeSpace,
   usedSpace,
@@ -35,8 +38,7 @@ data MemoryBlock s =
 data SimpleMemoryArenaConfig s =
   SimpleMemoryArenaConfig {
     totalSize :: s,
-    blockPadding :: s,
-    blockAlignment :: s
+    blockPadding :: s
   }
   deriving (Eq, Show)
 
@@ -46,6 +48,9 @@ data SimpleMemoryArena s =
     blocks :: Vector (MemoryBlock s)
   }
   deriving (Eq)
+
+-- | Used to specify memory alignment. We use this to distinguish between an offset/size value and an alignment value
+newtype MemoryAlignment s = MemAlign s
 
 -- | Use a compact representation of the arena for display
 instance (Show s) => Show (SimpleMemoryArena s) where
@@ -60,38 +65,32 @@ instance (Show s) => Show (SimpleMemoryArena s) where
 
 -- | Use this to create the initial arena. All the space in the arena is marked free initially.
 mkSimpleMemoryArena :: (Integral s) => SimpleMemoryArenaConfig s -> SimpleMemoryArena s
-mkSimpleMemoryArena config =
-  let initialBlockSize = roundValueDownToAlignment (totalSize config) config
-  in
-    SimpleMemoryArena {
+mkSimpleMemoryArena config = 
+  SimpleMemoryArena {
       memoryConfig = config,
       -- start with a single free memory block
       blocks = (fromList [
                   MemoryBlock {
                     isFree = FreeBlock,
                     blockOffset = 0,
-                    blockSize = initialBlockSize
+                    blockSize = (totalSize config)
                   }
                 ])
     }
 
-roundValueUpToAlignment :: (Integral s) => s -> SimpleMemoryArenaConfig s -> s
-roundValueUpToAlignment x config =
-  let alignment = (blockAlignment config)
-  in roundValueDownToAlignment (x + alignment - 1) config
+roundValueUpToAlignment :: (Integral s) => s -> s -> s
+roundValueUpToAlignment x alignment = roundValueDownToAlignment (x + alignment - 1) alignment
 
-roundValueDownToAlignment :: (Integral s) => s -> SimpleMemoryArenaConfig s -> s
-roundValueDownToAlignment x config =
-  let alignment = (blockAlignment config)
-  in (x `div` alignment) * alignment
+roundValueDownToAlignment :: (Integral s) => s -> s -> s
+roundValueDownToAlignment x alignment = (x `div` alignment) * alignment
 
 -- | Given a free block, split it into a used block and (possibly) a freed block with the remaining free memory.
 --   If the allocation uses up all the free space of this block it is just converted into a used block instead of splitting.
-splitFreeBlock :: (Integral s) => s -> SimpleMemoryArenaConfig s ->  MemoryBlock s -> Maybe [MemoryBlock s]
+splitFreeBlock :: (Integral s) => s -> MemoryAlignment s -> MemoryBlock s -> Maybe [MemoryBlock s]
 -- can't allocate from a used block!
-splitFreeBlock _         _      (MemoryBlock UsedBlock _ _)                 = Nothing
-splitFreeBlock allocSize config (MemoryBlock FreeBlock origOffset origSize) =
-  let alignedAllocSize = roundValueUpToAlignment allocSize config
+splitFreeBlock _         _                    (MemoryBlock UsedBlock _ _)                 = Nothing
+splitFreeBlock allocSize (MemAlign alignment) (MemoryBlock FreeBlock origOffset origSize) =
+  let alignedAllocSize = roundValueUpToAlignment allocSize alignment
   in
     if (alignedAllocSize > origSize)
     -- this free block isn't big enough to hold the allocation!
@@ -119,10 +118,10 @@ findIndexFirstJust justTest elems = checkElements justTest elems 0
 
 -- | Find an area of free memory in this arena and allocate it. Returns the updated arena and a 'MemoryBlock' of the newly-allocated region.
 --   If it can no free space large enough, return 'Nothing'
-allocBlock :: (Integral s) => s -> SimpleMemoryArena s -> Maybe (SimpleMemoryArena s, MemoryBlock s)
-allocBlock findSize (SimpleMemoryArena arenaConfig arenaBlocks) =
+allocBlock :: (Integral s) => s -> MemoryAlignment s -> SimpleMemoryArena s -> Maybe (SimpleMemoryArena s, MemoryBlock s)
+allocBlock findSize alignment (SimpleMemoryArena arenaConfig arenaBlocks) =
   -- try to split each block until we find one that succeeds
-  case findIndexFirstJust (splitFreeBlock findSize arenaConfig) arenaBlocks of
+  case findIndexFirstJust (splitFreeBlock findSize alignment) arenaBlocks of
     Nothing -> Nothing
     Just (ix,splitResult) ->
       let beforeBlocks = V.take ix arenaBlocks

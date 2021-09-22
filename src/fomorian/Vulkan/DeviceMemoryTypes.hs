@@ -29,7 +29,8 @@ data AbstractMemoryType =
 newtype MemoryPriorityMap k = MemoryPriorityMap (M.Map k [Word32])
   deriving (Eq, Show)
 
-
+lookupMemoryPriority :: (Ord k) => MemoryPriorityMap k -> k -> [Word32]
+lookupMemoryPriority (MemoryPriorityMap m) k = M.findWithDefault [] k m
 
 -- | A set of functions to describe which memory types are allowed and which ones should be preferred when allocating memory. Make a prioritizer
 --   and apply it with 'makePriorityMemoryTypeList' to get a list of allowed memory types sorted with preferred types first.
