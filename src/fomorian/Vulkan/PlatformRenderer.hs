@@ -1,6 +1,8 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Fomorian.Vulkan.PlatformRenderer where
@@ -30,28 +32,33 @@ import Fomorian.SimpleApp (AppInfo, TopLevel3DRow)
 
 import LoadUnload
 
-type instance RendererResources VulkanRendererState = LoadedResources (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)
+type instance RendererResources (VulkanRendererState j) = LoadedResources (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)
 
-type VulkanResources = RendererResources VulkanRendererState
-
-data VulkanRendererState =
+data VulkanRendererState j =
   VulkanRendererState {
-    rendererAppInfo :: IORef (AppInfo VulkanResources),
-    rendererWindow :: GLFW.Window,
+    rendererAppInfo :: IORef (AppState j),
     windowBundle :: WindowBundle,
     flightTracker :: IORef InFlightTracker
   }
 
-initAppState :: WindowInitData -> GLFW.Window -> IO (IORef (AppInfo VulkanResources))
+type StdState = 
+  (
+    "window"     .== GLFW.Window .+
+    "windowSize" .== (Int,Int)   .+
+    "curTime"    .== Float       .+
+    "shouldTerminate" .== Bool
+  )
+
+
+initAppState :: WindowInitData -> GLFW.Window -> IO (IORef (AppState StdState))
 initAppState (WindowInitData w h _ _) win = do
   let initialAppState =    (#window .== win)
                         .+ (#windowSize .== (w,h))
-                        .+ (#resources .== noLoadedResources)
                         .+ (#curTime .== (0 :: Float))
                         .+ (#shouldTerminate .== False)
-  newIORef initialAppState
+  newIORef (AppState initialAppState)
 
-vulkanWrapRender :: (Int,Int) -> (VulkanRendererState -> IO ()) -> IO ()
+vulkanWrapRender :: (Int,Int) -> (VulkanRendererState StdState -> IO ()) -> IO ()
 vulkanWrapRender (w,h) wrapped = do
   let initConfig = WindowInitConfig
                      "Vulkan App"  -- application name
@@ -68,7 +75,7 @@ vulkanWrapRender (w,h) wrapped = do
     wrapped (VulkanRendererState appState win windowETC inFlightRef)
     deviceWaitIdle (vkDevice windowETC)-}
 
-vulkanRenderFrame :: VulkanRendererState -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool
+vulkanRenderFrame :: VulkanRendererState j -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool
 vulkanRenderFrame v scene frameData = do
   return False
   {-
@@ -81,7 +88,7 @@ vulkanRenderFrame v scene frameData = do
   return (shouldClose || (p == GLFW.KeyState'Pressed))
   -}
 
-vulkanRendererFunctions :: PlatformRendererFunctions VulkanRendererState
+vulkanRendererFunctions :: PlatformRendererFunctions (VulkanRendererState StdState) StdState
 vulkanRendererFunctions =
   PlatformRendererFunctions {
     wrapRenderLoop = vulkanWrapRender,
