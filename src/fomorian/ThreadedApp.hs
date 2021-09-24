@@ -21,14 +21,15 @@ import Fomorian.SimpleApp
 
 type family RendererResources renderState
 
+-- | AppState is just a record row type, so you can add extra fields for your own stuff if need be.
 newtype AppState rw = AppState (Rec rw)
 
 
 -- | A Specific API target such as OpenGL or Vulkan provides it's own specific set of PlatFormRendererFunctions
-data PlatformRendererFunctions renderState j =
+data PlatformRendererFunctions renderState appRow =
   PlatformRendererFunctions {
     wrapRenderLoop :: (Int,Int) -> (renderState -> IO ()) -> IO (),
-    getAppInfo :: renderState -> IORef (AppState j),
+    getAppInfo :: renderState -> IORef (AppState appRow),
     runRenderFrame :: renderState -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool
   }
 
@@ -49,18 +50,23 @@ threadedAppRenderParams (AppState appstate) =
 threadedApp :: (HasType "curTime" Float j, HasType "windowSize" (Int,Int) j) => 
   (Int, Int) ->
   PlatformRendererFunctions r j ->
+  (AppState j -> (AppState j, Bool)) ->
   (AppState j -> SceneGraph NeutralSceneTarget TopLevel3DRow) ->
   IO ()
-threadedApp (w,h) p sceneFunc = (wrapRenderLoop p (w,h) threadedGo)
+threadedApp (w,h) p updateFunc sceneFunc = (wrapRenderLoop p (w,h) threadedGo)
   where
     threadedGo rendererState = do
       let appdata = getAppInfo p rendererState
-      renderLoopThreaded appdata sceneFunc threadedAppRenderParams p rendererState
+      renderLoopThreaded appdata updateFunc sceneFunc threadedAppRenderParams p rendererState
+      (AppState getTime) <- readIORef appdata
+      putStrLn $ show (getTime .! #curTime)
 
 -- | Runs a render loop by generating a scene graph and frame parameters from app state.
 renderLoopThreaded :: (HasType "curTime" Float j) =>
   -- | IORef to app data
   IORef (AppState j)->
+  -- | Update state function, called before each frame
+  (AppState j -> (AppState j, Bool)) -> 
   -- | function to generate a scene graph from the app data
   (AppState j -> SceneGraph NeutralSceneTarget TopLevel3DRow) ->
   -- | Produce frame data to pass to the render function given some app data
@@ -71,13 +77,13 @@ renderLoopThreaded :: (HasType "curTime" Float j) =>
   r ->
   -- | Runs as a loop
   IO ()
-renderLoopThreaded appref buildScene genFD p rST = loop
+renderLoopThreaded appref updateState buildScene genFD p rST = loop
   where
     loop = do
       -- convert app state into a scene graph
       (AppState appstate) <- readIORef appref
       let curTime' = (appstate .! #curTime) + 0.016
-      let appstate' = AppState (update #curTime curTime' appstate)
+      let (appstate', appQuit) = updateState $ AppState (update #curTime curTime' appstate)
       writeIORef appref appstate'
 
       let neutralScene = buildScene appstate'
@@ -85,6 +91,6 @@ renderLoopThreaded appref buildScene genFD p rST = loop
       shouldTerminate <- runRenderFrame p rST neutralScene frameData
 
       -- swap in the just rendered scene and check for termination
-      unless shouldTerminate loop
+      unless (shouldTerminate || appQuit) loop
 
 

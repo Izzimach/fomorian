@@ -37,16 +37,14 @@ type instance RendererResources (VulkanRendererState j) = LoadedResources (DataS
 data VulkanRendererState j =
   VulkanRendererState {
     rendererAppInfo :: IORef (AppState j),
-    windowBundle :: WindowBundle,
-    flightTracker :: IORef InFlightTracker
+    windowBundle :: WindowBundle
   }
 
 type StdState = 
   (
     "window"     .== GLFW.Window .+
     "windowSize" .== (Int,Int)   .+
-    "curTime"    .== Float       .+
-    "shouldTerminate" .== Bool
+    "curTime"    .== Float
   )
 
 
@@ -55,7 +53,6 @@ initAppState (WindowInitData w h _ _) win = do
   let initialAppState =    (#window .== win)
                         .+ (#windowSize .== (w,h))
                         .+ (#curTime .== (0 :: Float))
-                        .+ (#shouldTerminate .== False)
   newIORef (AppState initialAppState)
 
 vulkanWrapRender :: (Int,Int) -> (VulkanRendererState StdState -> IO ()) -> IO ()
@@ -66,7 +63,9 @@ vulkanWrapRender (w,h) wrapped = do
                       Nothing      -- allocator
                       False        -- enable debug validation layers?
   withWindowBundle initConfig $ \windowBundle -> do
-    return ()
+    let win = windowHandle windowBundle
+    appState <- initAppState (WindowInitData w h "Vulkan" NoOpenGL) win
+    wrapped (VulkanRendererState appState windowBundle)
 {-  withWindowEtc vulkanConfig windowConfig allocator bracket $ \windowETC -> do
     let win = windowHandle windowETC
     appState <- initAppState windowConfig win
@@ -75,7 +74,7 @@ vulkanWrapRender (w,h) wrapped = do
     wrapped (VulkanRendererState appState win windowETC inFlightRef)
     deviceWaitIdle (vkDevice windowETC)-}
 
-vulkanRenderFrame :: VulkanRendererState j -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool
+vulkanRenderFrame :: VulkanRendererState appRow -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool
 vulkanRenderFrame v scene frameData = do
   return False
   {-
