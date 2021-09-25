@@ -23,6 +23,7 @@ import Fomorian.SceneResources
 import Fomorian.Windowing
 import Fomorian.OpenGL.OpenGLResources
 import Fomorian.OpenGL.OpenGLCommand
+import Fomorian.PlatformRenderer
 
 import LoadUnload
 
@@ -125,21 +126,18 @@ renderLoop appref buildScene genFD = loop
 type TopLevel3DRow = ("modelMatrix" .== (M44 Float) .+ "viewMatrix" .== (M44 Float) .+ "projectionMatrix" .== (M44 Float) .+ "curTime" .== Float .+ "windowX" .== Integer .+ "windowY" .== Integer)
 
 -- | Given app state generates some default frame parameters
-simpleAppRenderParams :: AppInfo x -> Rec TopLevel3DRow
+simpleAppRenderParams :: AppInfo x -> Rec DefaultDrawFrameParams
 simpleAppRenderParams appstate =
   let t     = appstate .! #curTime
       (w,h) = appstate .! #windowSize
-  in   (#modelMatrix .== (identity :: M44 Float)) .+
-       (#viewMatrix .== (identity :: M44 Float)) .+
-       (#projectionMatrix .== (identity :: M44 Float)) .+
-       (#curTime .== t) .+
+  in   (#curTime .== t) .+
        (#windowX .== fromIntegral w) .+
        (#windowY .== fromIntegral h)
 
 
 
 -- | A basic app that just runs a render function over and over.
-simpleApp :: (Int, Int) -> (AppInfo OpenGLResType -> SceneGraph OpenGLTarget TopLevel3DRow) -> IO ()
+simpleApp :: (Int, Int) -> (AppInfo OpenGLResType -> SceneGraph OpenGLTarget DefaultDrawFrameParams) -> IO ()
 simpleApp (w,h) renderFunc = do
   let initData = WindowInitData w h "Haskell App" UseOpenGL
   let initfunc = initWindow initData

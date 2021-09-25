@@ -7,11 +7,10 @@
 
 module Fomorian.Vulkan.PlatformRenderer where
 
-import Control.Exception
-
 import Data.IORef
 import Data.Row
-import Data.Row.Records
+
+import Linear
 
 import qualified Graphics.UI.GLFW as GLFW
 
@@ -20,42 +19,22 @@ import Fomorian.SceneNode
 import Fomorian.SceneResources
 import Fomorian.NeutralSceneTarget
 
-import Vulkan.Core10.Queue
-
 import Fomorian.Vulkan.WindowBundle
 import Fomorian.Vulkan.SwapChainEtc
 import Fomorian.Vulkan.VulkanResources
 import Fomorian.Vulkan.Example (InFlightTracker, mkInFlightTracker, renderFrame, cMAX_FRAMES_IN_FLIGHT)
 
-import Fomorian.ThreadedApp
-import Fomorian.SimpleApp (AppInfo, TopLevel3DRow)
+import Fomorian.PlatformRenderer
 
 import LoadUnload
 
-type instance RendererResources (VulkanRendererState j) = LoadedResources (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)
-
-data VulkanRendererState j =
+data VulkanRendererState =
   VulkanRendererState {
-    rendererAppInfo :: IORef (AppState j),
-    windowBundle :: WindowBundle
+    windowBundle :: WindowBundle,
+    vulkanStats :: IORef RenderStats
   }
 
-type StdState = 
-  (
-    "window"     .== GLFW.Window .+
-    "windowSize" .== (Int,Int)   .+
-    "curTime"    .== Float
-  )
-
-
-initAppState :: WindowInitData -> GLFW.Window -> IO (IORef (AppState StdState))
-initAppState (WindowInitData w h _ _) win = do
-  let initialAppState =    (#window .== win)
-                        .+ (#windowSize .== (w,h))
-                        .+ (#curTime .== (0 :: Float))
-  newIORef (AppState initialAppState)
-
-vulkanWrapRender :: (Int,Int) -> (VulkanRendererState StdState -> IO ()) -> IO ()
+vulkanWrapRender :: (Int,Int) -> (VulkanRendererState -> IO ()) -> IO ()
 vulkanWrapRender (w,h) wrapped = do
   let initConfig = WindowInitConfig
                      "Vulkan App"  -- application name
@@ -64,8 +43,9 @@ vulkanWrapRender (w,h) wrapped = do
                       False        -- enable debug validation layers?
   withWindowBundle initConfig $ \windowBundle -> do
     let win = windowHandle windowBundle
-    appState <- initAppState (WindowInitData w h "Vulkan" NoOpenGL) win
-    wrapped (VulkanRendererState appState windowBundle)
+    let stats = RenderStats win (V2 w h) 0
+    statsRef <- newIORef stats
+    wrapped (VulkanRendererState windowBundle statsRef)
 {-  withWindowEtc vulkanConfig windowConfig allocator bracket $ \windowETC -> do
     let win = windowHandle windowETC
     appState <- initAppState windowConfig win
@@ -74,8 +54,9 @@ vulkanWrapRender (w,h) wrapped = do
     wrapped (VulkanRendererState appState win windowETC inFlightRef)
     deviceWaitIdle (vkDevice windowETC)-}
 
-vulkanRenderFrame :: VulkanRendererState appRow -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool
+vulkanRenderFrame :: VulkanRendererState -> SceneGraph NeutralSceneTarget DefaultDrawFrameParams -> Rec DefaultDrawFrameParams -> IO Bool
 vulkanRenderFrame v scene frameData = do
+  modifyIORef (vulkanStats v) (\s -> s { frameCount = (frameCount s) + 1 })
   return False
   {-
   let wEtc = windowEtc v
@@ -87,10 +68,10 @@ vulkanRenderFrame v scene frameData = do
   return (shouldClose || (p == GLFW.KeyState'Pressed))
   -}
 
-vulkanRendererFunctions :: PlatformRendererFunctions (VulkanRendererState StdState) StdState
+vulkanRendererFunctions :: PlatformRendererFunctions VulkanRendererState
 vulkanRendererFunctions =
   PlatformRendererFunctions {
     wrapRenderLoop = vulkanWrapRender,
-    getAppInfo = rendererAppInfo,
+    getRendererStats = readIORef . vulkanStats,
     runRenderFrame = vulkanRenderFrame
   }

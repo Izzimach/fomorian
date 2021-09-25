@@ -13,84 +13,50 @@ import Data.Row.Records
 
 import Linear
 
-
+import Fomorian.PlatformRenderer
 import Fomorian.SceneNode
 import Fomorian.NeutralSceneTarget
 
-import Fomorian.SimpleApp
-
-type family RendererResources renderState
-
--- | AppState is just a record row type, so you can add extra fields for your own stuff if need be.
-newtype AppState rw = AppState (Rec rw)
-
-
--- | A Specific API target such as OpenGL or Vulkan provides it's own specific set of PlatFormRendererFunctions
-data PlatformRendererFunctions renderState appRow =
-  PlatformRendererFunctions {
-    wrapRenderLoop :: (Int,Int) -> (renderState -> IO ()) -> IO (),
-    getAppInfo :: renderState -> IORef (AppState appRow),
-    runRenderFrame :: renderState -> SceneGraph NeutralSceneTarget TopLevel3DRow -> Rec TopLevel3DRow -> IO Bool
-  }
-
--- | Given app state generates some default frame parameters
-threadedAppRenderParams :: (HasType "curTime" Float rw, HasType "windowSize" (Int,Int) rw) => AppState rw -> Rec TopLevel3DRow
-threadedAppRenderParams (AppState appstate) =
-  let t     = appstate .! #curTime
-      (w,h) = appstate .! #windowSize
-  in   (#modelMatrix .== (identity :: M44 Float)) .+
-       (#viewMatrix .== (identity :: M44 Float)) .+
-       (#projectionMatrix .== (identity :: M44 Float)) .+
-       (#curTime .== t) .+
-       (#windowX .== fromIntegral w) .+
-       (#windowY .== fromIntegral h)
-
 
 -- | A basic app that just runs a render function over and over.
-threadedApp :: (HasType "curTime" Float j, HasType "windowSize" (Int,Int) j) => 
-  (Int, Int) ->
-  PlatformRendererFunctions r j ->
-  (AppState j -> (AppState j, Bool)) ->
-  (AppState j -> SceneGraph NeutralSceneTarget TopLevel3DRow) ->
+threadedApp :: (Int, Int) ->
+  PlatformRendererFunctions r ->
+  s ->
+  (s -> (s, Bool)) ->
+  (s -> SceneGraph NeutralSceneTarget DefaultDrawFrameParams) ->
   IO ()
-threadedApp (w,h) p updateFunc sceneFunc = (wrapRenderLoop p (w,h) threadedGo)
+threadedApp (w,h) p initialState updateFunc sceneFunc = (wrapRenderLoop p (w,h) threadedGo)
   where
     threadedGo rendererState = do
-      let appdata = getAppInfo p rendererState
-      renderLoopThreaded appdata updateFunc sceneFunc threadedAppRenderParams p rendererState
-      (AppState getTime) <- readIORef appdata
-      putStrLn $ show (getTime .! #curTime)
+      renderLoopThreaded initialState updateFunc sceneFunc p rendererState
 
 -- | Runs a render loop by generating a scene graph and frame parameters from app state.
-renderLoopThreaded :: (HasType "curTime" Float j) =>
-  -- | IORef to app data
-  IORef (AppState j)->
+renderLoopThreaded :: 
+  -- | Initial app state
+  s ->
   -- | Update state function, called before each frame
-  (AppState j -> (AppState j, Bool)) -> 
+  (s -> (s, Bool)) -> 
   -- | function to generate a scene graph from the app data
-  (AppState j -> SceneGraph NeutralSceneTarget TopLevel3DRow) ->
+  (s -> SceneGraph NeutralSceneTarget DefaultDrawFrameParams) ->
   -- | Produce frame data to pass to the render function given some app data
-  (AppState j -> Rec TopLevel3DRow) ->
+--  (s-> Rec DefaultDrawFrameParams) ->
   -- | Renderer functions, provided by OpenGL or Vulkan modules
-  PlatformRendererFunctions r j ->
+  PlatformRendererFunctions r ->
   -- | Renderer State, produced by the renderer
   r ->
   -- | Runs as a loop
   IO ()
-renderLoopThreaded appref updateState buildScene genFD p rST = loop
+renderLoopThreaded initialState updateState buildScene {-genFD-} p rST = loop initialState
   where
-    loop = do
-      -- convert app state into a scene graph
-      (AppState appstate) <- readIORef appref
-      let curTime' = (appstate .! #curTime) + 0.016
-      let (appstate', appQuit) = updateState $ AppState (update #curTime curTime' appstate)
-      writeIORef appref appstate'
+    loop appState = do
+      stats <- getRendererStats p rST
+      let (appState', appQuit) = updateState appState
 
-      let neutralScene = buildScene appstate'
-      let frameData = genFD appstate'
+      let neutralScene = buildScene appState'
+      let frameData = generateDefaultDrawFrameParameters stats -- genFD appState'
       shouldTerminate <- runRenderFrame p rST neutralScene frameData
 
       -- swap in the just rendered scene and check for termination
-      unless (shouldTerminate || appQuit) loop
+      unless (shouldTerminate || appQuit) (loop appState')
 
 

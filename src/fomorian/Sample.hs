@@ -26,6 +26,8 @@ import Fomorian.SimpleApp
 import Fomorian.NeutralSceneTarget
 import Fomorian.SceneResources
 import Fomorian.CommonSceneNodes
+
+import Fomorian.PlatformRenderer
 import Fomorian.OpenGL.OpenGLResources
 
 
@@ -44,35 +46,37 @@ genRenderParams appstate =
 
 
 
-testScene2d :: SceneGraph NeutralSceneTarget TopLevel3DRow 
-testScene2d = pixelOrtho2DView $
-                group [
-                  someTriangle,
-                  translateWithFunc sinFunc someTriangle
-                  ]
+testScene2d :: SceneGraph NeutralSceneTarget DefaultDrawFrameParams 
+testScene2d = neutral3DSceneRoot $
+                pixelOrtho2DView $
+                  group [
+                    someTriangle,
+                    translateWithFunc sinFunc someTriangle
+                    ]
   where
     sinFunc t = V3 (10 * (sin t)) (10 * (cos t)) 0
-    someTriangle :: SceneGraph NeutralSceneTarget TopLevel3DRow
+    someTriangle :: (DrawReq NeutralSceneTarget dr) => SceneGraph NeutralSceneTarget dr
     someTriangle = invoke (  #shader   .== "linez"
                           .+ #geometry .== DataSource (IsJust #coordinates2d [(0,0), (10,0), (10,10), (0, 0), (0, 10), (10, 10)])
                           .+ #textures .== [])
 
-testScene3d :: SceneGraph NeutralSceneTarget TopLevel3DRow 
-testScene3d = perspectiveProject config $
-                -- We set the static aspect in 'PerspectiveProject' to 1.0 and let 'autoAspect' handle
-                -- the aspect to work with window resizing.
-                autoAspect $
-                  cameraLookAt (V3 5 10 0) (V3 0 0 0) (V3 0 0 1) $ 
-                    group [
-                      someCube,
-                      translate3d (V3 3 0 0) $ spin3d (V3 0.7071 0.7071 0) 2 $ someCube
-                      ]
+testScene3d :: SceneGraph NeutralSceneTarget DefaultDrawFrameParams 
+testScene3d = neutral3DSceneRoot $
+                perspectiveProject config $
+                  -- We set the static aspect in 'PerspectiveProject' to 1.0 and let 'autoAspect' handle
+                  -- the aspect to work with window resizing.
+                  autoAspect $
+                    cameraLookAt (V3 5 10 0) (V3 0 0 0) (V3 0 0 1) $ 
+                      group [
+                        someCube,
+                        translate3d (V3 3 0 0) $ spin3d (V3 0.7071 0.7071 0) 2 $ someCube
+                        ]
   where
     config = (PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 1000 {-far plane-})
-    someCube :: SceneGraph NeutralSceneTarget TopLevel3DRow
+    someCube :: (DrawReq NeutralSceneTarget dr) => SceneGraph NeutralSceneTarget dr
     someCube = wavefrontMesh "unlit3d" "testcube.obj" ["salamander.png"]
 
-dynamicsTestScene3d :: SceneGraph NeutralSceneTarget TopLevel3DRow
+dynamicsTestScene3d :: SceneGraph NeutralSceneTarget DefaultDrawFrameParams
 dynamicsTestScene3d = undefined
 
 main :: IO ()

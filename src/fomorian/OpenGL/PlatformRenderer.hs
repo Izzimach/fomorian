@@ -7,7 +7,11 @@ import Control.Exception
 import Control.Concurrent.STM
 
 import Data.IORef
+import Data.Row
 
+import Linear
+
+import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 
 import LoadUnload
@@ -21,22 +25,18 @@ import Fomorian.OpenGL.GLBoundThread
 import Fomorian.OpenGL.OpenGLResources
 import Fomorian.OpenGL.OpenGLCommand
 
-import Fomorian.ThreadedApp
-import Fomorian.SimpleApp
+import Fomorian.PlatformRenderer
 
 -- Code to fire up the loader and bound thread, and then route scene processing through the various parts.
 --
 -- For a diagram of threads and data flow look at OpenGLFlow.svg
-
-type instance RendererResources OpenGLRendererState = LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes)
 
 
 data OpenGLRendererState =
   OpenGLRendererState {
     rendererBoundThread :: BoundGLThread GLFW.Window,
     rendererLoader :: ForkLoaderResult (LoaderRequest (DataSource GLDataSourceTypes) (Resource GLResourceTypes)) (LoaderResult (DataSource GLDataSourceTypes) (Resource GLResourceTypes)),
-    rendererAppInfo :: IORef (AppInfo (RendererResources OpenGLRendererState)),
-    rendererWindow :: GLFW.Window
+    openGLStats :: IORef RenderStats
   }
 
 -- | Given a bound OpenGL thread 'BoundGLThread' will generate a 'ResourceLoaderConfig' that offloads
@@ -54,29 +54,54 @@ openGLWrapRenderLoop :: (Int, Int) -> (OpenGLRendererState -> IO ()) -> IO ()
 openGLWrapRenderLoop (w,h) wrapped = bracket startGL endGL wrapped
   where
     startGL = do
-      let initData = WindowInitData w h "Haskell App" UseOpenGL
+      let initData = WindowInitData w h "OpenGL Fomorian" UseOpenGL
       glThread <- forkBoundGLThread (W.initWindow initData) (\win -> terminateWindow win)
       -- spin up concurrent loader
       loaderInfo <- forkLoader 4 (threadedLoaderGLConfig glThread)
       win <- atomically $ takeTMVar (windowValue glThread)
-      appdata <- submitGLComputationThrow glThread $ initAppState initData win
-      return $ OpenGLRendererState glThread loaderInfo appdata win
+      --appdata <- submitGLComputationThrow glThread $ initAppState initData win
+      statsRef <- newIORef (RenderStats win (V2 w h) 0)
+      return $ OpenGLRendererState glThread loaderInfo statsRef
 
-    endGL (OpenGLRendererState glThread loaderInfo _ _) = do
+    endGL (OpenGLRendererState glThread loaderInfo _) = do
       shutdownLoader loaderInfo
       -- terminateWindow is already called when the boundGLThread exits, so don't call it here
       endBoundGLThread glThread
+
+
+-- | Checks for end events. Specifically any close events from GLFW or hitting the escapse key.
+shouldEndProgram :: GLFW.Window -> IO Bool
+shouldEndProgram win = do
+  p <- GLFW.getKey win GLFW.Key'Escape
+  GLFW.pollEvents
+  windowKill <- GLFW.windowShouldClose win
+  let shouldTerminate = (p == GLFW.KeyState'Pressed ||  windowKill)
+  return shouldTerminate
+
+-- | Given a scene graph, draw a single frame on an OpenGL canvas.
+renderOneFrame :: SceneGraph OpenGLCommand dr -> Rec dr -> IO ()
+renderOneFrame scene frameData = do
+  GL.clearColor $= Color4 0 0.5 0.5 1
+  GL.clear [GL.ColorBuffer, GL.DepthBuffer]
+  depthFunc $= Just Less
+  cullFace $= Just Front
+  renderresult <- try $ openGLgo scene frameData
+  case renderresult of
+    Left e   -> putStrLn $ displayException (e :: SomeException)
+    Right () -> return ()
 
 openGLRendererFunctions :: PlatformRendererFunctions OpenGLRendererState
 openGLRendererFunctions =
   PlatformRendererFunctions {
     wrapRenderLoop = openGLWrapRenderLoop,
-    getAppInfo = rendererAppInfo,
+    getRendererStats = readIORef . openGLStats,
     runRenderFrame = \p scene frameData -> do
       let boundGL = rendererBoundThread p
       let loaderInfo = rendererLoader p
 
       let sceneTarget = neutralToGLTarget scene
+      stats <- readIORef (openGLStats p)
+      writeIORef (openGLStats p) $ stats { frameCount = (frameCount stats) + 1}
 
       -- generate new resource list and send to the loader
       let (GLDataSources sceneResources) = oglResourcesScene sceneTarget
@@ -92,9 +117,9 @@ openGLRendererFunctions =
       sceneCommand `seq` frameData `seq`
         waitForPriorityGLTask boundGL $ do
           renderOneFrame sceneCommand frameData
-          GLFW.swapBuffers (rendererWindow p)
+          GLFW.swapBuffers (renderWindow stats)
       
       -- check for app end, this uses OpenGL so it needs to run in the OpenGL thread
-      submitGLComputationThrow boundGL $ shouldEndProgram (rendererWindow p)
+      submitGLComputationThrow boundGL $ shouldEndProgram (renderWindow stats)
   }
 

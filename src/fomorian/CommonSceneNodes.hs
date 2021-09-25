@@ -68,7 +68,7 @@ orthoForWindowSize rf =
 
 -- | Generate record entry for a projectionMatrix given window size
 orthoConvert :: (HasType "windowX" Integer r, HasType "windowY" Integer r) =>
-  Rec r -> Rec ("projectionMatrix" .== M44 Float)
+  Rec r -> Rec ("projectionMatrix" .== (M44 Float))
 orthoConvert r = (#projectionMatrix .== orthoForWindowSize r)
 
 --
@@ -80,7 +80,7 @@ orthoConvert r = (#projectionMatrix .== orthoForWindowSize r)
 -- | of auto-scaling with the window use $ortho2DView$ or $fitOrtho2DView$
 --
 pixelOrtho2DView :: (HasType "windowX" Integer dr, HasType "windowY" Integer dr) =>
-  SceneGraph target ("projectionMatrix" .== M44 Float .// dr) -> SceneGraph target dr
+  SceneGraph target (("projectionMatrix" .== (M44 Float)) .// dr) -> SceneGraph target dr
 pixelOrtho2DView sg = setFields orthoConvert sg
 
 data PerspectiveProjectConfig =
