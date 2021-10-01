@@ -55,7 +55,8 @@ data WindowInitConfig = WindowInitConfig {
     -- | title as utf8 text
     windowTitle :: Text,
     -- | Allocator callbacks, if any
-    userAllocator :: Maybe AllocationCallbacks,      
+    userAllocator :: Maybe AllocationCallbacks,
+    auxiliaryQueueCount :: Int,
     -- | If true, then init will enable validation layers and add a callback that prints errors to stdout
     enableDebugLayer :: Bool
   }
@@ -94,12 +95,11 @@ withWindowBundle config wrapped = bracket startBundle endBundle goBundle
       glfwExtensions <- getGLFWExtensions
       let createInfo = makeInstanceCreateInfo config glfwExtensions
       let allocator = userAllocator config
+      let auxQueueCount = fromIntegral $ auxiliaryQueueCount config
       withInstance createInfo allocator bracket $ \vkInstance -> do
         withSurface vkInstance window $ \vkSurface -> do
-          withPickAndMakeDevice vkInstance vkSurface 0 allocator $ \deviceBundle -> do
+          withPickAndMakeDevice vkInstance vkSurface auxQueueCount allocator $ \deviceBundle -> do
             wrapped (WindowBundle vkInstance window vkSurface deviceBundle)
-
-  
 
 
 -- | Given a config, create an InstanceCreateInfo. Debug and validation structs are always there because of how
@@ -163,6 +163,7 @@ withSurface inst wid goSurface = bracket startSurface endSurface goSurface
           else fmap SurfaceKHR $ peek @Word64 pSurface
     endSurface surf = destroySurfaceKHR inst surf Nothing
 
+
 data DeviceAndQueues = DeviceAndQueues 
   {
     physicalHandle :: PhysicalDevice,
@@ -170,6 +171,7 @@ data DeviceAndQueues = DeviceAndQueues
     presentQueueFamilyIndex :: Word32
   }
   deriving (Eq, Show)
+
 
 withPickAndMakeDevice :: Instance -> SurfaceKHR -> Word32 -> Maybe AllocationCallbacks ->  (DeviceBundle -> IO ()) -> IO ()
 withPickAndMakeDevice vkInstance vkSurface auxQueueCount allocator wrapped = do
@@ -185,6 +187,7 @@ withPickAndMakeDevice vkInstance vkSurface auxQueueCount allocator wrapped = do
         auxQs <- mapM (\ix -> getDeviceQueue vkDevice (graphicsQueueFamilyIndex dq) ix) [1..auxQueueCount]
         wrapped (DeviceBundle vkDevice physDevice graphicsQ presentQ auxQs)
 
+
 -- | pick a device that has both a graphics queue and a present queue for the given instance and surface
 pickDeviceAndQueues :: Instance -> SurfaceKHR -> IO (Maybe DeviceAndQueues)
 pickDeviceAndQueues inst surf = do
@@ -192,11 +195,12 @@ pickDeviceAndQueues inst surf = do
   checkDevices (toList devices)
   where
     checkDevices [] = return Nothing
-    checkDevices (d : ds) = do deviceVal <- validDevice d
-                               case deviceVal of
-                                 Nothing -> checkDevices ds
-                                 Just _ -> return deviceVal
-    
+    checkDevices (d : ds) = do 
+      deviceVal <- validDevice d
+      case deviceVal of
+        Nothing -> checkDevices ds
+        Just _ -> return deviceVal
+        
     validDevice d = do
       gq <- findGraphicsQueueForDevice d
       pq <- findPresentQueueForDevice d surf
