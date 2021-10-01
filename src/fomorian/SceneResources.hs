@@ -23,6 +23,7 @@ module Fomorian.SceneResources
     GeometryResource(..),
     VertexAttribute(..),
     VertexDataType(..),
+    findResource,
     loadBasicData
   )
   where
@@ -35,6 +36,7 @@ import Foreign.Storable (Storable, sizeOf)
 import qualified Data.ByteString.Lazy as B
 
 import Data.Row
+import Data.Row.Variants
 import Data.Hashable
 
 import qualified Data.Map.Strict as M
@@ -75,6 +77,13 @@ instance (Forall r Eq, Forall r Ord) => Ord (Resource r) where
 
 instance Hashable (Var r) => Hashable (Resource r) where
   hashWithSalt s (Resource x) = hashWithSalt s x
+
+
+findResource :: (KnownSymbol l) => Label l -> [Resource r] -> Maybe (r .! l)
+findResource _ [] = Nothing
+findResource l (Resource (view l -> Just x) : _) = Just x
+findResource l (_ : xs) = findResource l xs
+
 
 
 type BasicDataSourceTypes =

@@ -156,10 +156,6 @@ loadBoundVertices deps =
   in case (sh,vb) of
        (Just s, Just v) -> generateBoundVertices s v
        (_,_)            -> error "Argh"
-  where
-    findResource _ [] = Nothing
-    findResource l (Resource (view l -> Just x) : _) = Just x
-    findResource l (_ : xs) = findResource l xs
 
 generateBoundVertices :: GLUtil.ShaderProgram -> GeometryResource GL.BufferObject GL.BufferObject (VertexArrayDescriptor Float) -> IO (Resource GLResourceTypes)
 generateBoundVertices s v = do
