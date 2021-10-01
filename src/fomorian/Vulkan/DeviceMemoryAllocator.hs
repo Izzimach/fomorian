@@ -29,7 +29,6 @@ data MemoryAllocation s = MemoryAllocation DeviceMemory MemoryTypeIndex ArenaKey
 data DeviceArena = DeviceArena DeviceMemory ArenaKey (SimpleMemoryArena DeviceSize)
   deriving (Eq,Show)
 
-
 --
 -- arena group, which holds multiple (zero or more) arenas
 --
@@ -100,6 +99,7 @@ data MemoryAllocatorState s =
   MemoryAllocatorState {
     device :: Device,
     physicalDevice :: PhysicalDevice,
+    memoryProps :: PhysicalDeviceMemoryProperties,
     configuration :: AllocatorConfig,
     priorityMap :: MemoryPriorityMap s,
     arenaGroups :: M.Map MemoryTypeIndex DeviceArenaGroup
@@ -108,12 +108,13 @@ data MemoryAllocatorState s =
 mkMemoryAllocator :: Device -> PhysicalDevice -> AllocatorConfig -> IO (MemoryAllocatorState AbstractMemoryType)
 mkMemoryAllocator dev phys config = do
   props <- getPhysicalDeviceMemoryProperties phys
-  return $ MemoryAllocatorState dev phys config (compileMemoryPriorities props) M.empty
+  return $ MemoryAllocatorState dev phys props config (compileMemoryPriorities props) M.empty
 
-cleanupMemoryAllocator :: Device -> MemoryAllocatorState AbstractMemoryType -> IO ()
-cleanupMemoryAllocator device allocator = do
+cleanupMemoryAllocator :: MemoryAllocatorState AbstractMemoryType -> IO ()
+cleanupMemoryAllocator allocator = do
   -- free arenas in all groups
-  mapM_ (freeAllArenas device) (arenaGroups allocator)
+  let d = device allocator
+  mapM_ (freeAllArenas d) (arenaGroups allocator)
 
 allocateDeviceMemory :: MemoryAllocatorState AbstractMemoryType -> DeviceSize -> MemoryAlignment DeviceSize -> AbstractMemoryType -> Word32 -> IO (Maybe (MemoryAllocation DeviceSize), MemoryAllocatorState AbstractMemoryType)
 allocateDeviceMemory allocator memSize memAlignment memType allowedMemoryTypeBits = do
@@ -141,11 +142,11 @@ allocWithMemoryTypeIndex allocator size alignment memTypeIndex = do
       (alloc, group') <- allocateFromNewArena size alignment arenaGroup (device allocator) arenaSize
       return (alloc, updateGroup allocator group')
 
-freeDeviceMemory :: Device -> MemoryAllocatorState AbstractMemoryType -> MemoryAllocation DeviceSize -> IO (Maybe (MemoryAllocatorState AbstractMemoryType))
-freeDeviceMemory device allocator alloc@(MemoryAllocation memHandle memTypeIndex aKey block) = do
+freeDeviceMemory :: MemoryAllocatorState AbstractMemoryType -> MemoryAllocation DeviceSize -> IO (Maybe (MemoryAllocatorState AbstractMemoryType))
+freeDeviceMemory allocator alloc@(MemoryAllocation memHandle memTypeIndex aKey block) = do
   case M.lookup memTypeIndex (arenaGroups allocator) of
     Nothing -> return Nothing
-    Just arenaGroup -> do freeResult <- freeFromCurrentArenas alloc device arenaGroup
+    Just arenaGroup -> do freeResult <- freeFromCurrentArenas alloc (device allocator) arenaGroup
                           case freeResult of
                             Nothing -> return Nothing
                             Just arenaGroup' -> return $ Just $ allocator { arenaGroups = M.insert memTypeIndex arenaGroup' (arenaGroups allocator)}

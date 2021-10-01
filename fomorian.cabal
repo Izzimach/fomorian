@@ -25,6 +25,7 @@ common deps
                        transformers,
                        hashable,
                        text,
+                       pretty-simple,
                        generic-deriving,
                        generic-data,
                        data-fix,
@@ -35,8 +36,6 @@ common deps
                        generics-sop,
                        template-haskell,
                        GLFW-b,
-                       GLUtil,
-                       OpenGL >=3.0 && <4,
                        filepath,
                        ghc-prim,
                        linear,
@@ -44,12 +43,15 @@ common deps
                        bytestring,
                        unordered-containers,
                        wavefront,
+                       freer-simple,
                        row-types,
                        JuicyPixels,
                        stm-loader,
                        stm,
                        async,
                        async-pool,
+                       GLUtil,
+                       OpenGL >=3.0 && <4,
                        vulkan
 
 
