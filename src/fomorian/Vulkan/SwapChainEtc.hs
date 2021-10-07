@@ -108,8 +108,7 @@ startSwapchainRef :: Device -> PhysicalDevice -> CommandPool -> TransientResourc
 startSwapchainRef  device phy cPool tRes sampleCount createInfo allocator =
   do
     swETC <- createSwapChainEtc device phy cPool tRes sampleCount createInfo allocator
-    swRef <- liftIO $ newIORef swETC
-    return swRef
+    liftIO $ newIORef swETC
 
 endSwapchainRef :: Device -> CommandPool -> Maybe AllocationCallbacks -> IORef SwapChainEtc -> IO ()
 endSwapchainRef  device cPool allocator swRef =
@@ -119,7 +118,7 @@ endSwapchainRef  device cPool allocator swRef =
 
 createSwapChainEtc :: Device -> PhysicalDevice -> CommandPool -> TransientResources -> SampleCountFlagBits -> SwapchainCreateInfoKHR '[] -> Maybe AllocationCallbacks -> IO SwapChainEtc
 createSwapChainEtc device phy cpool tRes sampleCount createInfo allocator = do
-  let (Extent2D w h) = (VKSWAPCHAIN.imageExtent $ createInfo)
+  let (Extent2D w h) = VKSWAPCHAIN.imageExtent createInfo
   newSwapchain <- createSwapchainKHR device createInfo allocator
   (_, newImages) <- getSwapchainImagesKHR device newSwapchain
   newImageViews <- createImageViews device createInfo newImages
@@ -146,12 +145,12 @@ destroySwapChainEtc device cpool allocator swETC = do
   unmakeDepthBuffer device depthBuffer allocator
   unmakeColorBuffer device colorBuffer allocator
   freeCommandBuffers device cpool commandbuffers
-  mapM (\fb -> destroyFramebuffer device fb allocator) framebuffers
+  mapM_ (\fb -> destroyFramebuffer device fb allocator) framebuffers
   destroyPipelineEtc device pipe allocator
   unmakeDescriptorPool device dPool allocator
   -- don't need to destory descriptor sets, they get destroyed when the pool is destroyed
   unmakeDescriptorSetLayout device dLayout allocator
-  mapM (\iv -> destroyImageView device iv allocator) imageViews
+  mapM_ (\iv -> destroyImageView device iv allocator) imageViews
   destroySwapchainKHR device sc allocator
 
 recreateSwapChainEtc :: Device -> PhysicalDevice -> CommandPool -> TransientResources -> SampleCountFlagBits -> SwapChainEtc -> DeviceEtc -> SurfaceKHR -> Maybe AllocationCallbacks -> IO SwapChainEtc
@@ -178,18 +177,16 @@ createImageViews device swapchainInfo images =
 
 makeFramebuffers :: Device -> PipelineEtc -> SwapchainCreateInfoKHR '[] -> Vector ImageView -> DepthBuffer -> ColorBuffer -> IO (Vector Framebuffer)
 makeFramebuffers device pipe sce imageViews (DepthBuffer _  _ depthImageView) (ColorBuffer _ _ colorImageView) = do
-  let (Extent2D w h) = (VKSWAPCHAIN.imageExtent $ sce)
+  let (Extent2D w h) = VKSWAPCHAIN.imageExtent sce
   let rPass = rendPass pipe
   let mkFramebuffers iv = createFramebuffer device (FramebufferCreateInfo () zero rPass (fromList [colorImageView, depthImageView, iv]) w h 1) Nothing
-  fbs <- mapM mkFramebuffers imageViews
-  return fbs
-
+  mapM mkFramebuffers imageViews
+  
 makeCommandBuffers :: Device -> CommandPool -> Vector Framebuffer -> IO (Vector CommandBuffer)
 makeCommandBuffers device cmdpool fb = do
   let count = fromIntegral $ length fb
   let allocInfo = CommandBufferAllocateInfo cmdpool COMMAND_BUFFER_LEVEL_PRIMARY count
-  buffers <- allocateCommandBuffers device allocInfo
-  return buffers
+  allocateCommandBuffers device allocInfo
 
 makeFrameResources :: Device -> CommandPool -> Vector ImageView -> IO (Vector ImageFrameResources)
 makeFrameResources = undefined
@@ -202,13 +199,13 @@ destroyFrameResources = undefined
 --   - If that exceeds the maximum allowed, uses the maximum allowed.
 chooseSwapChainImageCount :: SurfaceCapabilitiesKHR -> Word32
 chooseSwapChainImageCount s =
-  let minImages = (VKSURFACE.minImageCount s)
-      maxImages = (VKSURFACE.maxImageCount s)
+  let minImages = VKSURFACE.minImageCount s
+      maxImages = VKSURFACE.maxImageCount s
       desiredImages = minImages + 1
    in -- if 'maxImages' is 0 there is no upper limit so we don't need to clamp
-      if (maxImages == 0)
-        then desiredImages
-        else min desiredImages maxImages
+      if maxImages == 0
+      then desiredImages
+      else min desiredImages maxImages
 
 -- | Picks a format. Tries to find an R8G8B8_UNORM format, but if that's
 --   not found just picks the first format in the list.
@@ -224,9 +221,9 @@ choosePresentationFormat fs =
         )
    in -- the driver can throw up it's hands (if it had hands) and say "idc what format you use"
       -- so we check for that first
-      if (formatCount == 1 && ((VKSURFACE.format (fs ! 0)) == FORMAT_UNDEFINED))
-        then (SurfaceFormatKHR desiredFormat desiredColorspace)
-        else case (find hasFormat fs) of
+      if formatCount == 1 && (VKSURFACE.format (fs ! 0) == FORMAT_UNDEFINED)
+        then SurfaceFormatKHR desiredFormat desiredColorspace
+        else case find hasFormat fs of
           -- if we found a good format use it, otherwise settle for the first format
           Just f' -> f'
           Nothing -> fs ! 0
@@ -235,7 +232,7 @@ chooseSwapChainImageSize :: SurfaceCapabilitiesKHR -> Extent2D
 chooseSwapChainImageSize s =
   let (Extent2D w _h) = currentExtent s
    in -- use whatever currentExtent is. If currentExtent is -1 we have to choose our own extent
-      if (w /= maxBound)
+      if w /= maxBound
         then currentExtent s
         else
           let (Extent2D minW minH) = minImageExtent s

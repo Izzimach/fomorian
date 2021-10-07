@@ -44,11 +44,12 @@ data OpenGLRendererState =
 --   take place in the worker thread and not the OpenGL thread. There is only one OpenGL thread so we don't want to
 --   load it down with extra work evaluating thunks.
 threadedLoaderGLConfig :: BoundGLThread w -> ResourceLoaderConfig (DataSource GLDataSourceTypes) (Resource GLResourceTypes)
-threadedLoaderGLConfig glb = ResourceLoaderConfig {
-  loadIO = (\l deps -> l `seq` deps `seq` submitGLComputationThrow glb (loadGLResource l deps)),
-  unloadIO = (\l r -> l `seq` r `seq` submitGLComputationThrow glb (unloadGLResource l r)),
-  dependenciesIO = computeGLDependencies
-  }
+threadedLoaderGLConfig glb =
+  ResourceLoaderConfig {
+    loadIO = (\l deps -> l `seq` deps `seq` submitGLComputationThrow glb (loadGLResource l deps)),
+    unloadIO = (\l r -> l `seq` r `seq` submitGLComputationThrow glb (unloadGLResource l r)),
+    dependenciesIO = computeGLDependencies
+    }
 
 openGLWrapRenderLoop :: (Int, Int) -> (OpenGLRendererState -> IO ()) -> IO ()
 openGLWrapRenderLoop (w,h) wrapped = bracket startGL endGL wrapped
@@ -96,12 +97,12 @@ openGLRendererFunctions =
     wrapRenderLoop = openGLWrapRenderLoop,
     getRendererStats = readIORef . openGLStats,
     runRenderFrame = \p scene frameData -> do
-      let boundGL = rendererBoundThread p
-      let loaderInfo = rendererLoader p
-
-      let sceneTarget = neutralToGLTarget scene
       stats <- readIORef (openGLStats p)
       writeIORef (openGLStats p) $ stats { frameCount = (frameCount stats) + 1}
+
+      let boundGL = rendererBoundThread p
+      let loaderInfo = rendererLoader p
+      let sceneTarget = neutralToGLTarget scene
 
       -- generate new resource list and send to the loader
       let (GLDataSources sceneResources) = oglResourcesScene sceneTarget

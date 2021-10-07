@@ -1,21 +1,30 @@
-module Fomorian.Vulkan.DeviceMemoryAllocator where
+module Fomorian.Vulkan.Resources.DeviceMemoryAllocator where
 
 import Control.Exception (handle)
 
 import Data.Bits
-import Data.Maybe
-import Data.Monoid (First (..))
-import Data.Map.Strict as M hiding ((!))
+import Data.Map.Strict as M hiding ((!), size)
 import Data.Foldable (asum)
 
 import Data.Vector ((!))
 
 import Data.Word (Word32)
 
-import Vulkan.Core10 as VKCORE hiding (a,x)
+import Vulkan.Core10 as VKCORE
+    ( PhysicalDevice,
+      Device,
+      getPhysicalDeviceMemoryProperties,
+      allocateMemory,
+      freeMemory,
+      MemoryHeap(MemoryHeap),
+      MemoryType(MemoryType),
+      PhysicalDeviceMemoryProperties(memoryTypes, memoryHeaps),
+      DeviceSize,
+      DeviceMemory,
+      MemoryAllocateInfo(MemoryAllocateInfo) )
 import Vulkan.Exception (VulkanException(..)) -- for catching memory allocation failures
 
-import Fomorian.Vulkan.DeviceMemoryTypes
+import Fomorian.Vulkan.Resources.DeviceMemoryTypes
 import Fomorian.SimpleMemoryArena
 
 type ArenaKey = Int
@@ -60,7 +69,7 @@ allocateFromNewArena :: DeviceSize -> MemoryAlignment DeviceSize -> DeviceArenaG
 allocateFromNewArena size alignment dag@(DeviceArenaGroup memix arenaMap) device newArenaSize = do
   let allocateInfo = MemoryAllocateInfo () newArenaSize memix
   -- if allocation fails a VulkanException will be thrown, so handle that
-  handle (\(VulkanException e) -> return (Nothing, dag)) $ do
+  handle (\(VulkanException _) -> return (Nothing, dag)) $ do
     result <- allocateMemory device allocateInfo Nothing
     -- choose a key one higher than the current max key for the new arena
     let newArenaKey = 1 + M.foldlWithKey' (\x k _ -> max x k) 0 arenaMap
@@ -73,7 +82,7 @@ allocateFromNewArena size alignment dag@(DeviceArenaGroup memix arenaMap) device
       Nothing -> return (Nothing, dag)
 
 freeFromCurrentArenas :: MemoryAllocation DeviceSize -> Device -> DeviceArenaGroup -> IO (Maybe DeviceArenaGroup)
-freeFromCurrentArenas alloc@(MemoryAllocation _ _ arenaKey _) device dag@(DeviceArenaGroup _ arenaMap) =
+freeFromCurrentArenas alloc@(MemoryAllocation _ _ arenaKey _) _device dag@(DeviceArenaGroup _ arenaMap) =
   case M.lookup arenaKey arenaMap of
     Nothing -> return Nothing  -- couldn't find the arena for this allocation
     Just arena -> case freeFromDeviceArena alloc arena of
@@ -90,14 +99,14 @@ freeFromCurrentArenas alloc@(MemoryAllocation _ _ arenaKey _) device dag@(Device
 --
 
 
-data AllocatorConfig =
+newtype AllocatorConfig =
   AllocatorConfig  {
     chooseArenaSize :: MemoryTypeIndex -> DeviceSize
   }
 
 data MemoryAllocatorState s =
   MemoryAllocatorState {
-    device :: Device,
+    memDevice :: Device,
     physicalDevice :: PhysicalDevice,
     memoryProps :: PhysicalDeviceMemoryProperties,
     configuration :: AllocatorConfig,
@@ -113,13 +122,13 @@ mkMemoryAllocator dev phys config = do
 cleanupMemoryAllocator :: MemoryAllocatorState AbstractMemoryType -> IO ()
 cleanupMemoryAllocator allocator = do
   -- free arenas in all groups
-  let d = device allocator
+  let d = memDevice allocator
   mapM_ (freeAllArenas d) (arenaGroups allocator)
 
 allocateDeviceMemory :: MemoryAllocatorState AbstractMemoryType -> DeviceSize -> MemoryAlignment DeviceSize -> AbstractMemoryType -> Word32 -> IO (Maybe (MemoryAllocation DeviceSize), MemoryAllocatorState AbstractMemoryType)
 allocateDeviceMemory allocator memSize memAlignment memType allowedMemoryTypeBits = do
   let orderedMemoryTypes = lookupMemoryPriority (priorityMap allocator) memType
-  let allowedMemoryTypes = Prelude.filter (\i -> (allowedMemoryTypeBits .&. (bit $ fromIntegral i)) /= zeroBits) orderedMemoryTypes
+  let allowedMemoryTypes = Prelude.filter (\i -> (allowedMemoryTypeBits .&. bit (fromIntegral i)) /= zeroBits) orderedMemoryTypes
   let useMemoryTypeIndex = head allowedMemoryTypes
   allocWithMemoryTypeIndex allocator memSize memAlignment useMemoryTypeIndex
 
@@ -138,15 +147,15 @@ allocWithMemoryTypeIndex allocator size alignment memTypeIndex = do
     Just (alloc, arenaGroup') -> return $ (Just alloc, updateGroup allocator arenaGroup')
     Nothing -> do
       -- try to create a new arena and allocate from that
-      let arenaSize = (chooseArenaSize (configuration allocator)) memTypeIndex
-      (alloc, group') <- allocateFromNewArena size alignment arenaGroup (device allocator) arenaSize
+      let arenaSize = chooseArenaSize (configuration allocator) memTypeIndex
+      (alloc, group') <- allocateFromNewArena size alignment arenaGroup (memDevice allocator) arenaSize
       return (alloc, updateGroup allocator group')
 
 freeDeviceMemory :: MemoryAllocatorState AbstractMemoryType -> MemoryAllocation DeviceSize -> IO (Maybe (MemoryAllocatorState AbstractMemoryType))
-freeDeviceMemory allocator alloc@(MemoryAllocation memHandle memTypeIndex aKey block) = do
+freeDeviceMemory allocator alloc@(MemoryAllocation _memHandle memTypeIndex _aKey _block) = do
   case M.lookup memTypeIndex (arenaGroups allocator) of
     Nothing -> return Nothing
-    Just arenaGroup -> do freeResult <- freeFromCurrentArenas alloc (device allocator) arenaGroup
+    Just arenaGroup -> do freeResult <- freeFromCurrentArenas alloc (memDevice allocator) arenaGroup
                           case freeResult of
                             Nothing -> return Nothing
                             Just arenaGroup' -> return $ Just $ allocator { arenaGroups = M.insert memTypeIndex arenaGroup' (arenaGroups allocator)}
@@ -163,7 +172,7 @@ allocFromDeviceArena size alignment memIndex (DeviceArena memHandle aKey sArena)
       in
         Just (deviceBlock, newArena)
 
-freeFromDeviceArena :: MemoryAllocation DeviceSize -> DeviceArena -> Maybe (DeviceArena)
+freeFromDeviceArena :: MemoryAllocation DeviceSize -> DeviceArena -> Maybe DeviceArena
 freeFromDeviceArena (MemoryAllocation _ _ _ block) (DeviceArena h k sArena) =
   case returnBlock block sArena of
     Nothing -> Nothing
@@ -172,8 +181,8 @@ freeFromDeviceArena (MemoryAllocation _ _ _ block) (DeviceArena h k sArena) =
 -- | A generic function to choose arena sizes for various memory types. This defaults to 128MB or 1/4 of the total heap size, whichever is smaller
 genericChooseArenaSize :: PhysicalDeviceMemoryProperties -> MemoryTypeIndex -> DeviceSize
 genericChooseArenaSize props memTypeIndex =
-  let (MemoryType memFlags heapIx) = (memoryTypes props) ! (fromIntegral memTypeIndex)
-      (MemoryHeap heapSize heapFlags) = (memoryHeaps props) ! (fromIntegral heapIx)
+  let (MemoryType _memFlags heapIx) = memoryTypes props ! fromIntegral memTypeIndex
+      (MemoryHeap heapSize _heapFlags) = memoryHeaps props ! fromIntegral heapIx
       defaultMemorySize = 134217728 :: DeviceSize  -- 128M
   in
     min defaultMemorySize (heapSize `div` 4)

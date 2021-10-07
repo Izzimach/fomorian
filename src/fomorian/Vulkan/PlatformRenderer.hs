@@ -21,8 +21,7 @@ import Fomorian.NeutralSceneTarget
 
 import Fomorian.Vulkan.WindowBundle
 import Fomorian.Vulkan.SwapChainEtc
-import Fomorian.Vulkan.VulkanResources
-import Fomorian.Vulkan.Example (InFlightTracker, mkInFlightTracker, renderFrame, cMAX_FRAMES_IN_FLIGHT)
+import Fomorian.Vulkan.Example 
 
 import Fomorian.PlatformRenderer
 
@@ -40,6 +39,7 @@ vulkanWrapRender (w,h) wrapped = do
                      "Vulkan App"  -- application name
                      "Vulkan Test" -- window title
                       Nothing      -- allocator
+                      4            -- auxiliary queue count
                       False        -- enable debug validation layers?
   withWindowBundle initConfig $ \windowBundle -> do
     let win = windowHandle windowBundle

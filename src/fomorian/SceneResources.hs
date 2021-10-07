@@ -120,9 +120,9 @@ data VertexAttribute =
 data GeometryResource b i atr =
   GeometryResource {
     vBuffer :: b,
-    indexBuffer :: (Maybe i),
+    indexBuffer :: Maybe i,
     elementCount :: Int,
-    attributeMap ::  (M.Map String atr)
+    attributeMap :: M.Map String atr
   }
   deriving (Eq, Show)
 
@@ -142,7 +142,7 @@ vertex3ToGeometry f3s = GeometryResource v3s Nothing (length f3s) attribs
 v3IndexToGeometry :: [V3 Float] -> [Int] -> GeometryResource [V3 Float] [Int] VertexAttribute
 v3IndexToGeometry v3s ixs = GeometryResource v3s (Just ixs) (length v3s) attribs
   where
-    attribs = M.fromList $ [("position",VertexAttribute 3 VertexFloat 12 0)]
+    attribs = M.fromList [("position",VertexAttribute 3 VertexFloat 12 0)]
 
 flattenWavefrontVertex :: OBJBufferRecord -> [Float]
 flattenWavefrontVertex (OBJBufferRecord objR) =

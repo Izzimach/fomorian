@@ -10,16 +10,14 @@ module Fomorian.Vulkan.WindowBundle where
 
 import Control.Monad
 import Control.Exception
+import Control.Concurrent.STM
+import Control.Concurrent.STM.TMVar ()
 import Control.Monad.IO.Class
-import Control.Monad.Trans.Maybe
-import Control.Monad.Cont
 
 import Data.Bits
 import Data.ByteString (ByteString, packCString)
-import Data.Foldable (find)
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
-import Data.IORef
 import Data.Vector ((!), Vector, empty, findIndex, fromList, toList)
 import Data.Word (Word32, Word64)
 
@@ -31,15 +29,17 @@ import GHC.Int
 import qualified Graphics.UI.GLFW as GLFW
 
 import Vulkan.CStruct.Extends
-import Vulkan.Core10 as VKCORE
-import Vulkan.Core10.DeviceInitialization as VKDI
+import Vulkan.Core10 (Device, PhysicalDevice, Instance, AllocationCallbacks, Queue, DeviceCreateInfo, InstanceCreateInfo)
+import qualified Vulkan.Core10 as VK
+import qualified Vulkan.Zero as VZ
 import Vulkan.Extensions.VK_EXT_debug_utils
 import Vulkan.Extensions.VK_EXT_validation_features
 import Vulkan.Extensions.VK_KHR_surface as VKSURFACE
 import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
-import Vulkan.Zero
 
 import Fomorian.Windowing
+import Fomorian.Vulkan.Resources.DeviceMemoryTypes
+import Fomorian.Vulkan.Resources.DeviceMemoryAllocator
 
 -- | This is a C function used as a callback to handle the vulkan validation messages.
 --   Note that since vulkan calls are unsafe by default you can't write a debug callback in Haskell.
@@ -62,11 +62,12 @@ data WindowInitConfig = WindowInitConfig {
   }
   deriving (Show)
 
--- | The 'WindowBundle' holds most of the data that gets created in Vulkan boilerplate, such as the instance, device, surface, etc.
+-- | The 'WindowBundle' holds most of the top-level data that gets created in Vulkan boilerplate, such as the instance, device, surface, etc.
 data WindowBundle = WindowBundle {
     vulkanInstance :: Instance,
     windowHandle :: GLFW.Window,
     vulkanSurface :: SurfaceKHR,
+    memoryManager :: TMVar (MemoryAllocatorState AbstractMemoryType),
     vulkanDeviceBundle :: DeviceBundle
     --swapChainRef :: IORef SwapChainEtc
   }
@@ -78,10 +79,13 @@ data DeviceBundle = DeviceBundle
     physicalDeviceHandle :: PhysicalDevice,
     -- | Queue to use for graphics drawing commands
     graphicsQueue :: Queue,
+    graphicsQueueFamilyIndex :: Word32,
     -- | Queue to use for presenting the buffer to a surface
     presentQueue :: Queue,
+    presentQueueFamilyIndex :: Word32,
     -- | Extra lower-priority queues, usually used by the loader for transfer of resources between host and device memory.
-    auxiliaryQueues :: [Queue]
+    auxiliaryQueues :: [Queue],
+    auxiliaryQueuesFamilyIndex :: Word32
   }
   deriving (Eq, Show)
 
@@ -96,10 +100,11 @@ withWindowBundle config wrapped = bracket startBundle endBundle goBundle
       let createInfo = makeInstanceCreateInfo config glfwExtensions
       let allocator = userAllocator config
       let auxQueueCount = fromIntegral $ auxiliaryQueueCount config
-      withInstance createInfo allocator bracket $ \vkInstance -> do
+      VK.withInstance createInfo allocator bracket $ \vkInstance -> do
         withSurface vkInstance window $ \vkSurface -> do
           withPickAndMakeDevice vkInstance vkSurface auxQueueCount allocator $ \deviceBundle -> do
-            wrapped (WindowBundle vkInstance window vkSurface deviceBundle)
+            withMemoryAllocator (deviceHandle deviceBundle) (physicalDeviceHandle deviceBundle) $ \memManager ->
+              wrapped (WindowBundle vkInstance window vkSurface memManager deviceBundle)
 
 
 -- | Given a config, create an InstanceCreateInfo. Debug and validation structs are always there because of how
@@ -111,7 +116,7 @@ makeInstanceCreateInfo :: WindowInitConfig -> [ByteString] -> InstanceCreateInfo
 makeInstanceCreateInfo config baseExtensions =
   let debugExtensionStruct =
         DebugUtilsMessengerCreateInfoEXT
-          zero
+          VZ.zero
           (DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT .|. DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
           (DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT .|. DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT)
           debugCallbackPtr
@@ -129,11 +134,11 @@ makeInstanceCreateInfo config baseExtensions =
                       then baseExtensions <> [EXT_VALIDATION_FEATURES_EXTENSION_NAME, EXT_DEBUG_UTILS_EXTENSION_NAME]
                       else baseExtensions
   in
-    InstanceCreateInfo
+    VK.InstanceCreateInfo
       () -- pNext
-      zero -- flags
+      VZ.zero -- flags
       ( Just $
-          ApplicationInfo
+          VK.ApplicationInfo
             (Just (encodeUtf8 (appName config))) -- application name
             1 -- application version
             (Just ("fomorian" :: ByteString)) -- engine name
@@ -157,18 +162,18 @@ withSurface inst wid goSurface = bracket startSurface endSurface goSurface
   where
     startSurface = do
       alloca @Word64 $ \pSurface -> do
-        result <- (GLFW.createWindowSurface (instanceHandle inst) wid nullPtr pSurface :: IO GHC.Int.Int32)
-        if (result < 0)
+        result <- (GLFW.createWindowSurface (VK.instanceHandle inst) wid nullPtr pSurface :: IO GHC.Int.Int32)
+        if result < 0
           then fail "Could not create window surface"
-          else fmap SurfaceKHR $ peek @Word64 pSurface
+          else SurfaceKHR <$> peek @Word64 pSurface
     endSurface surf = destroySurfaceKHR inst surf Nothing
 
 
 data DeviceAndQueues = DeviceAndQueues 
   {
     physicalHandle :: PhysicalDevice,
-    graphicsQueueFamilyIndex :: Word32,
-    presentQueueFamilyIndex :: Word32
+    graphicsQFamilyIndex :: Word32,
+    presentQFamilyIndex :: Word32
   }
   deriving (Eq, Show)
 
@@ -179,19 +184,21 @@ withPickAndMakeDevice vkInstance vkSurface auxQueueCount allocator wrapped = do
   case deviceConfig of
     Nothing -> error "No valid vulkan device found that supports a present queue for this surface."
     Just dq -> do
-      let deviceCreateInfo = makeDeviceCreateInfo dq 0
+      let deviceCreateInfo = makeDeviceCreateInfo dq (fromIntegral auxQueueCount)
       let physDevice = physicalHandle dq
-      withDevice physDevice deviceCreateInfo allocator bracket $ \vkDevice -> do
-        graphicsQ <- getDeviceQueue vkDevice (graphicsQueueFamilyIndex dq) 0
-        presentQ <- getDeviceQueue vkDevice (presentQueueFamilyIndex dq) 0
-        auxQs <- mapM (\ix -> getDeviceQueue vkDevice (graphicsQueueFamilyIndex dq) ix) [1..auxQueueCount]
-        wrapped (DeviceBundle vkDevice physDevice graphicsQ presentQ auxQs)
+      VK.withDevice physDevice deviceCreateInfo allocator bracket $ \vkDevice -> do
+        let gqIndex = graphicsQFamilyIndex dq
+        let pqIndex = presentQFamilyIndex dq
+        graphicsQ <- VK.getDeviceQueue vkDevice gqIndex 0
+        presentQ <- VK.getDeviceQueue vkDevice pqIndex 0
+        auxQs <- mapM (\ix -> VK.getDeviceQueue vkDevice gqIndex ix) [1..auxQueueCount]
+        wrapped (DeviceBundle vkDevice physDevice graphicsQ gqIndex presentQ pqIndex auxQs gqIndex)
 
 
 -- | pick a device that has both a graphics queue and a present queue for the given instance and surface
 pickDeviceAndQueues :: Instance -> SurfaceKHR -> IO (Maybe DeviceAndQueues)
 pickDeviceAndQueues inst surf = do
-  (_, devices) <- liftIO $ enumeratePhysicalDevices inst
+  (_, devices) <- liftIO $ VK.enumeratePhysicalDevices inst
   checkDevices (toList devices)
   where
     checkDevices [] = return Nothing
@@ -213,12 +220,12 @@ pickDeviceAndQueues inst surf = do
 findGraphicsQueueForDevice :: PhysicalDevice -> IO (Maybe Word32)
 findGraphicsQueueForDevice d =
   do
-    queues <- getPhysicalDeviceQueueFamilyProperties d
+    queues <- VK.getPhysicalDeviceQueueFamilyProperties d
     return $ fmap fromIntegral (findIndex hasGraphics queues)
   where
     hasGraphics q =
-      let (QueueFlagBits queueBits) = (queueFlags q)
-          (QueueFlagBits graphicsBit) = QUEUE_GRAPHICS_BIT
+      let (VK.QueueFlagBits queueBits) = VK.queueFlags q
+          (VK.QueueFlagBits graphicsBit) = VK.QUEUE_GRAPHICS_BIT
        in -- do a bitwise AND to check if this supports graphics
           (queueBits .&. graphicsBit) > 0
 
@@ -226,11 +233,11 @@ findGraphicsQueueForDevice d =
 --   supports the surface, or 'mzero' if there isn't one.
 findPresentQueueForDevice ::PhysicalDevice -> SurfaceKHR -> IO (Maybe Word32)
 findPresentQueueForDevice device surf = do
-  queueFamilyCount <- fmap length $ getPhysicalDeviceQueueFamilyProperties device
+  queueFamilyCount <- length <$> VK.getPhysicalDeviceQueueFamilyProperties device
   checkQueueIndex 0 (fromIntegral queueFamilyCount) surf device
   where
     checkQueueIndex ix count s d =
-      if (ix >= count)
+      if ix >= count
         then return Nothing
         else do
           l <- liftIO $ getPhysicalDeviceSurfaceSupportKHR d ix s
@@ -246,19 +253,35 @@ findPresentQueueForDevice device surf = do
 --   - No other features are enabled.
 makeDeviceCreateInfo :: DeviceAndQueues -> Int -> DeviceCreateInfo '[]
 makeDeviceCreateInfo (DeviceAndQueues _h gq pq) auxCount =
-  let queueInfo qx qs = SomeStruct $ DeviceQueueCreateInfo () (DeviceQueueCreateFlagBits 0) qx (fromList qs)
+  let queueInfo qx qs = SomeStruct $ VK.DeviceQueueCreateInfo () (VK.DeviceQueueCreateFlagBits 0) qx (fromList qs)
       -- the graphics queue CreateInfo needs to include any aux queues at a lower priority
-      graphicsQueueInfo = queueInfo gq ([1.0] ++ (replicate auxCount 0.5))
+      graphicsQueueInfo = queueInfo gq (1.0 : replicate auxCount 0.5)
       queueList =
-        if (gq == pq)
+        if gq == pq
           then [graphicsQueueInfo]
           else [graphicsQueueInfo, queueInfo pq [1.0]]
-      deviceFeatures = zero { samplerAnisotropy = True }
-   in DeviceCreateInfo
+      deviceFeatures = VZ.zero { VK.samplerAnisotropy = True }
+   in VK.DeviceCreateInfo
         ()
-        (DeviceCreateFlags 0)
-        (fromList (queueList)) -- queues
+        (VK.DeviceCreateFlags 0)
+        (fromList queueList) -- queues
         (fromList []) -- enabledLayerNames. don't think this is used anymore?
         (fromList [KHR_SWAPCHAIN_EXTENSION_NAME]) -- enabledExtensionNames
         (Just deviceFeatures) -- device features to enable
+
+withMemoryAllocator :: Device -> PhysicalDevice -> (TMVar (MemoryAllocatorState AbstractMemoryType) -> IO ()) -> IO ()
+withMemoryAllocator device phys = bracket (startMemoryAllocator device phys) endMemoryAllocator
+  where
+    startMemoryAllocator :: Device -> PhysicalDevice -> IO (TMVar (MemoryAllocatorState AbstractMemoryType))
+    startMemoryAllocator d pd = do
+      props <- VK.getPhysicalDeviceMemoryProperties pd
+      --putStrLn $ "startMemory Allocator: " Prelude.++ show props
+      let allocatorConfig = AllocatorConfig (genericChooseArenaSize props)
+      allocator <- mkMemoryAllocator d pd allocatorConfig
+      newTMVarIO allocator
+
+    endMemoryAllocator :: TMVar (MemoryAllocatorState AbstractMemoryType) -> IO ()
+    endMemoryAllocator memMVar = do
+      mem <- atomically $ takeTMVar memMVar
+      cleanupMemoryAllocator mem
 

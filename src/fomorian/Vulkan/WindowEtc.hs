@@ -16,10 +16,8 @@ module Fomorian.Vulkan.WindowEtc
 where
 
 import Control.Monad
-import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Maybe
-import Control.Monad.Cont
 
 import Data.Bits
 import Data.ByteString (ByteString)

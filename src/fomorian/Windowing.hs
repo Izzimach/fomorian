@@ -18,11 +18,13 @@ Functions to create/destroy a window and (optionally) create and bind an OpenGL 
 -} 
 module Fomorian.Windowing where
 
+import Control.Monad ( when )
+import Control.Concurrent
+import Control.Concurrent.STM
+
 import qualified Graphics.UI.GLFW as GLFW
 
 import qualified Graphics.Rendering.OpenGL as GL
-import Control.Concurrent
-import Control.Concurrent.STM
 
 import Fomorian.OpenGL.GLBoundThread
 
@@ -44,23 +46,18 @@ initWindow :: WindowInitData -> IO GLFW.Window
 initWindow (WindowInitData w h t o) = do
   _ <- GLFW.init
   GLFW.defaultWindowHints
-  if (o == NoOpenGL) then
-    GLFW.windowHint (GLFW.WindowHint'ClientAPI GLFW.ClientAPI'NoAPI)
-  else
-    return ()
+  when (o == NoOpenGL) $ GLFW.windowHint (GLFW.WindowHint'ClientAPI GLFW.ClientAPI'NoAPI)
   GLFW.windowHint (GLFW.WindowHint'ContextVersionMajor 4)
   GLFW.windowHint (GLFW.WindowHint'Resizable True)
   GLFW.windowHint (GLFW.WindowHint'OpenGLProfile GLFW.OpenGLProfile'Core)
   win <- GLFW.createWindow w h t Nothing Nothing
   case win of
     Nothing -> fail "Error initializing window"
-    Just windowID ->
-      if (o == UseOpenGL) then
-        do GLFW.makeContextCurrent win
-           GLFW.swapInterval 1      -- should wait for vsync, set to 0 to not wait
-           return windowID
-      else
-        do return windowID
+    Just windowID -> do
+      when (o == UseOpenGL) $ do
+        GLFW.makeContextCurrent win
+        GLFW.swapInterval 1      -- should wait for vsync, set to 0 to not wait
+      return windowID
 
 
 

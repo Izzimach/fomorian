@@ -1,4 +1,4 @@
-module Fomorian.Vulkan.DeviceMemoryTypes where
+module Fomorian.Vulkan.Resources.DeviceMemoryTypes where
 
 import Data.Bits
 import qualified Data.Map.Strict as M

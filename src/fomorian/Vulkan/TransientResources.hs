@@ -259,10 +259,10 @@ buildSimplePipeline device phy sampleCount allocator descriptorLayout swapchainI
           () -- next
           zero -- flags
           shaderStages -- stages
-          (Just (SomeStruct $ vertexStageInfo)) -- vertexInputState
+          (Just (SomeStruct vertexStageInfo)) -- vertexInputState
           (Just inputAssembly) -- inputAssemblyState
           Nothing -- tessellationState
-          (Just (SomeStruct $ initViewportState)) -- viewportState
+          (Just (SomeStruct initViewportState)) -- viewportState
           (SomeStruct rasterizerState) -- rasterizationState
           (Just (SomeStruct initMultisampleState)) -- multisampleState
           (Just depthStencil) -- depthStencilState
