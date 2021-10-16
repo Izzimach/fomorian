@@ -23,7 +23,6 @@ import Linear
 
 import Graphics.Rendering.OpenGL (GLfloat)
 
-import Data.Kind (Type)
 import Data.Row
 import Data.Row.Records
 

@@ -15,9 +15,8 @@ import Data.Row
 import Linear
 
 import Fomorian.SceneNode
-import Fomorian.SceneResources
-import Fomorian.SceneResources
-import Fomorian.CommonSceneNodes
+import Fomorian.SceneResources ( BasicDataSourceTypes, DataSource(DataSource) )
+
 
 -- | NeutralSceneTarget requires
 --   - (shader,geometry,textures) for invoke and

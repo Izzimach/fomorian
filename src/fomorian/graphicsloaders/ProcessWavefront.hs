@@ -12,7 +12,6 @@ module Fomorian.GraphicsLoaders.ProcessWavefront
     where
 
 
-import qualified Data.Either as E
 import Data.Maybe (fromMaybe)
 
 import qualified Data.Set as S
@@ -186,9 +185,9 @@ loadWavefrontOBJFile f = do
 {-|
    In ghci you can run 'x <- loadTestOBJ' to put the wavefront data into x
    This will produce an empty object if the file load fails.
--}
+
 loadTestOBJ :: IO WavefrontOBJ
 loadTestOBJ = do
   x <- fromFile "resources/geometry/testcube.obj"
   return $ E.fromRight emptyOBJ x
-
+-}

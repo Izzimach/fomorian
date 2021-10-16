@@ -14,21 +14,14 @@
 
 module Fomorian.OpenGL.OpenGLResources where
 
-import GHC.Generics
 
-import Control.Monad
-import Control.Concurrent
-import Control.Concurrent.Async.Pool
 
-import Data.Maybe (isJust)
 import Data.Row
 import Data.Row.Variants (view)
 import Data.Functor.Foldable
-import Data.Foldable (find)
 import qualified Data.Set as S
 import qualified Data.Map as M
 
-import Foreign.Storable (Storable, sizeOf)
 import Foreign.Ptr (nullPtr, plusPtr)
 import System.FilePath
 
@@ -44,7 +37,6 @@ import LoadUnload
 import Fomorian.SceneNode
 import Fomorian.NeutralSceneTarget
 import Fomorian.SceneResources
-import Fomorian.GraphicsLoaders.ProcessWavefront (OBJBufferRecord, loadWavefrontOBJFile)
 
 data OpenGLTarget
 
@@ -133,7 +125,7 @@ computeGLDependencies _ = return []
 loadGLResource :: DataSource GLDataSourceTypes -> [Resource GLResourceTypes] -> IO (Resource GLResourceTypes)
 loadGLResource (DataSource r) deps = 
   case (trial r #vertexarray) of
-    Right x -> loadBoundVertices deps
+    Right _ -> loadBoundVertices deps
     Left x -> loadBasicGLResource (DataSource x)
 
 unloadGLResource :: DataSource GLDataSourceTypes -> Resource GLResourceTypes -> IO ()
@@ -144,7 +136,7 @@ unloadGLResource _ (Resource r) = switch r $
   .+ (#boundVertices     .== unloadBoundVertices)
   where
      -- iBuf is a maybe, so use mapM to delete if it's a 'Just'
-    unloadVertexBuffer (GeometryResource vBuf iBuf vc _) = do GL.deleteObjectName vBuf; mapM_ GL.deleteObjectName iBuf
+    unloadVertexBuffer (GeometryResource vBuf iBuf _ _) = do GL.deleteObjectName vBuf; mapM_ GL.deleteObjectName iBuf
     unloadShaderProgram p = GL.deleteObjectName (GLUtil.program p)
     unloadTextureObject o = GL.deleteObjectName o
     unloadBoundVertices (vao,_s,_va) = GL.deleteObjectName vao     -- s and va are resources that get unloaded separately

@@ -28,16 +28,14 @@ module Fomorian.SceneResources
   )
   where
 
-import Control.Monad
 
 import Data.Hashable
-import Foreign.Storable (Storable, sizeOf)
+import Foreign.Storable (sizeOf)
 
 import qualified Data.ByteString.Lazy as B
 
 import Data.Row
 import Data.Row.Variants
-import Data.Hashable
 
 import qualified Data.Map.Strict as M
 
@@ -157,12 +155,12 @@ wavefrontGeometry fp = do
     case r of
       Left e -> error e
       Right (vertdata, indexdata) -> do
-        let stride = fromIntegral $ sizeOf (undefined :: OBJBufferRecord)
+        let str = fromIntegral $ sizeOf (undefined :: OBJBufferRecord)
         let floatSize = fromIntegral $ sizeOf (undefined :: Float)
         let attribs = M.fromList [
-              ("position",VertexAttribute 3 VertexFloat stride 0),
-              ("texCoord",VertexAttribute 2 VertexFloat stride (3*floatSize)),
-              ("normal",  VertexAttribute 3 VertexFloat stride (5*floatSize))
+              ("position",VertexAttribute 3 VertexFloat str 0),
+              ("texCoord",VertexAttribute 2 VertexFloat str (3*floatSize)),
+              ("normal",  VertexAttribute 3 VertexFloat str (5*floatSize))
               ]
         let rawVerts = concatMap flattenWavefrontVertex vertdata
         return $ GeometryResource rawVerts (Just indexdata) (length indexdata) attribs
