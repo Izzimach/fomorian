@@ -33,6 +33,7 @@ import Fomorian.Vulkan.VulkanMonads
 import Fomorian.Vulkan.Resources.DeviceMemoryTypes (AbstractMemoryType(..))
 import Fomorian.Vulkan.Resources.DeviceMemoryAllocator
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
+import qualified Vulkan.Core12 as VK
 
 
 --
@@ -64,6 +65,16 @@ loadGeometry geo = do
                    Just ib -> (Prelude.length ib)            `div` 3
   return (GeometryResource vertexBuffer iBuffer elements M.empty)
 
+
+
+
+
+makeUniformBuffer :: (InVulkanMonad effs) => DeviceSize -> Eff effs UBuffer
+makeUniformBuffer bufferSize = do
+  (b,alloc) <- makeBuffer bufferSize VK.BUFFER_USAGE_UNIFORM_BUFFER_BIT RequireHostVisible
+  return (UBuffer b alloc)
+
+
 -- | Allocate a chunk of memory using the allocator and bind a buffer to it.
 makeBuffer :: (InVulkanMonad effs) => DeviceSize -> BufferUsageFlags -> AbstractMemoryType -> Eff effs (Buffer, MemoryAllocation DeviceSize)
 makeBuffer bSize bUsage memType = do
@@ -76,7 +87,8 @@ makeBuffer bSize bUsage memType = do
   VK.bindBufferMemory d buf memHandle (blockOffset block)
   return (buf, allocResult)
 
--- | Allocate a new buffer and fill it with data 
+-- | Allocate a new buffer and fill it with data. The data is just an array of storable values, so it can be used for vertices, indices, etc.
+--
 -- right now the memory type is ignored and we always use 'RequireHostVisible'
 -- should redo to allow any memory type and use a staging buffer for GPU-only accessible memory
 --
@@ -105,6 +117,12 @@ destroyVBuffer (VBuffer buf alloc) = do
 
 destroyIBuffer :: (InVulkanMonad effs) => IBuffer -> Eff effs ()
 destroyIBuffer (IBuffer buf alloc) = do
+  d <- getDevice
+  VK.destroyBuffer d buf Nothing
+  deallocateV alloc
+
+destroyUBuffer :: (InVulkanMonad effs) => UBuffer -> Eff effs ()
+destroyUBuffer (UBuffer buf alloc) = do
   d <- getDevice
   VK.destroyBuffer d buf Nothing
   deallocateV alloc

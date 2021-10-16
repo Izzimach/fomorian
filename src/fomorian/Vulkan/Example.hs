@@ -17,7 +17,7 @@ import Data.Foldable
 import Data.IORef
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Data.Vector as V ((!), (//), Vector, fromList, empty)
+import Data.Vector as V ((!), (//), Vector, fromList, empty, singleton)
 import Data.Row
 
 import Foreign.Ptr
@@ -30,6 +30,7 @@ import AsyncLoader
 import qualified Graphics.UI.GLFW as GLFW
 import Vulkan.CStruct.Extends
 import Vulkan.Core10 as VK
+import Vulkan.Zero as VZ
 import Vulkan.Exception
 import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
 
@@ -39,6 +40,8 @@ import Fomorian.SimpleMemoryArena (MemoryAlignment(..))
 import qualified Fomorian.Vulkan.WindowBundle as WB
 
 import Fomorian.Vulkan.VulkanMonads
+import Fomorian.Vulkan.SwapchainCarousel
+import Fomorian.Vulkan.SwapchainBundle
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DeviceMemoryTypes
 import Fomorian.Vulkan.Resources.BoundCommandBuffer
@@ -194,7 +197,7 @@ runSomeVulkan = do
       if M.null loaded
       then retry
       else return loaded
-    pPrint resources
+    --pPrint resources
     -- fork off a queue submit thread using the aux queue
     let aQueue = head $ WB.auxiliaryQueues $ WB.vulkanDeviceBundle wb
     boundQueue <- aQueue `seq` forkBoundSubmitter wb aQueue
@@ -206,10 +209,32 @@ runSomeVulkan = do
       endCommandBuffer cBuf
 
     runM . runVulkanMonad wb $ do
-      depthBuf <- makeDepthBuffer (600,400) VK.SAMPLE_COUNT_1_BIT Nothing
-      unmakeDepthBuffer depthBuf Nothing
+      d <- getDevice
+      let gQ = WB.graphicsQueue $ WB.vulkanDeviceBundle wb
+      let gQIndex = WB.graphicsQueueFamilyIndex $ WB.vulkanDeviceBundle wb
+      let pQ = WB.presentQueue $ WB.vulkanDeviceBundle wb
+      let commandPoolInfo = CommandPoolCreateInfo VK.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT gQIndex
+      cPool <- VK.createCommandPool d commandPoolInfo Nothing
+      swc <- makeCarousel cPool gQ pQ 2 Nothing
+      forM_ [1..50] (\_ -> presentNextSlot swc (clearCmd swc))
+      flushCarousel swc
+      destroyCarousel swc
+      VK.destroyCommandPool d cPool Nothing
 
     endBoundSubmitter boundQueue
     endLoader loaderInfo
+  where
+    clearCmd swc cBuf frameBuf = do
+      beginCommandBuffer cBuf (CommandBufferBeginInfo () VZ.zero Nothing)
+      let rPass = swapchainRenderPass $ swapchainB swc
+      let windowExtent@(Extent2D w h) = VKSWAPCHAIN.imageExtent (relevantCreateInfo $ swapchainB swc)
+      let renderarea = Rect2D (Offset2D 0 0) windowExtent
+      let clearTo = fromList [Color (Float32 0 0 1 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
+      let viewport = Viewport 0.0 0.0 (fromIntegral w) (fromIntegral h) 0.0 1.0
+      cmdSetViewport cBuf 0 (singleton viewport)
+      cmdBeginRenderPass cBuf (RenderPassBeginInfo () rPass frameBuf renderarea clearTo) SUBPASS_CONTENTS_INLINE
+      cmdEndRenderPass cBuf
+      endCommandBuffer cBuf
+
 
 

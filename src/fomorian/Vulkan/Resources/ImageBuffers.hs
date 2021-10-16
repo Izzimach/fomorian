@@ -191,7 +191,6 @@ unmakeColorBuffer device (ColorBuffer cBuf cMem cView) allocator = do
 
 makeDepthBuffer ::  (InVulkanMonad effs) => (Int, Int) -> VK.SampleCountFlagBits -> Maybe VK.AllocationCallbacks -> Eff effs DepthBuffer
 makeDepthBuffer (w,h) numSamples allocator = do
-  device <- getDevice
   depthFormat <- findDepthFormat
   (img, iMem, imgView) <- makeImagePrimitives (w,h,1) numSamples depthFormat
                               VK.IMAGE_TILING_OPTIMAL
@@ -201,8 +200,8 @@ makeDepthBuffer (w,h) numSamples allocator = do
                               allocator
   return (DepthBuffer img iMem imgView)
 
-unmakeDepthBuffer :: (InVulkanMonad effs) => DepthBuffer -> Maybe VK.AllocationCallbacks -> Eff effs ()
-unmakeDepthBuffer (DepthBuffer img imgMem imgView) allocator = do
+destroyDepthBuffer :: (InVulkanMonad effs) => DepthBuffer -> Maybe VK.AllocationCallbacks -> Eff effs ()
+destroyDepthBuffer (DepthBuffer img imgMem imgView) allocator = do
   d <- getDevice
   VK.destroyImageView d imgView allocator
   VK.destroyImage d img allocator

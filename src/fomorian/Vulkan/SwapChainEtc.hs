@@ -94,7 +94,7 @@ generateSwapChainInfo (DeviceEtc d gq pq) s = do
       COMPOSITE_ALPHA_OPAQUE_BIT_KHR -- compositeAlpha
       presentingMode -- presentMode
       True -- clipped
-      NULL_HANDLE
+      NULL_HANDLE -- old swapchain
 
 -- | Creates a swapchain and passes an IORef to the wrapped user function. We provide an IORef because
 --   sometimes you have to recreate the swapchain in-place without restarting the program.

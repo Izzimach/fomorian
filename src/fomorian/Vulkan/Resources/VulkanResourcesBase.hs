@@ -69,6 +69,9 @@ type VulkanResourceTypes =
 
 data VBuffer = VBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
 data IBuffer = IBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
+data UBuffer = UBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
+
+
 data ColorBuffer = ColorBuffer Image (MemoryAllocation DeviceSize) ImageView deriving (Eq, Show)
 data DepthBuffer = DepthBuffer Image (MemoryAllocation DeviceSize) ImageView deriving (Eq, Show)
 

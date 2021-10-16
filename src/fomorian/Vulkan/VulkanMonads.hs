@@ -37,8 +37,6 @@ import qualified Vulkan.Zero as VZ
 data VulkanMonad r where
   AllocateV :: MemoryRequirements -> AbstractMemoryType -> VulkanMonad (MemoryAllocation DeviceSize)
   DeallocateV :: MemoryAllocation DeviceSize -> VulkanMonad ()
-  GetDevice :: VulkanMonad Device
-  GetPhysicalDevice :: VulkanMonad PhysicalDevice
   GetWindowBundle :: VulkanMonad WindowBundle
 
 type InVulkanMonad effs = (Member VulkanMonad effs, LastMember IO effs)
@@ -54,10 +52,10 @@ deallocateV allocation = send (DeallocateV allocation)
 
 -- | When in the loader monad you can run this to get the current vulkan device
 getDevice :: Member VulkanMonad effs => Eff effs Device
-getDevice = send GetDevice
+getDevice = Fomorian.Vulkan.WindowBundle.deviceHandle . vulkanDeviceBundle <$> getWindowBundle
 
 getPhysicalDevice :: Member VulkanMonad effs => Eff effs PhysicalDevice
-getPhysicalDevice = send GetPhysicalDevice
+getPhysicalDevice = Fomorian.Vulkan.WindowBundle.physicalDeviceHandle . vulkanDeviceBundle <$> getWindowBundle
 
 getWindowBundle :: Member VulkanMonad effs => Eff effs WindowBundle
 getWindowBundle = send GetWindowBundle
@@ -78,9 +76,6 @@ runVulkanMonad w = runReader w . vulkanMemToState
           wb <- ask
           sendM $ deallocateSTM (memoryManager wb) b
           return ()
-        -- hlint really wants me to write code like this?
-        GetDevice -> Fomorian.Vulkan.WindowBundle.deviceHandle . vulkanDeviceBundle <$> ask
-        GetPhysicalDevice -> Fomorian.Vulkan.WindowBundle.physicalDeviceHandle . vulkanDeviceBundle <$> ask
         GetWindowBundle -> ask
 
 
@@ -100,3 +95,4 @@ deallocateSTM memVar memBlock = do
   case freeResult of
     Nothing -> atomically $ putTMVar memVar memState
     Just memState' -> atomically $ putTMVar memVar memState'
+
