@@ -6,7 +6,7 @@ module Fomorian.SimpleMemoryArena (
   mkSimpleMemoryArena,
   allocBlock,
   returnBlock,
-  MemoryBlock,
+  MemoryBlock(..),
   blockOffset,
   blockSize,
   SimpleMemoryArena,

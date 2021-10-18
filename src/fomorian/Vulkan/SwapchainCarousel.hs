@@ -13,19 +13,24 @@
 module Fomorian.Vulkan.SwapchainCarousel where
 
 import Foreign.Ptr (nullPtr)
-import Data.Vector(Vector(..), fromList, singleton, (!))
+
+import Data.Vector (Vector(..), fromList, singleton, (!))
+import qualified Data.Vector as V
+
 import Data.IORef (IORef(..), newIORef, readIORef, modifyIORef)
 
 import Control.Monad.Freer
 
 
-import Vulkan.Core10 (Semaphore, Fence, CommandPool, CommandBuffer, Queue, Framebuffer)
+import Vulkan.Core10 (Semaphore, Fence, CommandPool, CommandBuffer, Queue, Framebuffer, DescriptorSet, DescriptorPool)
 import qualified Vulkan.Core10 as VK
 import qualified Vulkan.Zero as VZ
 import Vulkan.CStruct.Extends
 import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
 
 import Fomorian.Vulkan.VulkanMonads
+import Fomorian.Vulkan.Resources.DescriptorSets
+import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.SwapchainBundle
 
 data CarouselSlot =
@@ -34,7 +39,8 @@ data CarouselSlot =
     startSlotSemaphore :: Semaphore,
     endSlotSemaphore :: Semaphore,
     commandCompleted :: Fence,
-    slotCommandBuffer :: CommandBuffer
+    slotCommandBuffer :: CommandBuffer,
+    slotDescriptorSet :: DescriptorSet
   }
   deriving (Eq, Show)
 
@@ -46,37 +52,42 @@ data SwapchainCarousel =
     gfxQ     :: Queue,
     presentQ :: Queue,
     runSlots :: Vector CarouselSlot,
+    carouselDescriptorPool :: DescriptorPool,
     swapchainB :: SwapchainBundle
   }
 
 -- | Build relevant objects for the given swapchain
 makeCarousel :: (InVulkanMonad effs) => CommandPool -> Queue -> Queue -> Int -> Maybe SwapchainBundle -> Eff effs SwapchainCarousel
-makeCarousel cPool gQ pQ slotCount previousSwapchain = do
+makeCarousel cPool gQ pQ slotCount previousSwapchainBundle = do
   d <- getDevice
+  swapchain <- makeSwapchainBundle previousSwapchainBundle
   let allocInfo = VK.CommandBufferAllocateInfo cPool VK.COMMAND_BUFFER_LEVEL_PRIMARY (fromIntegral slotCount)
   cmdBuffers <- VK.allocateCommandBuffers d allocInfo
-  slots <- mapM makeSlot cmdBuffers
+  dPool <- makeDescriptorPool 10 Nothing
+  dSets <- makeDescriptorSets dPool (swapchainDescriptorLayout swapchain) slotCount
+  slots <- mapM makeSlot $ V.zip cmdBuffers dSets
   curSlotIndex <- sendM $ newIORef 0
-  swapchain <- makeSwapchainBundle previousSwapchain
-  return $ SwapchainCarousel curSlotIndex cPool gQ pQ slots swapchain
+  return $ SwapchainCarousel curSlotIndex cPool gQ pQ slots dPool swapchain
     where
-      makeSlot cBuf = do
+      makeSlot (cBuf,dSet) = do
         d <- getDevice
         let alloc = Nothing
         startSem <- VK.createSemaphore d (VK.SemaphoreCreateInfo () VZ.zero) alloc
         endSem <- VK.createSemaphore d (VK.SemaphoreCreateInfo () VZ.zero) alloc
         completedFence <- VK.createFence d (VK.FenceCreateInfo () VK.FENCE_CREATE_SIGNALED_BIT) alloc
-        return $ CarouselSlot startSem endSem completedFence cBuf
+        return $ CarouselSlot startSem endSem completedFence cBuf dSet
 
 destroyCarousel :: (InVulkanMonad effs) => SwapchainCarousel -> Eff effs ()
-destroyCarousel (SwapchainCarousel slotRef cP gQ pQ slots sb) = do
+destroyCarousel (SwapchainCarousel slotRef cP gQ pQ slots dPool sb) = do
   d <- getDevice
   mapM_ destroySlot slots
   let cBufs = fmap slotCommandBuffer slots
   VK.freeCommandBuffers d cP cBufs
+  -- don't need to destroy descriptor sets, they get destroyed when the pool is destroyed
+  unmakeDescriptorPool dPool Nothing
   destroySwapchainBundle sb
     where
-      destroySlot (CarouselSlot startSem endSem completedFence cBuf) = do
+      destroySlot (CarouselSlot startSem endSem completedFence cBuf _dSet) = do
         d <- getDevice
         let alloc = Nothing
         VK.destroySemaphore d startSem alloc
@@ -92,7 +103,7 @@ presentNextSlot swc f = do
   let swapHandle = swapchainHandle swapBundle
   let slotRef = nextSlot swc
   slotIndex <- sendM $ readIORef slotRef 
-  let (CarouselSlot startSem endSem cmdFence cmdBuf) = runSlots swc ! slotIndex
+  let (CarouselSlot startSem endSem cmdFence cmdBuf dSet) = runSlots swc ! slotIndex
   -- wait for the fence to make sure this slot is done
   fenceResult <- VK.waitForFences d (fromList [cmdFence]) True maxBound
   (_, imgIndex) <- VKSWAPCHAIN.acquireNextImageKHR d swapHandle maxBound startSem VK.NULL_HANDLE
@@ -111,6 +122,6 @@ presentNextSlot swc f = do
 flushCarousel :: (InVulkanMonad effs) => SwapchainCarousel -> Eff effs ()
 flushCarousel swc = do
   d <- getDevice
-  let fences = fmap (\(CarouselSlot _ _ f _) -> f) (runSlots swc)
+  let fences = fmap (\(CarouselSlot _ _ f _ _) -> f) (runSlots swc)
   _ <- VK.waitForFences d fences True maxBound
   return ()

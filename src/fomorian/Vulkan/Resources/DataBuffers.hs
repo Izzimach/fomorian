@@ -50,20 +50,20 @@ loadVertexData _deps _geo = do
   return $ Resource $ IsJust #vkGeometry undefined
 
 
-loadGeometry :: (InVulkanMonad effs, Storable x) => GeometryResource [x] [Int] VertexAttribute -> Eff effs (GeometryResource VBuffer IBuffer String)
+loadGeometry :: (InVulkanMonad effs, Storable x) => GeometryResource [x] [Int] VertexAttribute -> Eff effs (GeometryResource VBuffer IxBuffer String)
 loadGeometry geo = do
   d <- getDevice
   (vbuf,vmem) <- loadStaticBuffer (vBuffer geo) VK.BUFFER_USAGE_VERTEX_BUFFER_BIT PreferGPU
-  iBuffer <- case indexBuffer geo of
+  ixBuffer <- case indexBuffer geo of
                Nothing -> return Nothing
                Just iValues -> do
                  (ibuf,imem) <- loadStaticBuffer iValues VK.BUFFER_USAGE_INDEX_BUFFER_BIT PreferGPU
-                 return $ Just (IBuffer ibuf imem)
+                 return $ Just (IxBuffer ibuf imem)
   let vertexBuffer = (VBuffer vbuf vmem)
   let elements = case indexBuffer geo of
                    Nothing -> (Prelude.length (vBuffer geo)) `div` 3
                    Just ib -> (Prelude.length ib)            `div` 3
-  return (GeometryResource vertexBuffer iBuffer elements M.empty)
+  return (GeometryResource vertexBuffer ixBuffer elements M.empty)
 
 
 
@@ -103,10 +103,10 @@ loadStaticBuffer arrayData usage memType = do
   return (b,alloc)
 
 
-unloadGeometry :: (InVulkanMonad effs) => GeometryResource VBuffer IBuffer String -> Eff effs ()
+unloadGeometry :: (InVulkanMonad effs) => GeometryResource VBuffer IxBuffer String -> Eff effs ()
 unloadGeometry (GeometryResource vb ib _ _) = do
   destroyVBuffer vb
-  mapM_ destroyIBuffer ib
+  mapM_ destroyIxBuffer ib
   
 
 destroyVBuffer :: (InVulkanMonad effs) => VBuffer -> Eff effs ()
@@ -115,8 +115,8 @@ destroyVBuffer (VBuffer buf alloc) = do
   VK.destroyBuffer d buf Nothing
   deallocateV alloc
 
-destroyIBuffer :: (InVulkanMonad effs) => IBuffer -> Eff effs ()
-destroyIBuffer (IBuffer buf alloc) = do
+destroyIxBuffer :: (InVulkanMonad effs) => IxBuffer -> Eff effs ()
+destroyIxBuffer (IxBuffer buf alloc) = do
   d <- getDevice
   VK.destroyBuffer d buf Nothing
   deallocateV alloc

@@ -55,20 +55,27 @@ import Fomorian.Vulkan.WindowBundle
 import Fomorian.Vulkan.Resources.DeviceMemoryTypes (AbstractMemoryType(..))
 import Fomorian.Vulkan.Resources.DeviceMemoryAllocator
 
-import Vulkan.Core10 (Buffer, Device, MemoryRequirements(..), BufferUsageFlags, BufferCreateInfo(..), DeviceSize, Image, ImageView)
+import Vulkan.Core10 (Buffer, Device, MemoryRequirements(..), BufferUsageFlags, BufferCreateInfo(..), DeviceSize, DeviceMemory, Image, ImageView, Sampler)
 import qualified Vulkan.Core10 as VK
-import Vulkan.Zero as VZ
 
 type VulkanDataSourceTypes = BasicDataSourceTypes
   .+ ("placeholderSource" .== ())
   
 type VulkanResourceTypes =
-     ("vkGeometry" .==  GeometryResource VBuffer IBuffer String)
+     ("vkGeometry" .==  GeometryResource VBuffer IxBuffer String)
   .+ ("placeholderResource" .== Int)
   .+ ("textureImage" .== ColorBuffer)
 
+-- | Buffer for vertex data
 data VBuffer = VBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
-data IBuffer = IBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
+
+-- | Buffer for index data
+data IxBuffer = IxBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
+
+-- | Buffer for image data, including the imageview and sampler
+data ImageBuffer = ImageBuffer Image Int DeviceMemory ImageView Sampler
+
+-- | Buffer for uniforms
 data UBuffer = UBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
 
 

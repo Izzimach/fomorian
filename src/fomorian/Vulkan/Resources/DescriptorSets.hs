@@ -1,6 +1,12 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Fomorian.Vulkan.Resources.DescriptorSets where
+
+import Control.Monad.Freer
+import Control.Exception (bracket)
+
+import Data.Vector (Vector(..), empty, fromList)
 
 import Foreign.Marshal
 import Foreign.Ptr
@@ -8,7 +14,8 @@ import Foreign.Storable
 
 import Linear (V2 (..), V3 (..), V4(..), M44, identity, (!*!), mkTransformation, mkTransformationMat, Quaternion, axisAngle, lookAt, perspective, ortho, transpose)
 
-import Vulkan.Core10 as VK (Device)
+import Vulkan.Core10 (Device, Extent2D(..), DescriptorSet, DescriptorSetLayout, DescriptorPool, AllocationCallbacks)
+import qualified Vulkan.Core10 as VK
 import Vulkan.CStruct.Extends
 import Vulkan.Core10.MemoryManagement as VKMEM
 import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
@@ -16,6 +23,9 @@ import Vulkan.Zero as VZ
 
 import Fomorian.Vulkan.VulkanMonads
 import Fomorian.Vulkan.WindowBundle
+import Fomorian.Vulkan.Resources.DeviceMemoryAllocator
+import Fomorian.SimpleMemoryArena
+import Fomorian.Vulkan.Resources.VulkanResourcesBase
 
 
 data UniformBufferObject = UBO {
@@ -75,41 +85,47 @@ updateUBO ub elapsedTime (Extent2D width height) = do
 updateUniformBuffer :: (InVulkanMonad effs) => UBuffer -> UniformBufferObject -> Eff effs ()
 updateUniformBuffer (UBuffer _ alloc) newUniforms = do
   d <- getDevice
-  let (MemoryAllocation memHandle _ _ (MemoryBlock bSize bOffset)) = alloc
-  VK.withMappedMemory d memHandle bOffset bSize VZ.zero bracket $ \ptr -> poke (castPtr ptr) newUniforms
+  let (MemoryAllocation memHandle _ _ (MemoryBlock _ bSize bOffset)) = alloc
+  sendM $ VK.withMappedMemory d memHandle bOffset bSize VZ.zero bracket $ \ptr -> poke (castPtr ptr) newUniforms
 
 
-makeDescriptorPool :: Device -> Int -> Maybe AllocationCallbacks -> IO DescriptorPool
-makeDescriptorPool device count allocator = do
-  let uniformPoolSize = DescriptorPoolSize DESCRIPTOR_TYPE_UNIFORM_BUFFER (fromIntegral count)
-  let imagePoolSize = DescriptorPoolSize DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER (fromIntegral count)
-  let dCreateInfo = DescriptorPoolCreateInfo () zero (fromIntegral count) (fromList [uniformPoolSize, imagePoolSize])
-  createDescriptorPool device dCreateInfo allocator
+makeDescriptorPool :: (InVulkanMonad effs) => Int -> Maybe AllocationCallbacks -> Eff effs DescriptorPool
+makeDescriptorPool count allocator = do
+  d <- getDevice
+  let uniformPoolSize = VK.DescriptorPoolSize VK.DESCRIPTOR_TYPE_UNIFORM_BUFFER (fromIntegral count)
+  let imagePoolSize = VK.DescriptorPoolSize VK.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER (fromIntegral count)
+  let dCreateInfo = VK.DescriptorPoolCreateInfo () VZ.zero (fromIntegral count) (fromList [uniformPoolSize, imagePoolSize])
+  VK.createDescriptorPool d dCreateInfo allocator
 
-unmakeDescriptorPool :: Device -> DescriptorPool -> Maybe AllocationCallbacks -> IO ()
-unmakeDescriptorPool = destroyDescriptorPool
+unmakeDescriptorPool :: (InVulkanMonad effs) => DescriptorPool -> Maybe AllocationCallbacks -> Eff effs ()
+unmakeDescriptorPool dPool alloc = do
+  d <- getDevice
+  VK.destroyDescriptorPool d dPool alloc
 
 
-makeDescriptorSets :: Device -> DescriptorPool -> DescriptorSetLayout -> Int -> IO (Vector DescriptorSet)
-makeDescriptorSets device dPool dLayout count = do
+makeDescriptorSets :: (InVulkanMonad effs) => DescriptorPool -> DescriptorSetLayout -> Int -> Eff effs (Vector DescriptorSet)
+makeDescriptorSets dPool dLayout count = do
+  d <- getDevice
   let layouts = replicate count dLayout
-  let allocateInfo = DescriptorSetAllocateInfo () dPool (fromList layouts)
-  allocateDescriptorSets device allocateInfo
+  let allocateInfo = VK.DescriptorSetAllocateInfo () dPool (fromList layouts)
+  VK.allocateDescriptorSets d allocateInfo
 
 
 -- | Descriptor set are automatically freed when their pool is destroyed, so this function is optional
-unmakeDescriptorSets :: Device -> DescriptorPool -> Vector DescriptorSet -> IO ()
-unmakeDescriptorSets = freeDescriptorSets
+unmakeDescriptorSets :: (InVulkanMonad effs) => DescriptorPool -> Vector DescriptorSet -> Eff effs ()
+unmakeDescriptorSets dPool dSets = do
+  d <- getDevice
+  VK.freeDescriptorSets d dPool dSets
 
 
 
-syncDescriptorSet :: (InVulkanMonad effs) => UBuffer -> IMGBuffer -> DescriptorSet -> Eff effs ()
-syncDescriptorSet (UBuffer dBuf _) (IMGBuffer _ _ _ iView iSampler) dSet = do
+syncDescriptorSet :: (InVulkanMonad effs) => UBuffer -> ImageBuffer -> DescriptorSet -> Eff effs ()
+syncDescriptorSet (UBuffer dBuf _) (ImageBuffer _ _ _ iView iSampler) dSet = do
   d <- getDevice
   let bufferInfo = VK.DescriptorBufferInfo dBuf 0 (fromIntegral $ sizeOf (undefined :: UniformBufferObject))
-  let imageInfo = VK.DescriptorImageInfo iSampler iView IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-  let writeDescriptor1 = SomeStruct $ WriteDescriptorSet () dSet 0 0 1 DESCRIPTOR_TYPE_UNIFORM_BUFFER          empty (fromList [bufferInfo]) empty
-  let writeDescriptor2 = SomeStruct $ WriteDescriptorSet () dSet 1 0 1 DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER (fromList [imageInfo]) empty empty
-  updateDescriptorSets device (fromList [writeDescriptor1, writeDescriptor2]) empty
+  let imageInfo = VK.DescriptorImageInfo iSampler iView VK.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+  let writeDescriptor1 = SomeStruct $ VK.WriteDescriptorSet () dSet 0 0 1 VK.DESCRIPTOR_TYPE_UNIFORM_BUFFER          empty (fromList [bufferInfo]) empty
+  let writeDescriptor2 = SomeStruct $ VK.WriteDescriptorSet () dSet 1 0 1 VK.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER (fromList [imageInfo]) empty empty
+  VK.updateDescriptorSets d (fromList [writeDescriptor1, writeDescriptor2]) empty
 
 

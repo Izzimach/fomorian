@@ -26,6 +26,8 @@ import Fomorian.Vulkan.Resources.ImageBuffers (makeDepthBuffer, destroyDepthBuff
 import Fomorian.Vulkan.Resources.Pipeline
 import qualified Vulkan.Core10 as VK
 
+
+
 -- | Each image of the swapchain has a bunch of other related data: the ImageView, a Framebuffer, and maybe others?
 data SwapchainPerImageData = SwapchainPerImageData Image ImageView DepthBuffer Framebuffer
   deriving (Eq,Show)
@@ -62,7 +64,6 @@ makeSwapchainBundle previousSwapchain = do
   pipeline <- buildSimplePipeline (vm,fm) rPass pipelineLayout (VKSWAPCHAIN.imageExtent createInfo)
   perImage <- mapM (makePerImageData ext rPass fmt) newImages
   return $ SwapchainBundle createInfo newSwapchain rPass descriptorLayout pipelineLayout (vm,fm) pipeline perImage
-
   
 destroySwapchainBundle :: (InVulkanMonad effs) => SwapchainBundle -> Eff effs ()
 destroySwapchainBundle scBundle = do
@@ -76,6 +77,9 @@ destroySwapchainBundle scBundle = do
   VK.destroyRenderPass d (swapchainRenderPass scBundle) Nothing
   destroySwapchainKHR d (swapchainHandle scBundle) Nothing
 
+
+
+
 makePerImageData :: (InVulkanMonad effs) => Extent2D -> RenderPass -> Format -> Image -> Eff effs SwapchainPerImageData
 makePerImageData (Extent2D w h) rPass fmt img =
   let idSw = VK.COMPONENT_SWIZZLE_IDENTITY
@@ -87,7 +91,6 @@ makePerImageData (Extent2D w h) rPass fmt img =
     let (DepthBuffer _ _ depthImageView) = depthBuf
     frameBuf <- VK.createFramebuffer d (VK.FramebufferCreateInfo () VZ.zero rPass (fromList [imageView, depthImageView]) w h 1) Nothing
     return (SwapchainPerImageData img imageView depthBuf frameBuf)
-
 
 destroyPerImageData :: (InVulkanMonad effs) => SwapchainPerImageData -> Eff effs ()
 destroyPerImageData (SwapchainPerImageData _ imgView depthBuf frameBuf) = do

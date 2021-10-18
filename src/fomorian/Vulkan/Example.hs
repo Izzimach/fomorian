@@ -229,7 +229,7 @@ runSomeVulkan = do
       let rPass = swapchainRenderPass $ swapchainB swc
       let windowExtent@(Extent2D w h) = VKSWAPCHAIN.imageExtent (relevantCreateInfo $ swapchainB swc)
       let renderarea = Rect2D (Offset2D 0 0) windowExtent
-      let clearTo = fromList [Color (Float32 0 0 1 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
+      let clearTo = fromList [Color (Float32 1 0 0 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
       let viewport = Viewport 0.0 0.0 (fromIntegral w) (fromIntegral h) 0.0 1.0
       cmdSetViewport cBuf 0 (singleton viewport)
       cmdBeginRenderPass cBuf (RenderPassBeginInfo () rPass frameBuf renderarea clearTo) SUBPASS_CONTENTS_INLINE
