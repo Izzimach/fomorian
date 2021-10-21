@@ -62,7 +62,7 @@ type VulkanDataSourceTypes = BasicDataSourceTypes
   .+ ("placeholderSource" .== ())
   
 type VulkanResourceTypes =
-     ("vkGeometry" .==  GeometryResource VBuffer IxBuffer String)
+     ("vkGeometry" .==  GeometryResource VBuffer IxBuffer VertexAttribute)
   .+ ("placeholderResource" .== Int)
   .+ ("textureImage" .== ColorBuffer)
 
@@ -73,10 +73,15 @@ data VBuffer = VBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
 data IxBuffer = IxBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
 
 -- | Buffer for image data, including the imageview and sampler
-data ImageBuffer = ImageBuffer Image Int DeviceMemory ImageView Sampler
+data ImageBuffer = ImageBuffer Image Int (MemoryAllocation DeviceSize) ImageView Sampler
 
 -- | Buffer for uniforms
 data UBuffer = UBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
+
+-- | A temporary buffer to hold CPU-side data. Typically you create a CPU-accessible
+--   staging buffer, copy data into it on the CPU, and then transfer the data to a
+--   GPU-local buffer so the GPU can access it faster.
+data StagingBuffer = StagingBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
 
 
 data ColorBuffer = ColorBuffer Image (MemoryAllocation DeviceSize) ImageView deriving (Eq, Show)

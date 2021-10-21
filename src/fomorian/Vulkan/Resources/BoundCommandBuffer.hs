@@ -25,10 +25,21 @@
 module Fomorian.Vulkan.Resources.BoundCommandBuffer where
 
 import Control.Monad
+import Control.Monad.Freer
 import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Concurrent
 import Control.Exception
 import Control.Concurrent.STM
+    ( TMVar,
+      TChan,
+      atomically,
+      retry,
+      newTChan,
+      tryReadTChan,
+      writeTChan,
+      newEmptyTMVarIO,
+      putTMVar,
+      takeTMVar )
 
 import Data.Maybe (isJust)
 import Data.Row
@@ -42,17 +53,18 @@ import Data.Vector as V hiding (mapM_)
 import Foreign.Storable (Storable, sizeOf)
 import Foreign.Marshal.Array
 import Foreign.Ptr (nullPtr, plusPtr,castPtr)
+
 import System.FilePath
 
 -- vulkan core has a lot of common variables exposed like 'size' 'buffer' etc so we specifically import only what we need
-import Vulkan.Core10 (CommandBuffer, CommandPool, Fence, Queue, SubmitInfo(..), CommandPoolCreateInfo(..))
+import Vulkan.Core10 (CommandBuffer, CommandPool, Fence, Queue, SubmitInfo(..), CommandPoolCreateInfo(..), commandBufferHandle)
 import qualified Vulkan.Core10 as VK
 import Vulkan.Zero as VZ ( Zero(zero) )
 import Vulkan.CStruct.Extends
 
 
 import Fomorian.Vulkan.WindowBundle
-
+import Fomorian.Vulkan.VulkanMonads
 
 
 newtype CommandBufferBuild = CommandBufferBuild (WindowBundle -> CommandPool -> Queue -> Fence -> IO ())
@@ -133,7 +145,10 @@ wrapBoundCommand cmd resultVar wb cPool qew fence = do
   let d = deviceHandle (vulkanDeviceBundle wb)
   cmdBuffers <- VK.allocateCommandBuffers d (VK.CommandBufferAllocateInfo cPool VK.COMMAND_BUFFER_LEVEL_PRIMARY 1)
   let cmdBuffer = cmdBuffers ! 0
+  let beginInfo = VK.CommandBufferBeginInfo () VK.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
+  VK.beginCommandBuffer cmdBuffer beginInfo
   result <- cmd cmdBuffer
+  VK.endCommandBuffer cmdBuffer
   VK.resetFences d (fromList [fence])
   let submitInfo = SomeStruct $ SubmitInfo () V.empty V.empty (V.fromList [VK.commandBufferHandle cmdBuffer]) V.empty
   VK.queueSubmit qew (fromList [submitInfo]) fence
@@ -142,3 +157,6 @@ wrapBoundCommand cmd resultVar wb cPool qew fence = do
   print "putTMVar"
   atomically $ putTMVar resultVar result
 
+-- | Generates a OneShotSubmitter monad that sends stuff to the bound thread
+runBoundOneShot :: (LastMember IO effs, Member VulkanMonad effs) => BoundQueueThread -> Eff (OneShotSubmitter ': effs) ~> Eff effs
+runBoundOneShot boundQ = interpret $ \(OneShotCommand cmd) -> sendM $ awaitCommandBuffer boundQ cmd

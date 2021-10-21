@@ -11,12 +11,13 @@
 --   vulkan functions such as the device and physical device. Also provides a route to allocate/deallocate device memory.
 module Fomorian.Vulkan.VulkanMonads where
 
-
 import Control.Concurrent (forkOS)
 import Control.Concurrent.STM ( TMVar, atomically, putTMVar, takeTMVar )
 import Control.Exception (bracket)
 import Control.Monad.Freer as CMF
 import Control.Monad.Freer.Reader (Reader(..), ask, runReader)
+
+import Data.Vector ((!), singleton, empty, fromList)
 
 
 
@@ -27,13 +28,14 @@ import Fomorian.Vulkan.Resources.DeviceMemoryTypes (AbstractMemoryType(..))
 import Fomorian.Vulkan.Resources.DeviceMemoryAllocator
 
 
-import Vulkan.Core10 (Device, PhysicalDevice, MemoryRequirements(..), DeviceSize)
+import Vulkan.Core10 (Device, PhysicalDevice, MemoryRequirements(..), DeviceSize, commandBufferHandle)
 import qualified Vulkan.Core10 as VK
 import qualified Vulkan.Zero as VZ
+import Vulkan.CStruct.Extends ( SomeStruct(SomeStruct) )
 
 
 
--- | Loader monad. Load/unloads run in this monad for easy access to the vulkan device and memory allocator
+-- | The 'Vulkan Monad'. Provides access to a memory allocator and the basic top-level handles like instance, device, etc.
 data VulkanMonad r where
   AllocateV :: MemoryRequirements -> AbstractMemoryType -> VulkanMonad (MemoryAllocation DeviceSize)
   DeallocateV :: MemoryAllocation DeviceSize -> VulkanMonad ()
@@ -95,4 +97,34 @@ deallocateSTM memVar memBlock = do
   case freeResult of
     Nothing -> atomically $ putTMVar memVar memState
     Just memState' -> atomically $ putTMVar memVar memState'
+
+
+-- | This vulkan monad allows you to submit commands to a queue. The particulars of the commmand and queue (synchronization etc) are
+--   opaque; to enforce specific situations you should make a new effect.
+data OneShotSubmitter r where
+  OneShotCommand :: (VK.CommandBuffer -> IO a) -> OneShotSubmitter a
+
+oneShotCommand :: (Member OneShotSubmitter effs) => (VK.CommandBuffer -> IO a) -> Eff effs a
+oneShotCommand cmd = send (OneShotCommand cmd)
+
+
+
+-- A default implementation of OneShotSubmitter that just runs the command and waits until the command buffer finishes. Probably not too useful except as an example
+runOneShotSimple :: (LastMember IO effs, Member VulkanMonad effs) => VK.CommandPool -> VK.Queue -> VK.Fence -> Eff (OneShotSubmitter ': effs) ~> Eff effs
+runOneShotSimple cPool vkQ fence = interpret $ \(OneShotCommand cmd) -> do
+  d <- getDevice
+  let allocInfo = VK.CommandBufferAllocateInfo cPool VK.COMMAND_BUFFER_LEVEL_PRIMARY 1
+  cmdBuffers <- VK.allocateCommandBuffers d allocInfo
+  let cBuf = cmdBuffers ! 0
+  let beginInfo = VK.CommandBufferBeginInfo () VK.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
+  VK.beginCommandBuffer cBuf beginInfo
+  result <- sendM $ cmd cBuf
+  VK.endCommandBuffer cBuf
+  let submitInfo = SomeStruct $ VK.SubmitInfo () empty empty (fromList [commandBufferHandle cBuf]) empty
+  VK.resetFences d (fromList [fence])
+  VK.queueSubmit vkQ (fromList [submitInfo]) fence
+  _ <- VK.waitForFences d (fromList [fence]) True maxBound
+  VK.freeCommandBuffers d cPool (singleton cBuf)
+  return result
+
 

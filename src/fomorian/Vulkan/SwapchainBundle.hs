@@ -228,8 +228,8 @@ readSPIRV dev shaderPath = do
 makeDescriptorSetLayout :: (InVulkanMonad effs) => Eff effs VK.DescriptorSetLayout
 makeDescriptorSetLayout = do
   let dBinding = VK.DescriptorSetLayoutBinding 0 VK.DESCRIPTOR_TYPE_UNIFORM_BUFFER 1 VK.SHADER_STAGE_VERTEX_BIT empty
-  let dBinding2 = VK.DescriptorSetLayoutBinding 1 VK.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER 1 VK.SHADER_STAGE_FRAGMENT_BIT empty
-  let createInfo = VK.DescriptorSetLayoutCreateInfo () VZ.zero (fromList [dBinding, dBinding2])
+  --let dBinding2 = VK.DescriptorSetLayoutBinding 1 VK.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER 1 VK.SHADER_STAGE_FRAGMENT_BIT empty
+  let createInfo = VK.DescriptorSetLayoutCreateInfo () VZ.zero (fromList [dBinding])
   d <- getDevice
   VK.createDescriptorSetLayout d createInfo Nothing
 

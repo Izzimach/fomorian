@@ -18,7 +18,7 @@ data AbstractMemoryType =
   --   If CPU code needs to write to buffers/textures this is the type to use.
   --   This memory will probably be slower for the GPU to access so you should use 'PreferGPU' for most things unless you need to constantly write to
   --   the memory region. To upload data you would
-  --   create a CPU-visible staging buffer, put the data in there, and then use a GPU command to transfer that data to some fast memory.
+  --   create a CPU-visible staging buffer, put the data in there, and then use a command buffer operation to transfer that data to some fast memory. (cmdCopyBuffer)
   | RequireHostVisible
   -- | Looks for memory local to the GPU (DEVICE_LOCAL) that's also accessible by the CPU. There is generally not a lot of this kind of memory available
   --   (if any is available!) so it should be used sparingly. If none of this memory is available it falls back on general HOST_VISIBLE memory.

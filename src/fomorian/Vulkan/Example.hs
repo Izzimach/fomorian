@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLabels #-}
@@ -19,6 +20,8 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Vector as V ((!), (//), Vector, fromList, empty, singleton)
 import Data.Row
+
+import Linear
 
 import Foreign.Ptr
 
@@ -42,15 +45,15 @@ import qualified Fomorian.Vulkan.WindowBundle as WB
 import Fomorian.Vulkan.VulkanMonads
 import Fomorian.Vulkan.SwapchainCarousel
 import Fomorian.Vulkan.SwapchainBundle
+import Fomorian.Vulkan.Resources.DescriptorSets (UniformBufferObject(..), zeroOnePerspective, updateUniformBuffer)
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DeviceMemoryTypes
 import Fomorian.Vulkan.Resources.BoundCommandBuffer
 import Fomorian.Vulkan.Resources.VulkanLoader
-import Fomorian.Vulkan.Resources.ImageBuffers
 
 -- legacy modules
-import Fomorian.Vulkan.WindowEtc
-import Fomorian.Vulkan.SwapChainEtc
+--import Fomorian.Vulkan.WindowEtc
+--import Fomorian.Vulkan.SwapChainEtc
 --import Fomorian.Vulkan.TransientResources
 
 {-
@@ -188,8 +191,12 @@ runSomeVulkan :: IO ()
 runSomeVulkan = do
   let cfg = WB.WindowInitConfig "app name" "title" Nothing 1 True
   WB.withWindowBundle cfg $ \wb -> do
-    loaderInfo <- startLoader wb
-    let sceneResources = LoaderRequest (S.fromList [DataSource $ IsJust #placeholderSource (), DataSource $ IsJust #coordinates2d [(0,0),(0,1),(1,1),(0,1)]])
+    -- fork off a queue submit thread using the aux queue
+    let aQueue = head $ WB.auxiliaryQueues $ WB.vulkanDeviceBundle wb
+    boundQueue <- aQueue `seq` forkBoundSubmitter wb aQueue
+    loaderInfo <- startLoader wb boundQueue
+    let basicVertSource = DataSource $ IsJust #coordinates2d [(0,0),(1,0),(1,1),(0,0),(1,1),(0,1)]
+    let sceneResources = LoaderRequest (S.fromList [DataSource $ IsJust #placeholderSource (), basicVertSource])
     atomically $ writeTVar (stmRequest loaderInfo) sceneResources
     -- wait until loader loads our stuff
     resources <- atomically $ do
@@ -197,44 +204,62 @@ runSomeVulkan = do
       if M.null loaded
       then retry
       else return loaded
-    --pPrint resources
-    -- fork off a queue submit thread using the aux queue
-    let aQueue = head $ WB.auxiliaryQueues $ WB.vulkanDeviceBundle wb
-    boundQueue <- aQueue `seq` forkBoundSubmitter wb aQueue
+    let (Just (Resource basicVertData)) = M.lookup basicVertSource resources
+    pPrint basicVertData
+    let vertices = case trial basicVertData #vkGeometry of
+                    Left _ -> error "Argh"
+                    Right g -> g
 
 
-    awaitCommandBuffer boundQueue $ \cBuf -> do
-      let beginInfo = CommandBufferBeginInfo () COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
-      beginCommandBuffer cBuf beginInfo
-      endCommandBuffer cBuf
+    let d = WB.deviceHandle $ WB.vulkanDeviceBundle wb
+    let gQ = WB.graphicsQueue $ WB.vulkanDeviceBundle wb
+    let gQIndex = WB.graphicsQueueFamilyIndex $ WB.vulkanDeviceBundle wb
+    let pQ = WB.presentQueue $ WB.vulkanDeviceBundle wb
+    VK.withCommandPool d (CommandPoolCreateInfo VK.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT gQIndex) Nothing bracket $ \gPool -> do
+      runM . runVulkanMonad wb $ do
+        swc <- makeCarousel gPool gQ pQ 2 Nothing
+        forM_ [1..50] (\x -> presentNextSlot swc (clearCmd swc vertices x))
+        flushCarousel swc
+        destroyCarousel swc
 
-    runM . runVulkanMonad wb $ do
-      d <- getDevice
-      let gQ = WB.graphicsQueue $ WB.vulkanDeviceBundle wb
-      let gQIndex = WB.graphicsQueueFamilyIndex $ WB.vulkanDeviceBundle wb
-      let pQ = WB.presentQueue $ WB.vulkanDeviceBundle wb
-      let commandPoolInfo = CommandPoolCreateInfo VK.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT gQIndex
-      cPool <- VK.createCommandPool d commandPoolInfo Nothing
-      swc <- makeCarousel cPool gQ pQ 2 Nothing
-      forM_ [1..50] (\_ -> presentNextSlot swc (clearCmd swc))
-      flushCarousel swc
-      destroyCarousel swc
-      VK.destroyCommandPool d cPool Nothing
-
-    endBoundSubmitter boundQueue
     endLoader loaderInfo
+    endBoundSubmitter boundQueue
   where
-    clearCmd swc cBuf frameBuf = do
-      beginCommandBuffer cBuf (CommandBufferBeginInfo () VZ.zero Nothing)
+    clearCmd swc vertGeo curTime cBuf frameBuf cSlot = do
+      let swapchainBundle = swapchainB swc
+      let windowExtent@(Extent2D w h) = VKSWAPCHAIN.imageExtent $ relevantCreateInfo swapchainBundle
+      -- set uniform buffer
+      let uBuf = slotUniformBuffer cSlot
+      updateUni uBuf (curTime * 0.016) windowExtent
       let rPass = swapchainRenderPass $ swapchainB swc
-      let windowExtent@(Extent2D w h) = VKSWAPCHAIN.imageExtent (relevantCreateInfo $ swapchainB swc)
       let renderarea = Rect2D (Offset2D 0 0) windowExtent
-      let clearTo = fromList [Color (Float32 1 0 0 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
+      let clearTo = V.fromList [Color (Float32 1 0 0 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
       let viewport = Viewport 0.0 0.0 (fromIntegral w) (fromIntegral h) 0.0 1.0
-      cmdSetViewport cBuf 0 (singleton viewport)
-      cmdBeginRenderPass cBuf (RenderPassBeginInfo () rPass frameBuf renderarea clearTo) SUBPASS_CONTENTS_INLINE
+
+      beginCommandBuffer cBuf (CommandBufferBeginInfo () VZ.zero Nothing)
+      cmdSetViewport cBuf 0 (V.singleton viewport)
+      cmdBeginRenderPass cBuf (RenderPassBeginInfo () rPass frameBuf renderarea clearTo) VK.SUBPASS_CONTENTS_INLINE
+
+      cmdBindPipeline cBuf VK.PIPELINE_BIND_POINT_GRAPHICS (swapchainPipeline swapchainBundle)
+      let (GeometryResource (VBuffer vBuf _) ixBuf elements _) = vertGeo
+      cmdBindVertexBuffers cBuf 0 (V.singleton vBuf) (V.singleton 0)
+      cmdBindDescriptorSets cBuf VK.PIPELINE_BIND_POINT_GRAPHICS (swapchainPipeLayout swapchainBundle) 0 (V.singleton $ slotDescriptorSet cSlot) V.empty
+      cmdDraw cBuf (fromIntegral elements * 3) 1 0 0
+
       cmdEndRenderPass cBuf
       endCommandBuffer cBuf
 
+
+
+updateUni :: (InVulkanMonad effs) => UBuffer -> Float -> Extent2D -> Eff effs ()
+updateUni ub elapsedTime (Extent2D width height) = do
+  -- our shaders use premultiply so matrices need to be transposed
+  let modelMatrix = transpose $ mkTransformation (axisAngle (V3 0 0 1) elapsedTime) (V3 (sin elapsedTime) 0 0.1)
+  let viewMatrix = transpose $ lookAt (V3 2 2 2) (V3 0 0 0) (V3 0 0 1)
+  let scaleMatrix sx sy sz = V4 (V4 sx 0 0 0) (V4 0 sy 0 0) (V4 0 0 sz 0) (V4 0 0 0 1)
+  let aspect = fromIntegral width / fromIntegral height
+  let projMatrix = transpose $ zeroOnePerspective (45 * 3.14159 / 180.0) aspect 0.1 10 !*! scaleMatrix 1 (-1) 1
+  let newUniforms = UBO modelMatrix viewMatrix projMatrix
+  updateUniformBuffer ub newUniforms
 
 

@@ -85,7 +85,7 @@ updateUBO ub elapsedTime (Extent2D width height) = do
 updateUniformBuffer :: (InVulkanMonad effs) => UBuffer -> UniformBufferObject -> Eff effs ()
 updateUniformBuffer (UBuffer _ alloc) newUniforms = do
   d <- getDevice
-  let (MemoryAllocation memHandle _ _ (MemoryBlock _ bSize bOffset)) = alloc
+  let (MemoryAllocation memHandle _ _ (MemoryBlock _ bOffset bSize)) = alloc
   sendM $ VK.withMappedMemory d memHandle bOffset bSize VZ.zero bracket $ \ptr -> poke (castPtr ptr) newUniforms
 
 

@@ -23,7 +23,6 @@ import Control.Monad.Freer
 import Control.Monad.Freer.Reader (Reader(..), ask, runReader)
 
 import Data.Maybe (isJust)
-import Data.Row
 import Data.Word
 import Data.Row
 import Data.Row.Variants (view)
@@ -51,11 +50,11 @@ import Fomorian.GraphicsLoaders.ProcessWavefront (OBJBufferRecord, loadWavefront
 
 import Fomorian.Vulkan.WindowBundle
 import Fomorian.Vulkan.VulkanMonads
+import Fomorian.Vulkan.Resources.BoundCommandBuffer
 import Fomorian.Vulkan.Resources.DeviceMemoryTypes (AbstractMemoryType(..))
 import Fomorian.Vulkan.Resources.DeviceMemoryAllocator
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DataBuffers
-import Fomorian.Vulkan.Resources.ImageBuffers
 
 
 import Vulkan.Core10 (Buffer, Device, MemoryRequirements(..), BufferUsageFlags, BufferCreateInfo(..), DeviceSize)
@@ -75,9 +74,9 @@ computeVulkanResourceDependencies _wb (DataSource d) = switch d $
       noDep :: a -> IO [DataSource VulkanDataSourceTypes]
       noDep _ = return []
 
-loadVulkanResource :: WindowBundle -> DataSource VulkanDataSourceTypes -> [Resource VulkanResourceTypes] -> IO (Resource VulkanResourceTypes)
-loadVulkanResource wb (DataSource r) deps =
-  let inMonad = runM . runVulkanMonad wb
+loadVulkanResource :: WindowBundle -> BoundQueueThread -> DataSource VulkanDataSourceTypes -> [Resource VulkanResourceTypes] -> IO (Resource VulkanResourceTypes)
+loadVulkanResource wb bQ (DataSource r) deps =
+  let inMonad = runM . runVulkanMonad wb . runBoundOneShot bQ
   in
     case trial r #placeholderSource of
       Right () -> return $ Resource $ IsJust #placeholderResource 0
@@ -89,9 +88,9 @@ loadVulkanResource wb (DataSource r) deps =
           .+ (#shaderBytes      .== undefined)
           .+ (#textureBytes     .== undefined)
 
-unloadVulkanResource :: WindowBundle -> DataSource VulkanDataSourceTypes -> Resource VulkanResourceTypes -> IO ()
-unloadVulkanResource wb _ (Resource r) = 
-  let inMonad = runM . runVulkanMonad wb
+unloadVulkanResource :: WindowBundle -> BoundQueueThread -> DataSource VulkanDataSourceTypes -> Resource VulkanResourceTypes -> IO ()
+unloadVulkanResource wb bQ _ (Resource r) = 
+  let inMonad = runM . runVulkanMonad wb . runBoundOneShot bQ
   in
     switch r $ 
          ((#vkGeometry          .== inMonad . unloadGeometry)
@@ -100,17 +99,17 @@ unloadVulkanResource wb _ (Resource r) =
         where
           noUnload _ = return ()
 
-vulkanLoaderConfig :: WindowBundle -> ResourceLoaderConfig (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)
-vulkanLoaderConfig wb =
+vulkanLoaderConfig :: WindowBundle -> BoundQueueThread -> ResourceLoaderConfig (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)
+vulkanLoaderConfig wb bQ =
   ResourceLoaderConfig {
-    loadIO = loadVulkanResource wb,
-    unloadIO = unloadVulkanResource wb,
+    loadIO = loadVulkanResource wb bQ,
+    unloadIO = unloadVulkanResource wb bQ,
     dependenciesIO = computeVulkanResourceDependencies wb
   }
 
-startLoader :: WindowBundle -> IO (ForkLoaderResult (LoaderRequest (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)) (LoaderResult (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)))
-startLoader wb = do
-  let cfg = vulkanLoaderConfig wb
+startLoader :: WindowBundle -> BoundQueueThread -> IO (ForkLoaderResult (LoaderRequest (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)) (LoaderResult (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)))
+startLoader wb bQ = do
+  let cfg = vulkanLoaderConfig wb bQ
   forkLoader 4 cfg
     
 endLoader :: ForkLoaderResult (LoaderRequest (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)) (LoaderResult (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)) -> IO ()

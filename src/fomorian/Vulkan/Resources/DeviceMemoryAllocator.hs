@@ -22,6 +22,7 @@ import Vulkan.Core10 as VKCORE
       DeviceSize,
       DeviceMemory,
       MemoryAllocateInfo(MemoryAllocateInfo) )
+import qualified Vulkan.Core10 as VK
 import Vulkan.Exception (VulkanException(..)) -- for catching memory allocation failures
 
 import Fomorian.Vulkan.Resources.DeviceMemoryTypes
@@ -93,7 +94,6 @@ freeFromCurrentArenas alloc@(MemoryAllocation _ _ arenaKey _) _device dag@(Devic
                       return $ Just $ addArenaToGroup dag arena'
 
 
-
 --
 -- Main allocator
 --
@@ -125,6 +125,12 @@ cleanupMemoryAllocator allocator = do
   let d = memDevice allocator
   mapM_ (freeAllArenas d) (arenaGroups allocator)
 
+isHostVisible :: MemoryAllocatorState AbstractMemoryType -> MemoryAllocation DeviceSize -> Bool
+isHostVisible allocator (MemoryAllocation _ memTypeIndex _ _) =
+  let memInfo = (memoryTypes $ memoryProps allocator) ! fromIntegral memTypeIndex
+  in VK.propertyFlags memInfo .&. VK.MEMORY_PROPERTY_HOST_VISIBLE_BIT /= zeroBits
+   
+
 allocateDeviceMemory :: MemoryAllocatorState AbstractMemoryType -> DeviceSize -> MemoryAlignment DeviceSize -> AbstractMemoryType -> Word32 -> IO (Maybe (MemoryAllocation DeviceSize), MemoryAllocatorState AbstractMemoryType)
 allocateDeviceMemory allocator memSize memAlignment memType allowedMemoryTypeBits = do
   let orderedMemoryTypes = lookupMemoryPriority (priorityMap allocator) memType
@@ -144,7 +150,7 @@ allocWithMemoryTypeIndex allocator size alignment memTypeIndex = do
   -- try to alloc from the group
   case allocateFromCurrentArenas size alignment arenaGroup of
     -- success, update the arena group in our allocator record
-    Just (alloc, arenaGroup') -> return $ (Just alloc, updateGroup allocator arenaGroup')
+    Just (alloc, arenaGroup') -> return (Just alloc, updateGroup allocator arenaGroup')
     Nothing -> do
       -- try to create a new arena and allocate from that
       let arenaSize = chooseArenaSize (configuration allocator) memTypeIndex
