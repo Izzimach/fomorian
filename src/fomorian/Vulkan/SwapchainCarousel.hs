@@ -68,7 +68,7 @@ makeCarousel cPool gQ pQ slotCount previousSwapchainBundle = do
   cmdBuffers <- VK.allocateCommandBuffers d allocInfo
   dPool <- makeDescriptorPool 10 Nothing
   dSets <- makeDescriptorSets dPool (swapchainDescriptorLayout swapchain) slotCount
-  slots <- mapM makeSlot $ V.zip cmdBuffers dSets
+  slots <- mapM makeSlot (V.zip cmdBuffers dSets)
   curSlotIndex <- sendM $ newIORef 0
   return $ SwapchainCarousel curSlotIndex cPool gQ pQ slots dPool swapchain
     where
@@ -82,6 +82,7 @@ makeCarousel cPool gQ pQ slotCount previousSwapchainBundle = do
         let uBufferInfo = VK.DescriptorBufferInfo uHandle 0 (fromIntegral $ sizeOf (undefined :: UniformBufferObject))
         let writeDescriptor1 = SomeStruct $ VK.WriteDescriptorSet () dSet 0 0 1 VK.DESCRIPTOR_TYPE_UNIFORM_BUFFER V.empty (fromList [uBufferInfo]) V.empty
         VK.updateDescriptorSets d (fromList [writeDescriptor1]) V.empty
+        --syncDescriptorSet uBuf imageBuf dSet
         return $ CarouselSlot startSem endSem completedFence cBuf dSet uBuf
 
 destroyCarousel :: (InVulkanMonad effs) => SwapchainCarousel -> Eff effs ()
@@ -113,18 +114,22 @@ presentNextSlot swc f = do
   slotIndex <- sendM $ readIORef slotRef 
   let cSlot@(CarouselSlot startSem endSem cmdFence cmdBuf dSet uBuf) = runSlots swc ! slotIndex
   -- wait for the fence to make sure this slot is done
-  fenceResult <- VK.waitForFences d (fromList [cmdFence]) True maxBound
-  (_, imgIndex) <- VKSWAPCHAIN.acquireNextImageKHR d swapHandle maxBound startSem VK.NULL_HANDLE
-  let (SwapchainPerImageData _ _ _ fb) = swapchainImages swapBundle ! fromIntegral imgIndex
-  let submitInfo = SomeStruct $ VK.SubmitInfo () (singleton startSem) (fromList [VK.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT]) (fromList [VK.commandBufferHandle cmdBuf]) (fromList [endSem])
-  VK.resetFences d (fromList [cmdFence])
-  VK.resetCommandBuffer cmdBuf VZ.zero
-  f cmdBuf fb cSlot
-  VK.queueSubmit (gfxQ swc) (fromList [submitInfo]) cmdFence
-  let presentInfo = PresentInfoKHR () (fromList [endSem]) (fromList [swapHandle]) (fromList [imgIndex]) nullPtr
-  _ <- VKSWAPCHAIN.queuePresentKHR (presentQ swc) presentInfo
-  sendM $ modifyIORef slotRef (\x -> (x+1) `mod` (length (runSlots swc)))
-  return ()
+  (result, imgIndex) <- VKSWAPCHAIN.acquireNextImageKHR d swapHandle maxBound startSem VK.NULL_HANDLE
+  case result of
+    VK.SUCCESS -> do
+      fenceResult <- VK.waitForFences d (fromList [cmdFence]) True maxBound
+      let (SwapchainPerImageData _ _ _ fb) = swapchainImages swapBundle ! fromIntegral imgIndex
+      let submitInfo = SomeStruct $ VK.SubmitInfo () (singleton startSem) (fromList [VK.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT]) (fromList [VK.commandBufferHandle cmdBuf]) (fromList [endSem])
+      VK.resetFences d (fromList [cmdFence])
+      VK.resetCommandBuffer cmdBuf VZ.zero
+      f cmdBuf fb cSlot
+      VK.queueSubmit (gfxQ swc) (fromList [submitInfo]) cmdFence
+      let presentInfo = PresentInfoKHR () (fromList [endSem]) (fromList [swapHandle]) (fromList [imgIndex]) nullPtr
+      _ <- VKSWAPCHAIN.queuePresentKHR (presentQ swc) presentInfo
+      sendM $ modifyIORef slotRef (\x -> (x+1) `mod` (length (runSlots swc)))
+      return ()
+    _ -> do sendM $ print "cannot acquire image"
+            return ()
 
 -- | Wait for any frames currently being drawn to finish (or at least the command buffers)
 flushCarousel :: (InVulkanMonad effs) => SwapchainCarousel -> Eff effs ()

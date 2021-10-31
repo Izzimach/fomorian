@@ -44,7 +44,7 @@ data OpenGLCommand
 type instance (InvokeReq OpenGLCommand ir) = (HasType "shader" GLUtil.ShaderProgram ir,
                                                 HasType "vao" GL.VertexArrayObject ir,
                                                 HasType "vertexCount" GL.GLint ir,
-                                                HasType "indexBuffer" (Maybe (GL.BufferObject)) ir,
+                                                HasType "indexBuffer" (Maybe GL.BufferObject) ir,
                                                 HasType "textures" [GL.TextureObject] ir)
 type instance (DrawReq OpenGLCommand dr) = (HasType "modelMatrix" (M44 Float) dr,
                                                HasType "viewMatrix" (M44 Float) dr,

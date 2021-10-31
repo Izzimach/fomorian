@@ -25,7 +25,7 @@ import Fomorian.OpenGL.OpenGLResources
 import Fomorian.OpenGL.OpenGLCommand
 import Fomorian.PlatformRenderer
 
-import LoadUnload
+import STMLoader.LoadUnload
 
 import Control.Monad (unless)
 
@@ -43,7 +43,7 @@ type OuterAppRow resType =
 -- | Parameters stored as App state that persists between frames.
 type AppInfo resType = Rec (OuterAppRow resType)
 
-type OpenGLResType = LoadedResources (DataSource GLDataSourceTypes) (Resource GLResourceTypes)
+type OpenGLResType = ResourcesMap (DataSource GLDataSourceTypes) (Resource GLResourceTypes)
 
 resizeWindow :: IORef (AppInfo OpenGLResType) -> GLFW.WindowSizeCallback
 resizeWindow ref = \_ w h -> windowResizeEvent ref w h
@@ -60,7 +60,7 @@ initAppState :: WindowInitData -> GLFW.Window -> IO (IORef (AppInfo OpenGLResTyp
 initAppState (WindowInitData w h _ _) win = do
   let initialAppState =    (#window .== win)
                         .+ (#windowSize .== (w,h))
-                        .+ (#resources .== noLoadedResources)
+                        .+ (#resources .== noResources)
                         .+ (#curTime .== (0 :: Float))
                         .+ (#shouldTerminate .== False)
   appIORef <- newIORef initialAppState
@@ -113,7 +113,7 @@ renderLoop appref buildScene genFD = loop
       writeIORef appref appstate'
 
       -- generate the draw commands
-      let rawResources = OpenGLResources $ M.map value (resourceMap resources')
+      let rawResources = OpenGLResources $ M.map value (resourcesMap resources')
       let sceneCommand = oglToCommand rawResources sceneTarget
       let frameData = genFD appstate'
       renderOneFrame sceneCommand frameData

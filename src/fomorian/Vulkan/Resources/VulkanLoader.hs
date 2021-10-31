@@ -35,6 +35,7 @@ import Data.Vector as V hiding (mapM_)
 import Foreign.Storable (Storable, sizeOf)
 import Foreign.Marshal.Array
 import Foreign.Ptr (nullPtr, plusPtr,castPtr)
+
 import System.FilePath
 
 import Linear
@@ -55,6 +56,7 @@ import Fomorian.Vulkan.Resources.DeviceMemoryTypes (AbstractMemoryType(..))
 import Fomorian.Vulkan.Resources.DeviceMemoryAllocator
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DataBuffers
+import Fomorian.Vulkan.Resources.ImageBuffers (makeTextureImage, unmakeTextureImage)
 
 
 import Vulkan.Core10 (Buffer, Device, MemoryRequirements(..), BufferUsageFlags, BufferCreateInfo(..), DeviceSize)
@@ -80,22 +82,33 @@ loadVulkanResource wb bQ (DataSource r) deps =
   in
     case trial r #placeholderSource of
       Right () -> return $ Resource $ IsJust #placeholderResource 0
-      Left baseSource -> do
-        (Resource baseResult) <- loadBasicData (DataSource baseSource)
-        switch baseResult $
-             (#vertexPositions  .== inMonad . loadVertexPositions deps)
-          .+ (#vertexData       .== inMonad . loadVertexData deps)
-          .+ (#shaderBytes      .== undefined)
-          .+ (#textureBytes     .== undefined)
+      Left baseSource -> 
+        case trial baseSource #texturePath of
+          Right tp -> do t <- inMonad $ makeTextureImage ("resources" </> "textures" </> tp) Nothing
+                         return $ Resource $ IsJust #textureImage t
+          Left _ -> basicVulkanLoad wb bQ (DataSource baseSource)
+    where
+      basicVulkanLoad :: WindowBundle -> BoundQueueThread -> DataSource BasicDataSourceTypes -> IO (Resource VulkanResourceTypes)
+      basicVulkanLoad wb gQ baseSource = 
+        let inMonad = runM . runVulkanMonad wb . runBoundOneShot gQ
+        in do
+              (Resource baseResult) <- loadBasicData baseSource
+              switch baseResult $
+                   (#vertexPositions  .== inMonad . loadVertexPositions deps)
+                .+ (#vertexData       .== inMonad . loadVertexData deps)
+                .+ (#shaderBytes      .== undefined)
+                .+ (#textureBytes     .== undefined )
+
+        
 
 unloadVulkanResource :: WindowBundle -> BoundQueueThread -> DataSource VulkanDataSourceTypes -> Resource VulkanResourceTypes -> IO ()
 unloadVulkanResource wb bQ _ (Resource r) = 
   let inMonad = runM . runVulkanMonad wb . runBoundOneShot bQ
   in
-    switch r $ 
+    switch r 
          ((#vkGeometry          .== inMonad . unloadGeometry)
       .+ (#placeholderResource  .== noUnload)
-      .+ (#textureImage         .== noUnload))
+      .+ (#textureImage         .== inMonad . unmakeTextureImage ))
         where
           noUnload _ = return ()
 
@@ -110,7 +123,7 @@ vulkanLoaderConfig wb bQ =
 startLoader :: WindowBundle -> BoundQueueThread -> IO (ForkLoaderResult (LoaderRequest (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)) (LoaderResult (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)))
 startLoader wb bQ = do
   let cfg = vulkanLoaderConfig wb bQ
-  forkLoader 4 cfg
+  forkLoader 1 cfg
     
 endLoader :: ForkLoaderResult (LoaderRequest (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)) (LoaderResult (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)) -> IO ()
 endLoader loader = do

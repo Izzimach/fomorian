@@ -7,6 +7,7 @@ module Fomorian.Vulkan.Resources.Pipeline where
 import Control.Monad.Freer
 
 import Data.Bits
+import Data.Word (Word32)
 import qualified Data.Vector as V
 import Data.ByteString (readFile)
 
@@ -182,23 +183,17 @@ instance Storable OneVertex where
     pokeByteOff p 24 a3
 
 vertexDataBinding :: VertexInputBindingDescription
---vertexDataBinding = VertexInputBindingDescription 0 (fromIntegral $ sizeOf blankVertex) VERTEX_INPUT_RATE_VERTEX
--- use a V3 -only binding for now, eventually should look at the info in the resource geometry
-vertexDataBinding = VertexInputBindingDescription 0 (fromIntegral $ 3 *  sizeOf (0.0 :: Float)) VERTEX_INPUT_RATE_VERTEX
+vertexDataBinding = VertexInputBindingDescription 0 (fromIntegral $ sizeOf blankVertex) VERTEX_INPUT_RATE_VERTEX
 
 vertexInputAttrs :: [VertexInputAttributeDescription]
-{-vertexInputAttrs =
+vertexInputAttrs =
   [ (VertexInputAttributeDescription 0 0 FORMAT_R32G32B32_SFLOAT 0),
     (VertexInputAttributeDescription 1 0 FORMAT_R32G32B32_SFLOAT 12),
     (VertexInputAttributeDescription 2 0 FORMAT_R32G32_SFLOAT 24)
-  ]-}
-vertexInputAttrs =
-  [
-    (VertexInputAttributeDescription 0 0 FORMAT_R32G32B32_SFLOAT 0)
   ]
 
 -- Vertex data for drawing
-{-- vertexData :: [OneVertex]
+vertexData :: [OneVertex]
 vertexData =
   [ 
     (OneVertex (V3 (-0.5) (-0.5) 0.0) (V3 1.0 0.0 0.0) (V2 1.0 0.0)),
@@ -211,9 +206,10 @@ vertexData =
     (OneVertex (V3 0.5    0.5    (-0.5)) (V3 1.0 1.0 1.0) (V2 0.0 1.0)),
     (OneVertex (V3 (-0.5) (0.5)  (-0.5)) (V3 0.0 0.0 1.0) (V2 1.0 1.0))
   ]
+  
 
 indexData :: [Word32]
 indexData = [0, 1, 2, 2, 3, 0,
              4, 5, 6, 6, 7, 4]
---}
+
 

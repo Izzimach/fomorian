@@ -26,6 +26,7 @@ import Linear
 import Foreign.Ptr
 
 import Text.Pretty.Simple (pPrint)
+import System.FilePath ((</>))
 
 import LoadUnload
 import AsyncLoader
@@ -45,6 +46,8 @@ import qualified Fomorian.Vulkan.WindowBundle as WB
 import Fomorian.Vulkan.VulkanMonads
 import Fomorian.Vulkan.SwapchainCarousel
 import Fomorian.Vulkan.SwapchainBundle
+import Fomorian.Vulkan.Resources.Pipeline
+import Fomorian.Vulkan.Resources.ImageBuffers
 import Fomorian.Vulkan.Resources.DescriptorSets (UniformBufferObject(..), zeroOnePerspective, updateUniformBuffer)
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DeviceMemoryTypes
@@ -191,12 +194,18 @@ runSomeVulkan :: IO ()
 runSomeVulkan = do
   let cfg = WB.WindowInitConfig "app name" "title" Nothing 1 True
   WB.withWindowBundle cfg $ \wb -> do
+    let pd = WB.physicalDeviceHandle (WB.vulkanDeviceBundle wb)
+    deviceProps <- VK.getPhysicalDeviceProperties pd
+    let deviceLimits = VK.limits deviceProps
+    putStrLn $ "buffer-image granularity = " ++ show (bufferImageGranularity deviceLimits)
     -- fork off a queue submit thread using the aux queue
     let aQueue = head $ WB.auxiliaryQueues $ WB.vulkanDeviceBundle wb
     boundQueue <- aQueue `seq` forkBoundSubmitter wb aQueue
     loaderInfo <- startLoader wb boundQueue
-    let basicVertSource = DataSource $ IsJust #coordinates2d [(0,0),(1,0),(1,1),(0,0),(1,1),(0,1)]
-    let sceneResources = LoaderRequest (S.fromList [DataSource $ IsJust #placeholderSource (), basicVertSource])
+    let basicVertSource = DataSource $ IsJust #wavefrontPath "testcube.obj"
+    --let basicImageSource = DataSource $ IsJust #coordinates3d [(0,0,0),(1,0,0),(0,1,0)]
+    let basicImageSource = DataSource $ IsJust #texturePath "owl.png"
+    let sceneResources = LoaderRequest (S.fromList [DataSource $ IsJust #placeholderSource (), basicVertSource, basicImageSource])
     atomically $ writeTVar (stmRequest loaderInfo) sceneResources
     -- wait until loader loads our stuff
     resources <- atomically $ do
@@ -205,10 +214,15 @@ runSomeVulkan = do
       then retry
       else return loaded
     let (Just (Resource basicVertData)) = M.lookup basicVertSource resources
+    --let (Just (Resource basicImageData)) = M.lookup basicImageSource resources
     pPrint basicVertData
+    --pPrint basicImageData
     let vertices = case trial basicVertData #vkGeometry of
                     Left _ -> error "Argh"
                     Right g -> g
+    {-let imagez = case trial basicImageData #textureImage of
+                    Left _ -> error "argh! texture"
+                    Right t -> t-}
 
 
     let d = WB.deviceHandle $ WB.vulkanDeviceBundle wb
@@ -216,11 +230,11 @@ runSomeVulkan = do
     let gQIndex = WB.graphicsQueueFamilyIndex $ WB.vulkanDeviceBundle wb
     let pQ = WB.presentQueue $ WB.vulkanDeviceBundle wb
     VK.withCommandPool d (CommandPoolCreateInfo VK.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT gQIndex) Nothing bracket $ \gPool -> do
-      runM . runVulkanMonad wb $ do
-        swc <- makeCarousel gPool gQ pQ 2 Nothing
-        forM_ [1..50] (\x -> presentNextSlot swc (clearCmd swc vertices x))
-        flushCarousel swc
-        destroyCarousel swc
+        bracket (runM . runVulkanMonad wb $ makeCarousel gPool gQ pQ 2 Nothing) (\swc -> runM . runVulkanMonad wb $ do flushCarousel swc; destroyCarousel swc) $ \swc ->
+          runM . runVulkanMonad wb $ do
+            basicImage <- makeTextureImage ("resources" </> "textures" </> "owl.png") Nothing
+            forM_ [1..50] (\x -> presentNextSlot swc (clearCmd swc vertices x))
+            unmakeTextureImage basicImage
 
     endLoader loaderInfo
     endBoundSubmitter boundQueue
@@ -241,20 +255,21 @@ runSomeVulkan = do
       cmdBeginRenderPass cBuf (RenderPassBeginInfo () rPass frameBuf renderarea clearTo) VK.SUBPASS_CONTENTS_INLINE
 
       cmdBindPipeline cBuf VK.PIPELINE_BIND_POINT_GRAPHICS (swapchainPipeline swapchainBundle)
-      let (GeometryResource (VBuffer vBuf _) ixBuf elements _) = vertGeo
-      cmdBindVertexBuffers cBuf 0 (V.singleton vBuf) (V.singleton 0)
       cmdBindDescriptorSets cBuf VK.PIPELINE_BIND_POINT_GRAPHICS (swapchainPipeLayout swapchainBundle) 0 (V.singleton $ slotDescriptorSet cSlot) V.empty
-      cmdDraw cBuf (fromIntegral elements * 3) 1 0 0
+      
+      let (GeometryResource (VBuffer vBuf _) (Just (IxBuffer ixBuf _)) elements _) = vertGeo
+      cmdBindVertexBuffers cBuf 0 (V.singleton vBuf) (V.singleton 0)
+      cmdBindIndexBuffer cBuf ixBuf 0 INDEX_TYPE_UINT32
+      cmdDrawIndexed cBuf (fromIntegral $ elements * 3) 1 0 0 0
 
       cmdEndRenderPass cBuf
       endCommandBuffer cBuf
 
 
-
 updateUni :: (InVulkanMonad effs) => UBuffer -> Float -> Extent2D -> Eff effs ()
 updateUni ub elapsedTime (Extent2D width height) = do
   -- our shaders use premultiply so matrices need to be transposed
-  let modelMatrix = transpose $ mkTransformation (axisAngle (V3 0 0 1) elapsedTime) (V3 (sin elapsedTime) 0 0.1)
+  let modelMatrix = transpose $ mkTransformation (axisAngle (V3 0 0 1) (elapsedTime*5)) (V3 (sin elapsedTime) 0 0.1)
   let viewMatrix = transpose $ lookAt (V3 2 2 2) (V3 0 0 0) (V3 0 0 1)
   let scaleMatrix sx sy sz = V4 (V4 sx 0 0 0) (V4 0 sy 0 0) (V4 0 0 sz 0) (V4 0 0 0 1)
   let aspect = fromIntegral width / fromIntegral height

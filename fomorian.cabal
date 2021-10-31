@@ -59,32 +59,28 @@ library
   import: deps
   other-modules:
       Fomorian.CommonSceneNodes
-      Fomorian.ProcessWavefront
-      Fomorian.Sample
+      Fomorian.NeutralSceneTarget
+      Fomorian.PlatformRenderer
       Fomorian.SceneNode
-      Fomorian.OpenGLCommand
-      Fomorian.Windowing
       Fomorian.SceneResources
-      Fomorian.SimpleApp
-      Fomorian.OpenGLResources
+      Fomorian.SimpleMemoryArena
+      Fomorian.ThreadedApp
+      Fomorian.Windowing
+      Fomorian.OpenGL.GLBoundThread
+      Fomorian.OpenGL.OpenGLCommand
+      Fomorian.OpenGL.OpenGLResources
+      Fomorian.OpenGL.PlatformRenderer
+      Fomorian.GraphicsLoaders.ProcessWavefront
   hs-source-dirs: src
 
 executable example
   import: deps
   main-is: fomorian/Main.hs
   other-modules:
-      Fomorian.CommonSceneNodes
-      Fomorian.ProcessWavefront
-      Fomorian.Sample
-      Fomorian.SceneNode
-      Fomorian.OpenGLCommand
-      Fomorian.Windowing
-      Fomorian.SceneResources
-      Fomorian.SimpleApp
-      Fomorian.OpenGLResources
   build-depends: vulkan
   hs-source-dirs: src
   c-sources: csrc/VulkanCallback.c
+  ghc-options: -threaded -rtsopts
   include-dirs: /c/VulkanSDK/1.2.170.0/include
 
 

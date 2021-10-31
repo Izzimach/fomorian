@@ -9,16 +9,17 @@ import qualified Fomorian.Sample (testScene3d)
 import Fomorian.ThreadedApp
 import Fomorian.OpenGL.PlatformRenderer
 --import Fomorian.Vulkan.PlatformRenderer
+--import Fomorian.Vulkan.Example
 
 main :: IO ()
 main = do
-  --Fomorian.Sample.main
+  --Fomorian.Vulkan.Example.runSomeVulkan
   threadTest
 
-data AppState = AppState Int
+newtype AppState = AppState Int
 
 oneHundredFrames :: AppState -> (AppState, Bool)
-oneHundredFrames (AppState s) = (AppState (s+1), s > 100)
+oneHundredFrames (AppState s) = (AppState (s+1), s > 300)
 
 threadTest :: IO ()
 threadTest =

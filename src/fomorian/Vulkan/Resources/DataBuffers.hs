@@ -13,6 +13,7 @@ module Fomorian.Vulkan.Resources.DataBuffers where
 import Control.Concurrent.STM (atomically, readTMVar)
 
 import Data.Bits
+import Data.Word (Word32)
 import Data.Row
 import qualified Data.Map as M
 import qualified Data.Vector as V
@@ -48,25 +49,29 @@ loadVertexPositions _deps geo = do
   geo' <- loadGeometry geo
   return $ Resource $ IsJust #vkGeometry geo'
 
-loadVertexData :: [Resource VulkanResourceTypes] -> GeometryResource [Float] [Int] VertexAttribute -> Eff effs (Resource VulkanResourceTypes)
-loadVertexData _deps _geo = do
-  return $ Resource $ IsJust #vkGeometry undefined
+loadVertexData :: (InVulkanMonad effs, Member OneShotSubmitter effs) => [Resource VulkanResourceTypes] -> GeometryResource [Float] [Int] VertexAttribute -> Eff effs (Resource VulkanResourceTypes)
+loadVertexData _deps geo = do
+  geo' <- loadGeometry geo
+  return $ Resource $ IsJust #vkGeometry geo'
 
 
 loadGeometry :: (InVulkanMonad effs, Storable x, Member OneShotSubmitter effs) => GeometryResource [x] [Int] VertexAttribute -> Eff effs (GeometryResource VBuffer IxBuffer VertexAttribute)
 loadGeometry geo = do
   d <- getDevice
-  (vbuf,vmem) <- loadStaticBuffer (vBuffer geo) VK.BUFFER_USAGE_VERTEX_BUFFER_BIT PreferGPU
+  (vbuf,vmem) <- loadStaticBuffer (vBuffer geo) VK.BUFFER_USAGE_VERTEX_BUFFER_BIT RequireHostVisible --PreferGPU
   ixBuffer <- case indexBuffer geo of
                Nothing -> return Nothing
                Just iValues -> do
-                 (ibuf,imem) <- loadStaticBuffer iValues VK.BUFFER_USAGE_INDEX_BUFFER_BIT PreferGPU
+                 (ibuf,imem) <- loadStaticBuffer (fmap toW32 iValues) VK.BUFFER_USAGE_INDEX_BUFFER_BIT RequireHostVisible --PreferGPU
                  return $ Just (IxBuffer ibuf imem)
   let vertexBuffer = VBuffer vbuf vmem
   let elements = case indexBuffer geo of
                    Nothing -> Prelude.length (vBuffer geo) `div` 3
                    Just ib -> Prelude.length ib            `div` 3
   return (GeometryResource vertexBuffer ixBuffer elements (attributeMap geo))
+    where
+      toW32 :: Int -> Word32
+      toW32 = fromIntegral
 
 
 -- | Makes a single uniform buffer. These are always host visible since you'll probably dump stuff in there a lot.
@@ -93,7 +98,7 @@ loadStaticBuffer arrayData usage memType = do
   d <- getDevice
   let size = fromIntegral $ sizeOf (undefined :: x) * Prelude.length arrayData
   -- always make sure we can run a transfer command to this buffer, which we'll need if it's on device local memory
-  (b,alloc) <- makeBuffer size (usage .|. VK.BUFFER_USAGE_TRANSFER_DST_BIT) memType
+  (b,alloc) <- makeBuffer size (usage .|. VK.BUFFER_USAGE_TRANSFER_DST_BIT) RequireHostVisible --memType
   let (MemoryAllocation memHandle memTypeIndex _ block) = alloc
   memManagerVar <- memoryManager <$> getWindowBundle
   memManager <- sendM $ atomically $ readTMVar memManagerVar

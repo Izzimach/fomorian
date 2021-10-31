@@ -14,8 +14,8 @@ import Linear
 import Graphics.Rendering.OpenGL as GL
 import qualified Graphics.UI.GLFW as GLFW
 
-import LoadUnload
-import AsyncLoader
+import STMLoader.LoadUnload
+import STMLoader.AsyncLoader
 
 import Fomorian.Windowing as W
 import Fomorian.SceneNode
@@ -31,11 +31,12 @@ import Fomorian.PlatformRenderer
 --
 -- For a diagram of threads and data flow look at OpenGLFlow.svg
 
+type ErrorMessage = String
 
 data OpenGLRendererState =
   OpenGLRendererState {
     rendererBoundThread :: BoundGLThread GLFW.Window,
-    rendererLoader :: ForkLoaderResult (LoaderRequest (DataSource GLDataSourceTypes) (Resource GLResourceTypes)) (LoaderResult (DataSource GLDataSourceTypes) (Resource GLResourceTypes)),
+    rendererLoader :: AsyncLoader (DataSource GLDataSourceTypes) (Resource GLResourceTypes) ErrorMessage,
     openGLStats :: IORef RenderStats
   }
 
@@ -43,12 +44,13 @@ data OpenGLRendererState =
 --   loading and unloading to the OpenGL thread. We try to force the values using 'seq' to make thunk evaluation
 --   take place in the worker thread and not the OpenGL thread. There is only one OpenGL thread so we don't want to
 --   load it down with extra work evaluating thunks.
-threadedLoaderGLConfig :: BoundGLThread w -> ResourceLoaderConfig (DataSource GLDataSourceTypes) (Resource GLResourceTypes)
+threadedLoaderGLConfig :: BoundGLThread w -> LoadUnloadCallbacks (DataSource GLDataSourceTypes) (Resource GLResourceTypes) ErrorMessage
 threadedLoaderGLConfig glb =
-  ResourceLoaderConfig {
-    loadIO = (\l deps -> l `seq` deps `seq` submitGLComputationThrow glb (loadGLResource l deps)),
-    unloadIO = (\l r -> l `seq` r `seq` submitGLComputationThrow glb (unloadGLResource l r)),
-    dependenciesIO = computeGLDependencies
+  LoadUnloadCallbacks {
+    loadResource     = \l deps -> l `seq` deps `seq` submitGLComputationThrow glb (loadGLResource l deps),
+    unloadResource   = \res -> submitGLComputationThrow glb (unloadGLResource res),
+    findDependencies = computeGLDependencies,
+    processException = const Drop
     }
 
 openGLWrapRenderLoop :: (Int, Int) -> (OpenGLRendererState -> IO ()) -> IO ()
@@ -56,16 +58,17 @@ openGLWrapRenderLoop (w,h) wrapped = bracket startGL endGL wrapped
   where
     startGL = do
       let initData = WindowInitData w h "OpenGL Fomorian" UseOpenGL
-      glThread <- forkBoundGLThread (W.initWindow initData) (\win -> terminateWindow win)
+      glThread <- forkBoundGLThread (W.initWindow initData) terminateWindow
       -- spin up concurrent loader
-      loaderInfo <- forkLoader 4 (threadedLoaderGLConfig glThread)
+      let asyncConfig = AsyncLoaderConfig (threadedLoaderGLConfig glThread) 1 simpleThreadWrapper simpleThreadWrapper
+      loaderInfo <- startAsyncLoader asyncConfig ()
       win <- atomically $ takeTMVar (windowValue glThread)
       --appdata <- submitGLComputationThrow glThread $ initAppState initData win
       statsRef <- newIORef (RenderStats win (V2 w h) 0)
       return $ OpenGLRendererState glThread loaderInfo statsRef
 
     endGL (OpenGLRendererState glThread loaderInfo _) = do
-      shutdownLoader loaderInfo
+      shutdownAsyncLoader loaderInfo
       -- terminateWindow is already called when the boundGLThread exits, so don't call it here
       endBoundGLThread glThread
 
@@ -76,7 +79,7 @@ shouldEndProgram win = do
   p <- GLFW.getKey win GLFW.Key'Escape
   GLFW.pollEvents
   windowKill <- GLFW.windowShouldClose win
-  let shouldTerminate = (p == GLFW.KeyState'Pressed ||  windowKill)
+  let shouldTerminate = p == GLFW.KeyState'Pressed ||  windowKill
   return shouldTerminate
 
 -- | Given a scene graph, draw a single frame on an OpenGL canvas.
@@ -106,10 +109,10 @@ openGLRendererFunctions =
 
       -- generate new resource list and send to the loader
       let (GLDataSources sceneResources) = oglResourcesScene sceneTarget
-      atomically $ writeTVar (stmRequest loaderInfo) (LoaderRequest sceneResources)
+      newRequest loaderInfo sceneResources
       -- grab whatever stuff has been loaded. Probably not all of the stuff we sent to the loader
       -- will be loaded yet, just grab what we can
-      (LoaderResult resources') <- atomically $ readTVar (stmResult loaderInfo)
+      resources' <- getLoadedResources loaderInfo
       let rawResources = OpenGLResources resources'
 
       -- combine resources and OpenGLTarget scenegraph into an OpenGLCommand scenegraph and render that

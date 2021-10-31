@@ -65,6 +65,7 @@ initWindow (WindowInitData w h t o) = do
 -- | Close a currently-active window and then end the program.
 terminateWindow :: GLFW.Window -> IO ()
 terminateWindow windowID = do
+  print "About to destroy via GLFW"
   GLFW.destroyWindow windowID
   GLFW.terminate
 

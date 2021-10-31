@@ -196,7 +196,7 @@ checkSwapChainUsageAndTransform s =
         [ VK.IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
           VK.IMAGE_USAGE_TRANSFER_DST_BIT
         ]
-      checkBit = \bitX -> if (hasBits .&. bitX) == zeroBits then ["usage not supported: " ++ show bitX] else []
+      checkBit = \bitX -> if hasBits .&. bitX == zeroBits then ["usage not supported: " ++ show bitX] else []
       checks = concatMap checkBit needBits
       allBits = foldl1 (.|.) needBits
    in --transformBits = supportedTransforms s
@@ -227,9 +227,9 @@ readSPIRV dev shaderPath = do
 
 makeDescriptorSetLayout :: (InVulkanMonad effs) => Eff effs VK.DescriptorSetLayout
 makeDescriptorSetLayout = do
-  let dBinding = VK.DescriptorSetLayoutBinding 0 VK.DESCRIPTOR_TYPE_UNIFORM_BUFFER 1 VK.SHADER_STAGE_VERTEX_BIT empty
-  --let dBinding2 = VK.DescriptorSetLayoutBinding 1 VK.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER 1 VK.SHADER_STAGE_FRAGMENT_BIT empty
-  let createInfo = VK.DescriptorSetLayoutCreateInfo () VZ.zero (fromList [dBinding])
+  let dBinding1 = VK.DescriptorSetLayoutBinding 0 VK.DESCRIPTOR_TYPE_UNIFORM_BUFFER 1 VK.SHADER_STAGE_VERTEX_BIT empty
+  let dBinding2 = VK.DescriptorSetLayoutBinding 1 VK.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER 1 VK.SHADER_STAGE_FRAGMENT_BIT empty
+  let createInfo = VK.DescriptorSetLayoutCreateInfo () VZ.zero (fromList [dBinding1,dBinding2])
   d <- getDevice
   VK.createDescriptorSetLayout d createInfo Nothing
 

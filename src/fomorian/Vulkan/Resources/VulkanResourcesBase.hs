@@ -64,7 +64,7 @@ type VulkanDataSourceTypes = BasicDataSourceTypes
 type VulkanResourceTypes =
      ("vkGeometry" .==  GeometryResource VBuffer IxBuffer VertexAttribute)
   .+ ("placeholderResource" .== Int)
-  .+ ("textureImage" .== ColorBuffer)
+  .+ ("textureImage" .== ImageBuffer)
 
 -- | Buffer for vertex data
 data VBuffer = VBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
@@ -73,7 +73,7 @@ data VBuffer = VBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
 data IxBuffer = IxBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)
 
 -- | Buffer for image data, including the imageview and sampler
-data ImageBuffer = ImageBuffer Image Int (MemoryAllocation DeviceSize) ImageView Sampler
+data ImageBuffer = ImageBuffer Image Int (MemoryAllocation DeviceSize) ImageView Sampler deriving (Eq, Show)
 
 -- | Buffer for uniforms
 data UBuffer = UBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)

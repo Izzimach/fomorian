@@ -9,16 +9,19 @@
 -- | Module to handle image buffers: Image, ImageView, FrameBuffer, an alloc/dealloc of memory
 module Fomorian.Vulkan.Resources.ImageBuffers where
 
-import Data.Bits ((.&.), (.|.))
+
+import Data.Bits as Bits ((.&.), (.|.), zeroBits)
 import Data.Row
 import qualified Data.Map as M
 import Data.Vector ((!))
 import qualified Data.Vector as V
+import qualified Data.Vector.Storable as VST
 import Data.Word (Word8)
 
 import Linear
 
 import Control.Exception
+import Control.Monad (forM_)
 import Control.Monad.Freer as CMF
 
 import Foreign.Storable
@@ -46,10 +49,10 @@ import Fomorian.Vulkan.Resources.VulkanResourcesBase
 --
 -- images
 --
-{-
-loadImageFromFile :: FilePath -> IO (Either String (JUICY.Image JUICY.PixelRGBA8, Int, Int))
+
+loadImageFromFile :: (LastMember IO effs) => FilePath -> Eff effs (Either String (JUICY.Image JUICY.PixelRGBA8, Int, Int))
 loadImageFromFile filePath = do
-  dImage <- JUICY.readImage filePath
+  dImage <- sendM $ JUICY.readImage filePath
   case dImage of
     Left errorMessage -> return $ Left $ "Error loading file " ++ filePath ++ ": " ++ errorMessage  
     Right img -> do
@@ -62,7 +65,6 @@ loadImageFromFile filePath = do
     toRGBA8 (JC.ImageRGBA8 img) = JC.promoteImage img
     toRGBA8 (JC.ImageRGB8 img)  = JC.promoteImage img
     toRGBA8 _                   = undefined
--}
 
 
 makeImagePrimitives :: (InVulkanMonad effs) => (Int,Int,Int) -> VK.SampleCountFlagBits -> Format -> ImageTiling -> VK.ImageUsageFlags -> VK.ImageAspectFlags -> VK.MemoryPropertyFlags -> Maybe VK.AllocationCallbacks -> Eff effs (Image,MemoryAllocation DeviceSize, ImageView)
@@ -83,17 +85,20 @@ makeImagePrimitives (w,h,mipmaps) numSamples imgFormat imgTiling imgUsage imgAsp
                   VK.IMAGE_LAYOUT_UNDEFINED
   imageHandle <- VK.createImage d imgInfo allocator
   memReq <- VK.getImageMemoryRequirements d imageHandle
+  sendM $ print memReq
+  pd <- getPhysicalDevice
   memAlloc <- allocateV memReq PreferGPU
   let (MemoryAllocation memHandle _ _ block) = memAlloc
   VK.bindImageMemory d imageHandle memHandle (blockOffset block)
   let viewInfo = VK.ImageViewCreateInfo () VZ.zero imageHandle VK.IMAGE_VIEW_TYPE_2D imgFormat VZ.zero (VK.ImageSubresourceRange imgAspect 0 (fromIntegral mipmaps) 0 1)
   imgView <- VK.createImageView d viewInfo allocator
   return (imageHandle, memAlloc, imgView)
-  
-{-
+
+
 makeImageBuffer :: (InVulkanMonad effs) => (Int,Int,Int) -> Format -> ImageTiling -> VK.ImageUsageFlags -> VK.MemoryPropertyFlags -> Maybe VK.AllocationCallbacks -> Eff effs ImageBuffer
 makeImageBuffer (w,h,mipLevels) imgFormat imgTiling imgUsage memoryProps allocator = do
   (imageHandle, iMem, imgView) <- makeImagePrimitives (w,h,mipLevels) VK.SAMPLE_COUNT_1_BIT imgFormat imgTiling imgUsage VK.IMAGE_ASPECT_COLOR_BIT memoryProps allocator
+  d <- getDevice
   phy <- getPhysicalDevice
   phyProps <- VK.getPhysicalDeviceProperties phy
   let samplerInfo = VK.SamplerCreateInfo () VZ.zero 
@@ -104,64 +109,70 @@ makeImageBuffer (w,h,mipLevels) imgFormat imgTiling imgUsage memoryProps allocat
                       VK.SAMPLER_ADDRESS_MODE_REPEAT -- addressModeV
                       VK.SAMPLER_ADDRESS_MODE_REPEAT -- addressModeW
                       0.0 -- mipLodBias
-                      True -- anisotropyEnable
-                      (maxSamplerAnisotropy $ limits phyProps)  -- maxAnisotropy
+                      True -- anisotropyEnable-
+                      (VK.maxSamplerAnisotropy $ VK.limits phyProps)  -- maxAnisotropy
                       False -- compareEnable
                       VK.COMPARE_OP_ALWAYS -- compareOp
                       0.0 -- minLod
                       (fromIntegral mipLevels) -- maxLod
                       VK.BORDER_COLOR_INT_OPAQUE_BLACK -- borderColor
                       False -- unnormalizedCoordinates
-  imgSampler <- VK.createSampler device samplerInfo allocator
+  imgSampler <- VK.createSampler d samplerInfo allocator
   return (ImageBuffer imageHandle mipLevels iMem imgView imgSampler)
 
 unmakeImageBuffer :: (InVulkanMonad effs) => ImageBuffer -> Maybe VK.AllocationCallbacks -> Eff effs ()
 unmakeImageBuffer (ImageBuffer imgHandle _mipmaps imgMem imgView imgSampler) allocator = do
   d <- getDevice
-  VK.destroySampler imgSampler allocator
-  VK.destroyImageView imgView allocator
-  VK.destroyImage imgHandle allocator
+  VK.destroySampler d imgSampler allocator
+  VK.destroyImageView d imgView allocator
+  VK.destroyImage d imgHandle allocator
   deallocateV imgMem
 
 
-makeTextureImage :: (InVulkanMonad effs) => CommandPool -> Queue -> FilePath -> Maybe VK.AllocationCallbacks -> Eff effs ImageBuffer
-makeTextureImage cPool gQueue filePath allocator = do
+makeTextureImage :: (InVulkanMonad effs) => FilePath -> Maybe VK.AllocationCallbacks -> Eff effs ImageBuffer
+makeTextureImage filePath allocator = do
   d <- getDevice
   phy <- getPhysicalDevice
-  imageResult <- partialLoadImage filePath
+  imgBuffer@(ImageBuffer img _ _ _ _) <- makeImageBuffer (16,16,1)
+                                                VK.FORMAT_R8G8B8A8_SRGB
+                                                VK.IMAGE_TILING_OPTIMAL 
+                                                (VK.IMAGE_USAGE_TRANSFER_SRC_BIT .|. VK.IMAGE_USAGE_TRANSFER_DST_BIT .|. VK.IMAGE_USAGE_SAMPLED_BIT) 
+                                                VK.MEMORY_PROPERTY_DEVICE_LOCAL_BIT 
+                                                allocator
+  return imgBuffer
+{-  imageResult <- loadImageFromFile filePath
   case imageResult of
-    Left errString -> fail errString
+    Left errString -> error errString
     Right (imgRGBA, w, h) -> do
       let imageByteSize = fromIntegral (w * h * 4)
-      let mipLevels = 1 + floor (logBase 2.0 (fromIntegral $ max w h))
-      let imagePixels = JC.imageData imgRGBA :: V.Vector Word8
-      let imageBytes = V.toList imagePixels
-      staging@(StagingBuffer sBuf _) <- loadStagingBuffer imageBytes VK.BUFFER_USAGE_TRANSFER_SRC_BIT
+      let mipLevels = 1 -- + floor (logBase 2.0 (fromIntegral $ max w h))
+      let imagePixels = JC.imageData imgRGBA :: VST.Vector Word8
+      let imageBytes = VST.toList imagePixels
+      --staging@(StagingBuffer sBuf _) <- loadStagingBuffer imageBytes VK.BUFFER_USAGE_TRANSFER_SRC_BIT
       imgBuffer@(ImageBuffer img _ _ _ _) <- makeImageBuffer (w, h, mipLevels)
                                                 VK.FORMAT_R8G8B8A8_SRGB
                                                 VK.IMAGE_TILING_OPTIMAL 
                                                 (VK.IMAGE_USAGE_TRANSFER_SRC_BIT .|. VK.IMAGE_USAGE_TRANSFER_DST_BIT .|. VK.IMAGE_USAGE_SAMPLED_BIT) 
                                                 VK.MEMORY_PROPERTY_DEVICE_LOCAL_BIT 
                                                 allocator
-      
-      transitionImageLayout d cPool gQueue img mipLevels VK.FORMAT_R8G8B8A8_SRGB VK.IMAGE_LAYOUT_UNDEFINED VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-      copyBufferToImage d cPool gQueue sBuf img w h
-      generateMipmaps d phy cPool gQueue img VK.FORMAT_R8G8B8A8_SRGB w h  mipLevels
-      --transitionImageLayout device cPool gQueue img mipLevels FORMAT_R8G8B8A8_SRGB IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-      destroyStagingBuffer d staging allocator
-      return imgBuffer
+      --transitionImageLayout img mipLevels VK.FORMAT_R8G8B8A8_SRGB VK.IMAGE_LAYOUT_UNDEFINED VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+      --copyBufferToImage sBuf img w h
+      --generateMipmaps img VK.FORMAT_R8G8B8A8_SRGB w h  mipLevels
+      --transitionImageLayout img mipLevels VK.FORMAT_R8G8B8A8_SRGB VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL VK.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+      --destroyStagingBuffer staging
+      return imgBuffer-}
 
 
-unmakeTextureImage :: (InVulkanMonad effs) => ImageBuffer -> Maybe VK.AllocationCallbacks -> Eff effs ()
-unmakeTextureImage = unmakeImageBuffer
+unmakeTextureImage :: (InVulkanMonad effs) => ImageBuffer -> Eff effs ()
+unmakeTextureImage image = unmakeImageBuffer image Nothing
 
-transitionImageLayout :: (InVulkanMonad effs) => CommandPool -> Queue -> Image -> Int -> Format -> ImageLayout -> ImageLayout -> Eff effs ()
-transitionImageLayout cPool gQueue img mipLevels format oldLayout newLayout = do
+transitionImageLayout :: (InVulkanMonad effs, Member OneShotSubmitter effs) => Image -> Int -> Format -> ImageLayout -> ImageLayout -> Eff effs ()
+transitionImageLayout img mipLevels format oldLayout newLayout = do
   d <- getDevice
-  withOneTimeCommand cPool gQueue bracket $ \cBuf -> do
+  oneShotCommand $ \cBuf -> do
     let (srcMask, dstMask,srcStage,dstStage) = computeBarrierValues oldLayout newLayout
     let barrier = VK.ImageMemoryBarrier () srcMask dstMask oldLayout newLayout VK.QUEUE_FAMILY_IGNORED VK.QUEUE_FAMILY_IGNORED img (VK.ImageSubresourceRange VK.IMAGE_ASPECT_COLOR_BIT 0 (fromIntegral mipLevels) 0 1)
-    VK.cmdPipelineBarrier cBuf srcStage dstStage zero empty empty (V.fromList [SomeStruct barrier])
+    VK.cmdPipelineBarrier cBuf srcStage dstStage VZ.zero V.empty V.empty (V.fromList [SomeStruct barrier])
     return ()
   where
     computeBarrierValues VK.IMAGE_LAYOUT_UNDEFINED VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL          = (VZ.zero, VK.ACCESS_TRANSFER_WRITE_BIT,
@@ -171,14 +182,66 @@ transitionImageLayout cPool gQueue img mipLevels format oldLayout newLayout = do
                                                                                                           VK.PIPELINE_STAGE_TRANSFER_BIT,
                                                                                                           VK.PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
 
-
-copyBufferToImage :: (InVulkanMonad effs) => CommandPool -> Queue -> Buffer -> Image -> Int -> Int -> Eff effs ()
-copyBufferToImage cPool gQueue iBuf img width height = do
-  d <- getDevice
-  withOneTimeCommand d cPool gQueue bracket $ \cBuf -> do
+copyBufferToImage :: (InVulkanMonad effs, Member OneShotSubmitter effs) => Buffer -> Image -> Int -> Int -> Eff effs ()
+copyBufferToImage iBuf img width height = do
+  oneShotCommand $ \cBuf -> do
     let copyInfo = VK.BufferImageCopy 0 0 0 (VK.ImageSubresourceLayers VK.IMAGE_ASPECT_COLOR_BIT 0 0 1) (VK.Offset3D 0 0 0) (VK.Extent3D (fromIntegral width) (fromIntegral height) 1)
-    VK.cmdCopyBufferToImage cBuf iBuf img VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL (V.fromList [copyInfo])
--}
+    VK.cmdCopyBufferToImage cBuf iBuf img VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL (V.singleton copyInfo)
+
+
+generateMipmaps :: (InVulkanMonad effs, Member OneShotSubmitter effs) => Image -> Format -> Int -> Int -> Int -> Eff effs ()
+generateMipmaps img mipFormat w h mipLevels = do
+  phy <- getPhysicalDevice
+  formatProps <- VK.getPhysicalDeviceFormatProperties phy mipFormat
+  if (VK.optimalTilingFeatures formatProps .&. VK.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) > zeroBits
+  then return ()
+  else error "Linear filtering not supported!"
+  oneShotCommand $ \cBuf -> do
+    forM_ [1..(mipLevels-1)] $ \thisLevel -> do
+      let baseLevel = thisLevel - 1
+      let mipWidth = max 1 (w `div` (2 ^ baseLevel))
+      let mipHeight = max 1 (h `div` (2 ^ baseLevel))
+      let nextMipWidth = max 1 (mipWidth `div`2)
+      let nextMipHeight = max 1 (mipHeight `div` 2)
+      let barrier1 = SomeStruct $ VK.ImageMemoryBarrier () 
+                        VK.ACCESS_TRANSFER_WRITE_BIT 
+                        VK.ACCESS_TRANSFER_READ_BIT 
+                        VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                        VK.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+                        VK.QUEUE_FAMILY_IGNORED
+                        VK.QUEUE_FAMILY_IGNORED
+                        img
+                        (VK.ImageSubresourceRange VK.IMAGE_ASPECT_COLOR_BIT (fromIntegral baseLevel) 1 0 1)
+      VK.cmdPipelineBarrier cBuf VK.PIPELINE_STAGE_TRANSFER_BIT VK.PIPELINE_STAGE_TRANSFER_BIT VZ.zero V.empty V.empty (V.fromList [barrier1])                       
+      let blit = VK.ImageBlit
+                   (VK.ImageSubresourceLayers VK.IMAGE_ASPECT_COLOR_BIT (fromIntegral baseLevel) 0 1)
+                   (VK.Offset3D 0 0 0, VK.Offset3D (fromIntegral mipWidth) (fromIntegral mipHeight) 1)
+                   (VK.ImageSubresourceLayers VK.IMAGE_ASPECT_COLOR_BIT (fromIntegral thisLevel) 0 1)
+                   (VK.Offset3D 0 0 0, VK.Offset3D (fromIntegral nextMipWidth) (fromIntegral nextMipHeight) 1)
+      VK.cmdBlitImage cBuf img VK.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL img VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL (V.fromList [blit]) VK.FILTER_LINEAR
+      let barrier2 = SomeStruct $ VK.ImageMemoryBarrier () 
+                        VK.ACCESS_TRANSFER_READ_BIT 
+                        VK.ACCESS_SHADER_READ_BIT 
+                        VK.IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+                        VK.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                        VK.QUEUE_FAMILY_IGNORED
+                        VK.QUEUE_FAMILY_IGNORED
+                        img
+                        (VK.ImageSubresourceRange VK.IMAGE_ASPECT_COLOR_BIT (fromIntegral baseLevel) 1 0 1)
+      VK.cmdPipelineBarrier cBuf VK.PIPELINE_STAGE_TRANSFER_BIT VK.PIPELINE_STAGE_FRAGMENT_SHADER_BIT VZ.zero V.empty V.empty (V.fromList [barrier2])
+    -- outside the forM_
+    let barrier3 = SomeStruct $ VK.ImageMemoryBarrier () 
+                        VK.ACCESS_TRANSFER_WRITE_BIT 
+                        VK.ACCESS_SHADER_READ_BIT 
+                        VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                        VK.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                        VK.QUEUE_FAMILY_IGNORED
+                        VK.QUEUE_FAMILY_IGNORED
+                        img
+                        (VK.ImageSubresourceRange VK.IMAGE_ASPECT_COLOR_BIT (fromIntegral (mipLevels-1)) 1 0 1)
+    VK.cmdPipelineBarrier cBuf VK.PIPELINE_STAGE_TRANSFER_BIT VK.PIPELINE_STAGE_FRAGMENT_SHADER_BIT VZ.zero V.empty V.empty (V.fromList [barrier3])  
+
+
 {-
 makeColorBuffer :: Device -> PhysicalDevice -> Int -> Int -> SampleCountFlagBits -> Format -> Maybe AllocationCallbacks -> IO ColorBuffer
 makeColorBuffer device phy w h numSamples colorFormat allocator = do

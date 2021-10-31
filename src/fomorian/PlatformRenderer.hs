@@ -21,7 +21,7 @@ data RenderStats =
     -- | handle to the window provided by GLFW
     renderWindow:: GLFW.Window,
     -- | size in pixels
-    windowSize :: (V2 Int),
+    windowSize :: V2 Int,
     -- | how many frames have been rendered
     frameCount :: Int
   }

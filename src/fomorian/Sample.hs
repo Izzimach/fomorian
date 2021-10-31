@@ -69,10 +69,10 @@ testScene3d = neutral3DSceneRoot $
                     cameraLookAt (V3 5 10 0) (V3 0 0 0) (V3 0 0 1) $ 
                       group [
                         someCube,
-                        translate3d (V3 3 0 0) $ spin3d (V3 0.7071 0.7071 0) 2 $ someCube
+                        translate3d (V3 3 0 0) $ spin3d (V3 0.7071 0.7071 0) 2 someCube
                         ]
   where
-    config = (PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 1000 {-far plane-})
+    config = PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 1000 {-far plane-}
     someCube :: (DrawReq NeutralSceneTarget dr) => SceneGraph NeutralSceneTarget dr
     someCube = wavefrontMesh "unlit3d" "testcube.obj" ["salamander.png"]
 
