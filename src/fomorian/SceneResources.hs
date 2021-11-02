@@ -82,8 +82,6 @@ findResource _ [] = Nothing
 findResource l (Resource (view l -> Just x) : _) = Just x
 findResource l (_ : xs) = findResource l xs
 
-
-
 type BasicDataSourceTypes =
      ("coordinates2d"    .== [(Float,Float)])
   .+ ("coordinates3d"    .== [(Float,Float,Float)])
@@ -124,7 +122,6 @@ data GeometryResource b i atr =
   }
   deriving (Eq, Show)
 
-
 vertex2ToGeometry :: [(Float,Float)] -> GeometryResource [V3 Float] [Int] VertexAttribute
 vertex2ToGeometry ffs = GeometryResource v2s Nothing (length ffs) attribs
   where
@@ -151,19 +148,19 @@ flattenWavefrontVertex (OBJBufferRecord objR) =
   
 wavefrontGeometry :: FilePath -> IO (GeometryResource [Float] [Int] VertexAttribute)
 wavefrontGeometry fp = do
-    r <- loadWavefrontOBJFile ("resources" </> "geometry" </> fp)
-    case r of
-      Left e -> error e
-      Right (vertdata, indexdata) -> do
-        let str = fromIntegral $ sizeOf (undefined :: OBJBufferRecord)
-        let floatSize = fromIntegral $ sizeOf (undefined :: Float)
-        let attribs = M.fromList [
-              ("position",VertexAttribute 3 VertexFloat str 0),
-              ("texCoord",VertexAttribute 2 VertexFloat str (3*floatSize)),
-              ("normal",  VertexAttribute 3 VertexFloat str (5*floatSize))
-              ]
-        let rawVerts = concatMap flattenWavefrontVertex vertdata
-        return $ GeometryResource rawVerts (Just indexdata) (length indexdata) attribs
+  r <- loadWavefrontOBJFile ("resources" </> "geometry" </> fp)
+  case r of
+    Left e -> error e
+    Right (vertdata, indexdata) -> do
+      let str = fromIntegral $ sizeOf (undefined :: OBJBufferRecord)
+      let floatSize = fromIntegral $ sizeOf (undefined :: Float)
+      let attribs = M.fromList [
+            ("position",VertexAttribute 3 VertexFloat str 0),
+            ("texCoord",VertexAttribute 2 VertexFloat str (3*floatSize)),
+            ("normal",  VertexAttribute 3 VertexFloat str (5*floatSize))
+            ]
+      let rawVerts = concatMap flattenWavefrontVertex vertdata
+      return $ GeometryResource rawVerts (Just indexdata) (length indexdata) attribs
 
 
 loadBasicData ::  DataSource BasicDataSourceTypes -> IO (Resource BasicResourceTypes)

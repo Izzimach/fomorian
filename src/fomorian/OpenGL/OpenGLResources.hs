@@ -11,10 +11,7 @@
 {-# LANGUAGE ViewPatterns #-}
 
 
-
 module Fomorian.OpenGL.OpenGLResources where
-
-
 
 import Data.Row
 import Data.Row.Variants (view)
@@ -88,7 +85,7 @@ oglResourcesAlgebra (GroupF cmds) = foldl (<>) mempty cmds
 oglResourcesAlgebra (TransformerF _ gr) = oglResourcesScene gr
 
 oglResourcesScene :: SceneGraph OpenGLTarget dr -> GLDataSources
-oglResourcesScene sg = cata oglResourcesAlgebra sg
+oglResourcesScene = cata oglResourcesAlgebra
 
 
 -- | A single source of vertex stream data. Examples are:
@@ -129,7 +126,7 @@ loadGLResource :: DataSource GLDataSourceTypes -> Map (DataSource GLDataSourceTy
 loadGLResource (DataSource r) deps = 
   case trial r #vertexarray of
     Right y -> loadBoundVertices y deps
-    Left x -> loadBasicGLResource (DataSource x)
+    Left  x -> loadBasicGLResource (DataSource x)
 
 unloadGLResource :: ResourceInfo (DataSource GLDataSourceTypes) (Resource GLResourceTypes) -> IO ()
 unloadGLResource (ResourceInfo _ (Resource r) _) = switch r $
@@ -176,11 +173,11 @@ bindVertexSource :: GLUtil.ShaderProgram -> GLVertexSource -> IO ()
 bindVertexSource (GLUtil.ShaderProgram attribs _uniforms _prog) (GLVertexSource name bufferObj vad) =
   do
     -- look up the vertex source name to see if it is in the list of attributes for this program
-    case (M.lookup name attribs) of
+    case M.lookup name attribs of
       Nothing -> return () -- this shader doesn't use this attribute
       Just (attribIndex,_) ->
         do 
-           putStrLn $ "attrib: " ++ (show attribIndex) ++ " bufferObject: " ++ (show bufferObj)
+           putStrLn $ "attrib: " ++ show attribIndex ++ " bufferObject: " ++ show bufferObj
            GL.bindBuffer GL.ArrayBuffer $= Just bufferObj
            GL.vertexAttribArray attribIndex $= GL.Enabled
            GL.vertexAttribPointer attribIndex $= (GL.ToFloat, vad)

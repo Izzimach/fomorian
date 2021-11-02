@@ -32,6 +32,7 @@ import Fomorian.PlatformRenderer
 -- For a diagram of threads and data flow look at OpenGLFlow.svg
 
 type ErrorMessage = String
+type GLResourceCallbacks = LoadUnloadCallbacks (DataSource GLDataSourceTypes) (Resource GLResourceTypes) ErrorMessage
 
 data OpenGLRendererState =
   OpenGLRendererState {
@@ -40,12 +41,12 @@ data OpenGLRendererState =
     openGLStats :: IORef RenderStats
   }
 
--- | Given a bound OpenGL thread 'BoundGLThread' will generate a 'ResourceLoaderConfig' that offloads
---   loading and unloading to the OpenGL thread. We try to force the values using 'seq' to make thunk evaluation
+-- | Given a bound OpenGL thread 'BoundGLThread' this will generate callbacks that transfer control to the OpenGL thread
+--   for loading and unloading. We try to force the values using 'seq' to make thunk evaluation
 --   take place in the worker thread and not the OpenGL thread. There is only one OpenGL thread so we don't want to
 --   load it down with extra work evaluating thunks.
-threadedLoaderGLConfig :: BoundGLThread w -> LoadUnloadCallbacks (DataSource GLDataSourceTypes) (Resource GLResourceTypes) ErrorMessage
-threadedLoaderGLConfig glb =
+threadedLoaderGLCallbacks :: BoundGLThread w -> GLResourceCallbacks
+threadedLoaderGLCallbacks glb =
   LoadUnloadCallbacks {
     loadResource     = \l deps -> l `seq` deps `seq` submitGLComputationThrow glb (loadGLResource l deps),
     unloadResource   = \res -> submitGLComputationThrow glb (unloadGLResource res),
@@ -59,16 +60,18 @@ openGLWrapRenderLoop (w,h) wrapped = bracket startGL endGL wrapped
     startGL = do
       let initData = WindowInitData w h "OpenGL Fomorian" UseOpenGL
       glThread <- forkBoundGLThread (W.initWindow initData) terminateWindow
-      -- spin up concurrent loader
-      let asyncConfig = AsyncLoaderConfig (threadedLoaderGLConfig glThread) 1 simpleThreadWrapper simpleThreadWrapper
-      loaderInfo <- startAsyncLoader asyncConfig ()
-      win <- atomically $ takeTMVar (windowValue glThread)
-      --appdata <- submitGLComputationThrow glThread $ initAppState initData win
-      statsRef <- newIORef (RenderStats win (V2 w h) 0)
-      return $ OpenGLRendererState glThread loaderInfo statsRef
 
-    endGL (OpenGLRendererState glThread loaderInfo _) = do
-      shutdownAsyncLoader loaderInfo
+      -- spin up the multithreaded loader, routing loads/unloads to the bound GL thread
+      let asyncConfig = AsyncLoaderConfig 2 simpleThreadWrapper simpleThreadWrapper
+      let loaderCallbacks = threadedLoaderGLCallbacks glThread
+      mtLoader <- startAsyncLoader asyncConfig loaderCallbacks
+
+      win <- atomically $ takeTMVar (windowValue glThread)
+      statsRef <- newIORef (RenderStats win (V2 w h) 0)
+      return $ OpenGLRendererState glThread mtLoader statsRef
+
+    endGL (OpenGLRendererState glThread mtLoader _) = do
+      shutdownAsyncLoader mtLoader
       -- terminateWindow is already called when the boundGLThread exits, so don't call it here
       endBoundGLThread glThread
 
