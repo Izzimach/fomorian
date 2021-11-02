@@ -109,7 +109,7 @@ oneShotCommand cmd = send (OneShotCommand cmd)
 
 
 
--- A default implementation of OneShotSubmitter that just runs the command and waits until the command buffer finishes. Probably not too useful except as an example
+-- A default implementation of OneShotSubmitter that just runs the command in the current monad and waits until the command buffer finishes. Probably not too useful except as an example
 runOneShotSimple :: (LastMember IO effs, Member VulkanMonad effs) => VK.CommandPool -> VK.Queue -> VK.Fence -> Eff (OneShotSubmitter ': effs) ~> Eff effs
 runOneShotSimple cPool vkQ fence = interpret $ \(OneShotCommand cmd) -> do
   d <- getDevice

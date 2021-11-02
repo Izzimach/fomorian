@@ -15,7 +15,9 @@ import Control.Concurrent.STM (atomically, readTMVar)
 import Data.Bits
 import Data.Word (Word32)
 import Data.Row
+import Data.Map (Map)
 import qualified Data.Map as M
+import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 import Linear
@@ -44,12 +46,12 @@ import Fomorian.Vulkan.Resources.VulkanResourcesBase
 -- geometry
 --
 
-loadVertexPositions :: (InVulkanMonad effs, Member OneShotSubmitter effs) => [Resource VulkanResourceTypes] -> GeometryResource [V3 Float] [Int] VertexAttribute -> Eff effs (Resource VulkanResourceTypes)
+loadVertexPositions :: (InVulkanMonad effs, Member OneShotSubmitter effs) => Map (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) -> GeometryResource [V3 Float] [Int] VertexAttribute -> Eff effs (Resource VulkanResourceTypes)
 loadVertexPositions _deps geo = do
   geo' <- loadGeometry geo
   return $ Resource $ IsJust #vkGeometry geo'
 
-loadVertexData :: (InVulkanMonad effs, Member OneShotSubmitter effs) => [Resource VulkanResourceTypes] -> GeometryResource [Float] [Int] VertexAttribute -> Eff effs (Resource VulkanResourceTypes)
+loadVertexData :: (InVulkanMonad effs, Member OneShotSubmitter effs) => Map (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) -> GeometryResource [Float] [Int] VertexAttribute -> Eff effs (Resource VulkanResourceTypes)
 loadVertexData _deps geo = do
   geo' <- loadGeometry geo
   return $ Resource $ IsJust #vkGeometry geo'

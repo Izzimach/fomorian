@@ -42,8 +42,8 @@ import System.FilePath
 
 import Linear
 
-import LoadUnload
-import AsyncLoader
+import STMLoader.LoadUnload
+import STMLoader.AsyncLoader
 
 import Fomorian.SceneNode
 import Fomorian.NeutralSceneTarget

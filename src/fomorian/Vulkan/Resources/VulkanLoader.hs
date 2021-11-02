@@ -28,7 +28,10 @@ import Data.Row
 import Data.Row.Variants (view)
 import Data.Functor.Foldable
 import Data.Foldable (find)
+
+import Data.Set (Set)
 import qualified Data.Set as S
+import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Vector as V hiding (mapM_)
 
@@ -40,8 +43,8 @@ import System.FilePath
 
 import Linear
 
-import LoadUnload
-import AsyncLoader
+import STMLoader.LoadUnload
+import STMLoader.AsyncLoader
 
 import Fomorian.SceneNode
 import Fomorian.NeutralSceneTarget
@@ -63,7 +66,9 @@ import Vulkan.Core10 (Buffer, Device, MemoryRequirements(..), BufferUsageFlags, 
 import qualified Vulkan.Core10 as VK
 import Vulkan.Zero as VZ
 
-computeVulkanResourceDependencies :: WindowBundle -> DataSource VulkanDataSourceTypes -> IO [DataSource VulkanDataSourceTypes]
+type VulkanError = String
+
+computeVulkanResourceDependencies :: WindowBundle -> DataSource VulkanDataSourceTypes -> IO (Set (DataSource VulkanDataSourceTypes))
 computeVulkanResourceDependencies _wb (DataSource d) = switch d $
      (#coordinates2d    .== noDep)
   .+ (#coordinates3d    .== noDep)
@@ -73,11 +78,10 @@ computeVulkanResourceDependencies _wb (DataSource d) = switch d $
   .+ (#texturePath      .== noDep)
   .+ (#placeholderSource .== noDep)
     where
-      noDep :: a -> IO [DataSource VulkanDataSourceTypes]
-      noDep _ = return []
+      noDep _ = return S.empty
 
-loadVulkanResource :: WindowBundle -> BoundQueueThread -> DataSource VulkanDataSourceTypes -> [Resource VulkanResourceTypes] -> IO (Resource VulkanResourceTypes)
-loadVulkanResource wb bQ (DataSource r) deps =
+loadVulkanResource :: WindowBundle -> BoundQueueThread -> DataSource VulkanDataSourceTypes -> Map (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) -> IO (Resource VulkanResourceTypes)
+loadVulkanResource wb bQ (DataSource r) depsMap =
   let inMonad = runM . runVulkanMonad wb . runBoundOneShot bQ
   in
     case trial r #placeholderSource of
@@ -94,15 +98,15 @@ loadVulkanResource wb bQ (DataSource r) deps =
         in do
               (Resource baseResult) <- loadBasicData baseSource
               switch baseResult $
-                   (#vertexPositions  .== inMonad . loadVertexPositions deps)
-                .+ (#vertexData       .== inMonad . loadVertexData deps)
+                   (#vertexPositions  .== inMonad . loadVertexPositions depsMap)
+                .+ (#vertexData       .== inMonad . loadVertexData depsMap)
                 .+ (#shaderBytes      .== undefined)
                 .+ (#textureBytes     .== undefined )
 
         
 
-unloadVulkanResource :: WindowBundle -> BoundQueueThread -> DataSource VulkanDataSourceTypes -> Resource VulkanResourceTypes -> IO ()
-unloadVulkanResource wb bQ _ (Resource r) = 
+unloadVulkanResource :: WindowBundle -> BoundQueueThread -> ResourceInfo (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) -> IO ()
+unloadVulkanResource wb bQ (ResourceInfo _ (Resource r) _) = 
   let inMonad = runM . runVulkanMonad wb . runBoundOneShot bQ
   in
     switch r 
@@ -112,21 +116,23 @@ unloadVulkanResource wb bQ _ (Resource r) =
         where
           noUnload _ = return ()
 
-vulkanLoaderConfig :: WindowBundle -> BoundQueueThread -> ResourceLoaderConfig (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)
-vulkanLoaderConfig wb bQ =
-  ResourceLoaderConfig {
-    loadIO = loadVulkanResource wb bQ,
-    unloadIO = unloadVulkanResource wb bQ,
-    dependenciesIO = computeVulkanResourceDependencies wb
+vulkanLoaderCallbacks :: WindowBundle -> BoundQueueThread -> LoadUnloadCallbacks (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) VulkanError
+vulkanLoaderCallbacks wb bQ =
+  LoadUnloadCallbacks {
+    loadResource = loadVulkanResource wb bQ,
+    unloadResource = unloadVulkanResource wb bQ,
+    findDependencies = computeVulkanResourceDependencies wb,
+    processException = const Drop
   }
 
-startLoader :: WindowBundle -> BoundQueueThread -> IO (ForkLoaderResult (LoaderRequest (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)) (LoaderResult (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)))
+startLoader :: WindowBundle -> BoundQueueThread -> IO (AsyncLoader (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) VulkanError)
 startLoader wb bQ = do
-  let cfg = vulkanLoaderConfig wb bQ
-  forkLoader 1 cfg
+  let asyncConfig = AsyncLoaderConfig 2 simpleThreadWrapper simpleThreadWrapper
+  let callbacks = vulkanLoaderCallbacks wb bQ
+  startAsyncLoader asyncConfig callbacks
     
-endLoader :: ForkLoaderResult (LoaderRequest (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)) (LoaderResult (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes)) -> IO ()
+endLoader :: AsyncLoader (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) VulkanError -> IO ()
 endLoader loader = do
-  shutdownLoader loader
+  shutdownAsyncLoader loader
 
 

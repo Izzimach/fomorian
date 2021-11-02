@@ -28,8 +28,8 @@ import Foreign.Ptr
 import Text.Pretty.Simple (pPrint)
 import System.FilePath ((</>))
 
-import LoadUnload
-import AsyncLoader
+import STMLoader.LoadUnload
+import STMLoader.AsyncLoader
 
 import qualified Graphics.UI.GLFW as GLFW
 import Vulkan.CStruct.Extends
@@ -205,24 +205,19 @@ runSomeVulkan = do
     let basicVertSource = DataSource $ IsJust #wavefrontPath "testcube.obj"
     --let basicImageSource = DataSource $ IsJust #coordinates3d [(0,0,0),(1,0,0),(0,1,0)]
     let basicImageSource = DataSource $ IsJust #texturePath "owl.png"
-    let sceneResources = LoaderRequest (S.fromList [DataSource $ IsJust #placeholderSource (), basicVertSource, basicImageSource])
-    atomically $ writeTVar (stmRequest loaderInfo) sceneResources
+    --newRequest loaderInfo sceneResources
     -- wait until loader loads our stuff
-    resources <- atomically $ do
-      (LoaderResult loaded) <- readTVar (stmResult loaderInfo)
-      if M.null loaded
-      then retry
-      else return loaded
+    resources <- waitForResourceProcessing loaderInfo (S.empty, S.fromList [basicVertSource, basicImageSource])
     let (Just (Resource basicVertData)) = M.lookup basicVertSource resources
-    --let (Just (Resource basicImageData)) = M.lookup basicImageSource resources
+    let (Just (Resource basicImageData)) = M.lookup basicImageSource resources
     pPrint basicVertData
-    --pPrint basicImageData
+    pPrint basicImageData
     let vertices = case trial basicVertData #vkGeometry of
                     Left _ -> error "Argh"
                     Right g -> g
-    {-let imagez = case trial basicImageData #textureImage of
-                    Left _ -> error "argh! texture"
-                    Right t -> t-}
+    let imagez = case trial basicImageData #textureImage of
+                    Left _ -> error "argh! textures"
+                    Right t -> t
 
 
     let d = WB.deviceHandle $ WB.vulkanDeviceBundle wb
