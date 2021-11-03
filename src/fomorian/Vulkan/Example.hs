@@ -224,12 +224,13 @@ runSomeVulkan = do
     let gQ = WB.graphicsQueue $ WB.vulkanDeviceBundle wb
     let gQIndex = WB.graphicsQueueFamilyIndex $ WB.vulkanDeviceBundle wb
     let pQ = WB.presentQueue $ WB.vulkanDeviceBundle wb
+    let runV = runM . runVulkanMonad wb
+
     VK.withCommandPool d (CommandPoolCreateInfo VK.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT gQIndex) Nothing bracket $ \gPool -> do
-        bracket (runM . runVulkanMonad wb $ makeCarousel gPool gQ pQ 2 Nothing) (\swc -> runM . runVulkanMonad wb $ do flushCarousel swc; destroyCarousel swc) $ \swc ->
-          runM . runVulkanMonad wb $ do
-            basicImage <- makeTextureImage ("resources" </> "textures" </> "owl.png") Nothing
-            forM_ [1..50] (\x -> presentNextSlot swc (clearCmd swc vertices x))
-            unmakeTextureImage basicImage
+        bracket (runV $ makeCarousel gPool gQ pQ 2 Nothing) (\swc -> runV $ do flushCarousel swc; destroyCarousel swc) $ \swc ->
+          runV $ do
+            syncDescriptorSets swc imagez
+            forM_ [1..300] (\x -> presentNextSlot swc (clearCmd swc vertices x))
 
     endLoader loaderInfo
     endBoundSubmitter boundQueue

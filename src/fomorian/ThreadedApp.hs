@@ -25,7 +25,7 @@ threadedApp :: (Int, Int) ->
   (s -> (s, Bool)) ->
   (s -> SceneGraph NeutralSceneTarget DefaultDrawFrameParams) ->
   IO ()
-threadedApp (w,h) p initialState updateFunc sceneFunc = (wrapRenderLoop p (w,h) threadedGo)
+threadedApp (w,h) p initialState updateFunc sceneFunc = wrapRenderLoop p (w,h) threadedGo
   where
     threadedGo rendererState = do
       renderLoopThreaded initialState updateFunc sceneFunc p rendererState

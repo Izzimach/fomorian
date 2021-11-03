@@ -98,7 +98,7 @@ buildSimplePipeline (vm,fm) rPass pipelineLayout windowExtent@(Extent2D w h) = d
           (V.fromList [vertexDataBinding])
           (V.fromList vertexInputAttrs)
   let inputAssembly = PipelineInputAssemblyStateCreateInfo VZ.zero PRIMITIVE_TOPOLOGY_TRIANGLE_LIST False
-  let rasterizerState = PipelineRasterizationStateCreateInfo () VZ.zero False False POLYGON_MODE_FILL CULL_MODE_BACK_BIT FRONT_FACE_COUNTER_CLOCKWISE False 0 0 0 1.0
+  let rasterizerState = PipelineRasterizationStateCreateInfo () VZ.zero False False POLYGON_MODE_FILL CULL_MODE_BACK_BIT FRONT_FACE_CLOCKWISE False 0 0 0 1.0
   -- multisample is basically disabled
   let initMultisampleState = PipelineMultisampleStateCreateInfo () VZ.zero sampleCount False 1.0 V.empty False False
   let viewport = Viewport 0.0 0.0 (fromIntegral w) (fromIntegral h) 0.0 1.0
@@ -188,8 +188,8 @@ vertexDataBinding = VertexInputBindingDescription 0 (fromIntegral $ sizeOf blank
 vertexInputAttrs :: [VertexInputAttributeDescription]
 vertexInputAttrs =
   [ (VertexInputAttributeDescription 0 0 FORMAT_R32G32B32_SFLOAT 0),
-    (VertexInputAttributeDescription 1 0 FORMAT_R32G32B32_SFLOAT 12),
-    (VertexInputAttributeDescription 2 0 FORMAT_R32G32_SFLOAT 24)
+    (VertexInputAttributeDescription 1 0 FORMAT_R32G32_SFLOAT 12),
+    (VertexInputAttributeDescription 2 0 FORMAT_R32G32B32_SFLOAT 20)
   ]
 
 -- Vertex data for drawing

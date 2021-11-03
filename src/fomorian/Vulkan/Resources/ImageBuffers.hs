@@ -129,18 +129,11 @@ unmakeImageBuffer (ImageBuffer imgHandle _mipmaps imgMem imgView imgSampler) all
   deallocateV imgMem
 
 
-makeTextureImage :: (InVulkanMonad effs) => FilePath -> Maybe VK.AllocationCallbacks -> Eff effs ImageBuffer
+makeTextureImage :: (InVulkanMonad effs, Member OneShotSubmitter effs) => FilePath -> Maybe VK.AllocationCallbacks -> Eff effs ImageBuffer
 makeTextureImage filePath allocator = do
   d <- getDevice
   phy <- getPhysicalDevice
-  imgBuffer@(ImageBuffer img _ _ _ _) <- makeImageBuffer (16,16,1)
-                                                VK.FORMAT_R8G8B8A8_SRGB
-                                                VK.IMAGE_TILING_OPTIMAL 
-                                                (VK.IMAGE_USAGE_TRANSFER_SRC_BIT .|. VK.IMAGE_USAGE_TRANSFER_DST_BIT .|. VK.IMAGE_USAGE_SAMPLED_BIT) 
-                                                VK.MEMORY_PROPERTY_DEVICE_LOCAL_BIT 
-                                                allocator
-  return imgBuffer
-{-  imageResult <- loadImageFromFile filePath
+  imageResult <- loadImageFromFile filePath
   case imageResult of
     Left errString -> error errString
     Right (imgRGBA, w, h) -> do
@@ -148,19 +141,19 @@ makeTextureImage filePath allocator = do
       let mipLevels = 1 -- + floor (logBase 2.0 (fromIntegral $ max w h))
       let imagePixels = JC.imageData imgRGBA :: VST.Vector Word8
       let imageBytes = VST.toList imagePixels
-      --staging@(StagingBuffer sBuf _) <- loadStagingBuffer imageBytes VK.BUFFER_USAGE_TRANSFER_SRC_BIT
+      staging@(StagingBuffer sBuf _) <- loadStagingBuffer imageBytes VK.BUFFER_USAGE_TRANSFER_SRC_BIT
       imgBuffer@(ImageBuffer img _ _ _ _) <- makeImageBuffer (w, h, mipLevels)
                                                 VK.FORMAT_R8G8B8A8_SRGB
                                                 VK.IMAGE_TILING_OPTIMAL 
                                                 (VK.IMAGE_USAGE_TRANSFER_SRC_BIT .|. VK.IMAGE_USAGE_TRANSFER_DST_BIT .|. VK.IMAGE_USAGE_SAMPLED_BIT) 
                                                 VK.MEMORY_PROPERTY_DEVICE_LOCAL_BIT 
                                                 allocator
-      --transitionImageLayout img mipLevels VK.FORMAT_R8G8B8A8_SRGB VK.IMAGE_LAYOUT_UNDEFINED VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-      --copyBufferToImage sBuf img w h
+      transitionImageLayout img mipLevels VK.FORMAT_R8G8B8A8_SRGB VK.IMAGE_LAYOUT_UNDEFINED VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+      copyBufferToImage sBuf img w h
       --generateMipmaps img VK.FORMAT_R8G8B8A8_SRGB w h  mipLevels
-      --transitionImageLayout img mipLevels VK.FORMAT_R8G8B8A8_SRGB VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL VK.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-      --destroyStagingBuffer staging
-      return imgBuffer-}
+      transitionImageLayout img mipLevels VK.FORMAT_R8G8B8A8_SRGB VK.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL VK.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+      destroyStagingBuffer staging
+      return imgBuffer
 
 
 unmakeTextureImage :: (InVulkanMonad effs) => ImageBuffer -> Eff effs ()

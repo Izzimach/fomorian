@@ -67,9 +67,9 @@ zeroOnePerspective fov aspect near far =
     fmn = far - near
     oon = 1 / near
     oof = 1 / far
-    z = - far / fmn
+    z = -far / fmn
     w = 1 / (oof-oon)
-    m = (-1)
+    m = -1
 
 updateUBO :: (InVulkanMonad effs) => UBuffer -> Float -> Extent2D -> Eff effs ()
 updateUBO ub elapsedTime (Extent2D width height) = do
