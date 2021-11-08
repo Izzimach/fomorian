@@ -13,18 +13,17 @@ import Data.ByteString (readFile)
 import System.FilePath (FilePath(), (</>))
 
 import Vulkan.Core10 (Device, Extent2D(..), Format, Image, ImageView, Framebuffer, CommandPool, CommandBuffer, RenderPass)
-import qualified  Vulkan.Core10 as VK
+import qualified Vulkan.Core10 as VK
 import qualified Vulkan.Zero as VZ
+import Vulkan.Extensions (SwapchainKHR, SwapchainCreateInfoKHR, createSwapchainKHR, destroySwapchainKHR, getSwapchainImagesKHR, supportedUsageFlags, supportedUsageFlags)
 import qualified Vulkan.Extensions.VK_KHR_surface as VKSURFACE
 import qualified Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
-import Vulkan.Extensions (SwapchainKHR, SwapchainCreateInfoKHR, createSwapchainKHR, destroySwapchainKHR, getSwapchainImagesKHR, supportedUsageFlags, supportedUsageFlags)
 
 import Fomorian.Vulkan.WindowBundle
 import Fomorian.Vulkan.VulkanMonads
 import Fomorian.Vulkan.Resources.VulkanResourcesBase (DepthBuffer(..))
 import Fomorian.Vulkan.Resources.ImageBuffers (makeDepthBuffer, destroyDepthBuffer, findDepthFormat)
 import Fomorian.Vulkan.Resources.Pipeline
-import qualified Vulkan.Core10 as VK
 
 
 
