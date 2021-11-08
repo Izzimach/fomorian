@@ -35,6 +35,7 @@ common deps
                        groups,
                        generics-sop,
                        template-haskell,
+                       singletons,
                        GLFW-b,
                        filepath,
                        ghc-prim,
