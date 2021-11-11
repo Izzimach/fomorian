@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -19,7 +20,8 @@ module Fomorian.Sample where
 
 import Linear
 import Data.Row
-
+import Data.Text (Text, pack)
+import Data.Map as M
 
 import Fomorian.SceneNode
 import Fomorian.SimpleApp
@@ -28,6 +30,7 @@ import Fomorian.SceneResources
 import Fomorian.CommonSceneNodes
 
 import Fomorian.PlatformRenderer
+import Fomorian.SceneResources (vertex2ToGeometry)
 import Fomorian.OpenGL.OpenGLResources
 
 
@@ -44,6 +47,10 @@ genRenderParams appstate =
 
 
 
+prebuiltResources :: Map Text BasicResource
+prebuiltResources = M.fromList [
+  ("square", Resource (IsJust #vertexPositions $ vertex2ToGeometry [(0,0), (10,0), (10,10), (0, 0), (0, 10), (10, 10)]))
+  ]
 
 
 testScene2d :: SceneGraph NeutralSceneTarget DefaultDrawFrameParams 
@@ -57,7 +64,7 @@ testScene2d = neutral3DSceneRoot $
     sinFunc t = V3 (10 * (sin t)) (10 * (cos t)) 0
     someTriangle :: (DrawReq NeutralSceneTarget dr) => SceneGraph NeutralSceneTarget dr
     someTriangle = invoke (  #shader   .== "linez"
-                          .+ #geometry .== DataSource (IsJust #coordinates2d [(0,0), (10,0), (10,10), (0, 0), (0, 10), (10, 10)])
+                          .+ #geometry .== DataSource (IsJust #userSource "square")
                           .+ #textures .== [])
 
 testScene3d :: SceneGraph NeutralSceneTarget DefaultDrawFrameParams 

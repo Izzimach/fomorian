@@ -8,6 +8,8 @@ import Control.Concurrent.STM
 
 import Data.IORef
 import Data.Row
+import Data.Map (Map)
+import Data.Text (Text)
 
 import Linear
 
@@ -45,17 +47,17 @@ data OpenGLRendererState =
 --   for loading and unloading. We try to force the values using 'seq' to make thunk evaluation
 --   take place in the worker thread and not the OpenGL thread. There is only one OpenGL thread so we don't want to
 --   load it down with extra work evaluating thunks.
-threadedLoaderGLCallbacks :: BoundGLThread w -> GLResourceCallbacks
-threadedLoaderGLCallbacks glb =
+threadedLoaderGLCallbacks :: Map Text BasicResource -> BoundGLThread w -> GLResourceCallbacks
+threadedLoaderGLCallbacks prebuilt glb =
   LoadUnloadCallbacks {
-    loadResource     = \l deps -> l `seq` deps `seq` submitGLComputationThrow glb (loadGLResource l deps),
+    loadResource     = \l deps -> l `seq` deps `seq` submitGLComputationThrow glb (loadGLResource prebuilt l deps),
     unloadResource   = \res -> submitGLComputationThrow glb (unloadGLResource res),
     findDependencies = computeGLDependencies,
     processException = const Drop
     }
 
-openGLWrapRenderLoop :: (Int, Int) -> (OpenGLRendererState -> IO ()) -> IO ()
-openGLWrapRenderLoop (w,h) wrapped = bracket startGL endGL wrapped
+openGLWrapRenderLoop :: Map Text BasicResource -> (Int, Int) -> (OpenGLRendererState -> IO ()) -> IO ()
+openGLWrapRenderLoop prebuiltResources (w,h) wrapped = bracket startGL endGL wrapped
   where
     startGL = do
       let initData = WindowInitData w h "OpenGL Fomorian" UseOpenGL
@@ -63,7 +65,7 @@ openGLWrapRenderLoop (w,h) wrapped = bracket startGL endGL wrapped
 
       -- spin up the multithreaded loader, routing loads/unloads to the bound GL thread
       let asyncConfig = AsyncLoaderConfig 2 simpleThreadWrapper simpleThreadWrapper
-      let loaderCallbacks = threadedLoaderGLCallbacks glThread
+      let loaderCallbacks = threadedLoaderGLCallbacks prebuiltResources glThread
       mtLoader <- startAsyncLoader asyncConfig loaderCallbacks
 
       win <- atomically $ takeTMVar (windowValue glThread)
@@ -97,10 +99,10 @@ renderOneFrame scene frameData = do
     Left e   -> putStrLn $ displayException (e :: SomeException)
     Right () -> return ()
 
-openGLRendererFunctions :: PlatformRendererFunctions OpenGLRendererState
-openGLRendererFunctions =
+openGLRendererFunctions :: Map Text BasicResource -> PlatformRendererFunctions OpenGLRendererState
+openGLRendererFunctions prebuilt =
   PlatformRendererFunctions {
-    wrapRenderLoop = openGLWrapRenderLoop,
+    wrapRenderLoop = openGLWrapRenderLoop prebuilt,
     getRendererStats = readIORef . openGLStats,
     runRenderFrame = \p scene frameData -> do
       stats <- readIORef (openGLStats p)

@@ -45,8 +45,6 @@ import GHC.Generics
 
 import Linear (V2(..), V3(..), V4(..))
 
-import Type.Reflection
-
 import Foreign.Storable (Storable)
 
 data NeutralElementalType =

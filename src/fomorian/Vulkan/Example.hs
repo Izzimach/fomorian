@@ -238,7 +238,6 @@ runSomeVulkan = do
     clearCmd swc vertGeo curTime cBuf frameBuf cSlot = do
       let swapchainBundle = swapchainB swc
       let windowExtent@(Extent2D w h) = VKSWAPCHAIN.imageExtent $ relevantCreateInfo swapchainBundle
-      -- set uniform buffer
       let uBuf = slotUniformBuffer cSlot
       updateUni uBuf (curTime * 0.016) windowExtent
       let rPass = swapchainRenderPass $ swapchainB swc
@@ -256,7 +255,7 @@ runSomeVulkan = do
       let (GeometryResource (VBuffer vBuf _) (Just (IxBuffer ixBuf _)) elements _) = vertGeo
       cmdBindVertexBuffers cBuf 0 (V.singleton vBuf) (V.singleton 0)
       cmdBindIndexBuffer cBuf ixBuf 0 INDEX_TYPE_UINT32
-      cmdDrawIndexed cBuf (fromIntegral $ elements * 3) 1 0 0 0
+      cmdDrawIndexed cBuf (fromIntegral $ elements) 1 0 0 0
 
       cmdEndRenderPass cBuf
       endCommandBuffer cBuf
