@@ -8,7 +8,6 @@
 --   are all done with (hopefully) reasonable default settings.
 module Fomorian.Vulkan.WindowBundle where
 
-import Control.Monad
 import Control.Exception
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TMVar ()
@@ -18,7 +17,7 @@ import Data.Bits
 import Data.ByteString (ByteString, packCString)
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
-import Data.Vector ((!), Vector, empty, findIndex, fromList, toList)
+import Data.Vector (empty, findIndex, fromList, toList)
 import Data.Word (Word32, Word64)
 
 import Foreign.Marshal

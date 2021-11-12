@@ -48,6 +48,7 @@ import STMLoader.AsyncLoader
 import Fomorian.SceneNode
 import Fomorian.NeutralSceneTarget
 import Fomorian.SceneResources
+import Fomorian.StorableLayout
 import Fomorian.SimpleMemoryArena
 import Fomorian.GraphicsLoaders.ProcessWavefront (OBJBufferRecord, loadWavefrontOBJFile)
 
@@ -60,11 +61,15 @@ import qualified Vulkan.Core10 as VK
 
 type VulkanDataSourceTypes = BasicDataSourceTypes
   .+ ("placeholderSource" .== ())
+
+type VulkanDataSource = DataSource VulkanDataSourceTypes
   
 type VulkanResourceTypes =
-     ("vkGeometry" .==  GeometryResource VBuffer IxBuffer VertexAttribute)
+     ("vkGeometry" .==  GeometryResource VBuffer IxBuffer DataLayoutMap)
   .+ ("placeholderResource" .== Int)
   .+ ("textureImage" .== ImageBuffer)
+
+type VulkanResource = Resource VulkanResourceTypes
 
 -- | Buffer for vertex data
 data VBuffer = VBuffer Buffer (MemoryAllocation DeviceSize) deriving (Eq, Show)

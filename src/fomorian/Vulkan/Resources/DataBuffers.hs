@@ -34,6 +34,7 @@ import qualified Vulkan.Core10 as VK
 import Vulkan.Zero as VZ
 
 import Fomorian.SceneResources
+import Fomorian.StorableLayout
 import Fomorian.SimpleMemoryArena
 import Fomorian.Vulkan.WindowBundle
 import Fomorian.Vulkan.VulkanMonads
@@ -46,18 +47,18 @@ import Fomorian.Vulkan.Resources.VulkanResourcesBase
 -- geometry
 --
 
-loadVertexPositions :: (InVulkanMonad effs, Member OneShotSubmitter effs) => Map (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) -> GeometryResource [V3 Float] [Int] VertexAttribute -> Eff effs (Resource VulkanResourceTypes)
+loadVertexPositions :: (InVulkanMonad effs, Member OneShotSubmitter effs) => Map VulkanDataSource VulkanResource -> GeometryResource [V3 Float] [Int] DataLayoutMap -> Eff effs VulkanResource
 loadVertexPositions _deps geo = do
   geo' <- loadGeometry geo
   return $ Resource $ IsJust #vkGeometry geo'
 
-loadVertexData :: (InVulkanMonad effs, Member OneShotSubmitter effs) => Map (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) -> GeometryResource [Float] [Int] VertexAttribute -> Eff effs (Resource VulkanResourceTypes)
+loadVertexData :: (InVulkanMonad effs, Member OneShotSubmitter effs) => Map VulkanDataSource VulkanResource -> GeometryResource [Float] [Int] DataLayoutMap -> Eff effs VulkanResource
 loadVertexData _deps geo = do
   geo' <- loadGeometry geo
   return $ Resource $ IsJust #vkGeometry geo'
 
 
-loadGeometry :: (InVulkanMonad effs, Storable x, Member OneShotSubmitter effs) => GeometryResource [x] [Int] VertexAttribute -> Eff effs (GeometryResource VBuffer IxBuffer VertexAttribute)
+loadGeometry :: (InVulkanMonad effs, Storable x, Member OneShotSubmitter effs) => GeometryResource [x] [Int] DataLayoutMap -> Eff effs (GeometryResource VBuffer IxBuffer DataLayoutMap)
 loadGeometry geo = do
   d <- getDevice
   (vbuf,vmem) <- loadStaticBuffer (vBuffer geo) VK.BUFFER_USAGE_VERTEX_BUFFER_BIT RequireHostVisible --PreferGPU
@@ -68,8 +69,8 @@ loadGeometry geo = do
                  return $ Just (IxBuffer ibuf imem)
   let vertexBuffer = VBuffer vbuf vmem
   let elements = case indexBuffer geo of
-                   Nothing -> Prelude.length (vBuffer geo) `div` 3
-                   Just ib -> Prelude.length ib            `div` 3
+                   Nothing -> Prelude.length (vBuffer geo)
+                   Just ib -> Prelude.length ib
   return (GeometryResource vertexBuffer ixBuffer elements (attributeMap geo))
     where
       toW32 :: Int -> Word32
@@ -128,7 +129,7 @@ makeBuffer bSize bUsage memType = do
   return (buf, allocResult)
 
 
-unloadGeometry :: (InVulkanMonad effs) => GeometryResource VBuffer IxBuffer VertexAttribute -> Eff effs ()
+unloadGeometry :: (InVulkanMonad effs) => GeometryResource VBuffer IxBuffer DataLayoutMap -> Eff effs ()
 unloadGeometry (GeometryResource vb ib _ _) = do
   destroyVBuffer vb
   mapM_ destroyIxBuffer ib

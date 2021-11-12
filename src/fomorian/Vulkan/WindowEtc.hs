@@ -308,7 +308,6 @@ rebuildSwapChain windowEtc allocator =
       newswapchain <- recreateSwapChainEtc device phy cpool tRes (msaaSamples windowEtc) swapchainEtc chosen (surfaceRef windowEtc) allocator
       liftIO $ writeIORef (swapChainRef windowEtc) newswapchain
 
-
 getMaxUsableSampleCount ::PhysicalDevice -> IO SampleCountFlagBits
 getMaxUsableSampleCount phy = do
   phyProps <- getPhysicalDeviceProperties phy

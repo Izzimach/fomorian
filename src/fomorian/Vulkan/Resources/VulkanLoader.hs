@@ -22,7 +22,8 @@ import Control.Concurrent.STM
 import Control.Monad.Freer
 import Control.Monad.Freer.Reader (Reader(..), ask, runReader)
 
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, fromMaybe)
+import Data.Text (Text)
 import Data.Word
 import Data.Row
 import Data.Row.Variants (view)
@@ -68,44 +69,43 @@ import Vulkan.Zero as VZ
 
 type VulkanError = String
 
-computeVulkanResourceDependencies :: WindowBundle -> DataSource VulkanDataSourceTypes -> IO (Set (DataSource VulkanDataSourceTypes))
+computeVulkanResourceDependencies :: WindowBundle -> VulkanDataSource -> IO (Set (VulkanDataSource))
 computeVulkanResourceDependencies _wb (DataSource d) = switch d $
-     (#coordinates2d    .== noDep)
-  .+ (#coordinates3d    .== noDep)
-  .+ (#rawVertexAttribs .== noDep)
-  .+ (#wavefrontPath    .== noDep)
-  .+ (#shaderPath       .== noDep)
-  .+ (#texturePath      .== noDep)
-  .+ (#placeholderSource .== noDep)
+     (#placeholderSource .== noDep)
+  .+ (#userSource        .== noDep)
+  .+ (#wavefrontPath     .== noDep)
+  .+ (#shaderPath        .== noDep)
+  .+ (#texturePath       .== noDep)
     where
       noDep _ = return S.empty
 
-loadVulkanResource :: WindowBundle -> BoundQueueThread -> DataSource VulkanDataSourceTypes -> Map (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) -> IO (Resource VulkanResourceTypes)
-loadVulkanResource wb bQ (DataSource r) depsMap =
-  let inMonad = runM . runVulkanMonad wb . runBoundOneShot bQ
-  in
-    case trial r #placeholderSource of
-      Right () -> return $ Resource $ IsJust #placeholderResource 0
-      Left baseSource -> 
-        case trial baseSource #texturePath of
-          Right tp -> do t <- inMonad $ makeTextureImage ("resources" </> "textures" </> tp) Nothing
-                         return $ Resource $ IsJust #textureImage t
-          Left _ -> basicVulkanLoad wb bQ (DataSource baseSource)
-    where
-      basicVulkanLoad :: WindowBundle -> BoundQueueThread -> DataSource BasicDataSourceTypes -> IO (Resource VulkanResourceTypes)
-      basicVulkanLoad wb gQ baseSource = 
-        let inMonad = runM . runVulkanMonad wb . runBoundOneShot gQ
-        in do
-              (Resource baseResult) <- loadBasicData baseSource
-              switch baseResult $
-                   (#vertexPositions  .== inMonad . loadVertexPositions depsMap)
-                .+ (#vertexData       .== inMonad . loadVertexData depsMap)
-                .+ (#shaderBytes      .== undefined)
-                .+ (#textureBytes     .== undefined )
+loadVulkanResource :: WindowBundle -> BoundQueueThread -> Map Text BasicResource -> VulkanDataSource -> Map VulkanDataSource VulkanResource -> IO VulkanResource
+loadVulkanResource wb bQ prebuilt (DataSource r) depsMap = switch r $
+     #placeholderSource .== (\_ -> return (Resource (IsJust #placeholderResource 0)))
+  .+ #userSource        .== (\l -> basicVulkanLoad (fromMaybe undefined (M.lookup l prebuilt)))
+  .+ #wavefrontPath     .== (\fp -> do g <- wavefrontGeometry fp; basicVulkanLoad (Resource $ IsJust #vertexFloats g))
+  .+ #shaderPath        .== loadVulkanShaderFromPath
+  .+ #texturePath       .== loadVulkanTextureFromPath
+  where
+    inMonad = runM . runVulkanMonad wb . runBoundOneShot bQ
 
-        
+    loadVulkanTextureFromPath tp =  do
+      t <- inMonad $ makeTextureImage ("resources" </> "textures" </> tp) Nothing
+      return $ Resource $ IsJust #textureImage t
 
-unloadVulkanResource :: WindowBundle -> BoundQueueThread -> ResourceInfo (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) -> IO ()
+    loadVulkanShaderFromPath = undefined
+
+    basicVulkanLoad :: BasicResource -> IO VulkanResource
+    basicVulkanLoad (Resource baseResource) = 
+      let inMonad = runM . runVulkanMonad wb . runBoundOneShot bQ
+      in switch baseResource $
+                 (#vertexPositions  .== inMonad . loadVertexPositions depsMap)
+              .+ (#vertexFloats     .== inMonad . loadVertexData depsMap)
+              .+ (#vertexFunction   .== undefined)
+              .+ (#shaderBytes      .== undefined)
+              .+ (#textureBytes     .== undefined )
+
+unloadVulkanResource :: WindowBundle -> BoundQueueThread -> ResourceInfo VulkanDataSource VulkanResource -> IO ()
 unloadVulkanResource wb bQ (ResourceInfo _ (Resource r) _) = 
   let inMonad = runM . runVulkanMonad wb . runBoundOneShot bQ
   in
@@ -116,22 +116,22 @@ unloadVulkanResource wb bQ (ResourceInfo _ (Resource r) _) =
         where
           noUnload _ = return ()
 
-vulkanLoaderCallbacks :: WindowBundle -> BoundQueueThread -> LoadUnloadCallbacks (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) VulkanError
-vulkanLoaderCallbacks wb bQ =
+vulkanLoaderCallbacks :: WindowBundle -> BoundQueueThread -> Map Text BasicResource -> LoadUnloadCallbacks VulkanDataSource VulkanResource VulkanError
+vulkanLoaderCallbacks wb bQ prebuilt =
   LoadUnloadCallbacks {
-    loadResource = loadVulkanResource wb bQ,
+    loadResource = loadVulkanResource wb bQ prebuilt,
     unloadResource = unloadVulkanResource wb bQ,
     findDependencies = computeVulkanResourceDependencies wb,
     processException = const Drop
   }
 
-startLoader :: WindowBundle -> BoundQueueThread -> IO (AsyncLoader (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) VulkanError)
-startLoader wb bQ = do
+startLoader :: WindowBundle -> BoundQueueThread -> Map Text BasicResource -> IO (AsyncLoader VulkanDataSource VulkanResource VulkanError)
+startLoader wb bQ prebuilt = do
   let asyncConfig = AsyncLoaderConfig 2 simpleThreadWrapper simpleThreadWrapper
-  let callbacks = vulkanLoaderCallbacks wb bQ
+  let callbacks = vulkanLoaderCallbacks wb bQ prebuilt
   startAsyncLoader asyncConfig callbacks
     
-endLoader :: AsyncLoader (DataSource VulkanDataSourceTypes) (Resource VulkanResourceTypes) VulkanError -> IO ()
+endLoader :: AsyncLoader (VulkanDataSource) (VulkanResource) VulkanError -> IO ()
 endLoader loader = do
   shutdownAsyncLoader loader
 
