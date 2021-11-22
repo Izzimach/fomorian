@@ -44,9 +44,10 @@ packages:
 extra-deps:
 - GLUtil-0.10.4@sha256:48f76f9c9666e45062c2fc4146162ca69dc773c742e61e06d752ca05ca1754ba,3217
 - wavefront-0.7.1.4@sha256:0a1e4bc3de7a450c8da2c3b962ebc0b54acdeb9664e73cdd4649861740d96024,1999
-- constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
 - row-types-1.0.1.0@sha256:62d274be07da06aafe2d94b58818234e89e53864d2f65956da2903784c0005a7,2865
+- constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
 - vulkan-3.10
+- HList-0.5.0.0@sha256:7d7a0bee8d01a7e0e10bf96c5214a21bebae3ecfc02d14fc13bf75458b38ac43,7137
 - git: https://github.com/Izzimach/zorja.git
   commit: ddf713c278bb44ef66ccf1327f5c9d3e9161120a
 - ../stm-loader

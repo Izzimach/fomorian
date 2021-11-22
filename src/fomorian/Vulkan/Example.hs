@@ -1,11 +1,13 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Fomorian.Vulkan.Example where
 
@@ -24,6 +26,7 @@ import Data.Row
 import Linear
 
 import Foreign.Ptr
+import Foreign.Storable (sizeOf, alignment)
 
 import Text.Pretty.Simple (pPrint)
 import System.FilePath ((</>))
@@ -48,7 +51,7 @@ import Fomorian.Vulkan.SwapchainCarousel
 import Fomorian.Vulkan.SwapchainBundle
 import Fomorian.Vulkan.Resources.Pipeline
 import Fomorian.Vulkan.Resources.ImageBuffers
-import Fomorian.Vulkan.Resources.DescriptorSets (UniformBufferObject(..), zeroOnePerspective, updateUniformBuffer)
+import Fomorian.Vulkan.Resources.DescriptorSets
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DeviceMemoryTypes
 import Fomorian.Vulkan.Resources.BoundCommandBuffer
@@ -69,34 +72,47 @@ runSomeVulkan = do
     boundQueue <- aQueue `seq` forkBoundSubmitter wb aQueue
     loaderInfo <- startLoader wb boundQueue prebuiltResources
     let basicVertSource = DataSource $ IsJust #wavefrontPath "testcube.obj"
-    --let basicImageSource = DataSource $ IsJust #coordinates3d [(0,0,0),(1,0,0),(0,1,0)]
-    let basicImageSource = DataSource $ IsJust #texturePath "owl.png"
+        --let basicImageSource = DataSource $ IsJust #coordinates3d [(0,0,0),(1,0,0),(0,1,0)]
+        basicImageSource = DataSource $ IsJust #texturePath "owl.png"
+        basicDescriptorSource = DataSource $ IsJust #descriptorSourceSettings $ DescriptorSetInfo [
+            UniformDescriptor 0 VK.SHADER_STAGE_VERTEX_BIT (fromIntegral $ sizeOf @UniformBufferObject undefined) (fromIntegral $ Foreign.Storable.alignment @UniformBufferObject undefined),
+            CombinedDescriptor 1 VK.SHADER_STAGE_FRAGMENT_BIT 1 V.empty
+          ]
     --newRequest loaderInfo sceneResources
     -- wait until loader loads our stuff
-    resources <- waitForResourceProcessing loaderInfo (S.empty, S.fromList [basicVertSource, basicImageSource])
-    let (Just (Resource basicVertData)) = M.lookup basicVertSource resources
-    let (Just (Resource basicImageData)) = M.lookup basicImageSource resources
-    pPrint basicVertData
-    pPrint basicImageData
-    let vertices = case trial basicVertData #vkGeometry of
+    resources <- waitForResourceProcessing loaderInfo (S.empty, S.fromList [basicVertSource, basicImageSource, basicDescriptorSource])
+    let (Just (Resource basicVertData))       = M.lookup basicVertSource resources
+        (Just (Resource basicImageData))      = M.lookup basicImageSource resources
+        (Just (Resource basicDescriptorData)) = M.lookup basicDescriptorSource resources
+        vertices = case trial basicVertData #vkGeometry of
                     Left _ -> error "Argh"
                     Right g -> g
-    let imagez = case trial basicImageData #textureImage of
+        imagez = case trial basicImageData #textureImage of
                     Left _ -> error "argh! textures"
                     Right t -> t
-
+        dData = case trial basicDescriptorData #descriptorSetSource of
+                    Left _ -> error "argh! descriptor source"
+                    Right t -> t
+    pPrint vertices
+    pPrint imagez
+    pPrint dData
 
     let d = WB.deviceHandle $ WB.vulkanDeviceBundle wb
-    let gQ = WB.graphicsQueue $ WB.vulkanDeviceBundle wb
-    let gQIndex = WB.graphicsQueueFamilyIndex $ WB.vulkanDeviceBundle wb
-    let pQ = WB.presentQueue $ WB.vulkanDeviceBundle wb
-    let runV = runM . runVulkanMonad wb
+        gQ = WB.graphicsQueue $ WB.vulkanDeviceBundle wb
+        gQIndex = WB.graphicsQueueFamilyIndex $ WB.vulkanDeviceBundle wb
+        pQ = WB.presentQueue $ WB.vulkanDeviceBundle wb
+        runV = runM . runVulkanMonad wb
 
-    VK.withCommandPool d (CommandPoolCreateInfo VK.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT gQIndex) Nothing bracket $ \gPool -> do
-        bracket (runV $ makeCarousel gPool gQ pQ 2 Nothing) (\swc -> runV $ do flushCarousel swc; destroyCarousel swc) $ \swc ->
-          runV $ do
-            syncDescriptorSets swc imagez
-            forM_ [1..300] (\x -> presentNextSlot swc (clearCmd swc vertices x))
+    runV $ withCarousel 2 $ \swc -> do
+      useDescriptorPool dData 0 $ do
+        dSet <- getDescriptorSet
+        case dSet of
+          Nothing -> return ()
+          Just d -> do
+            sendM $ print d
+            releaseDescriptorSet d
+      syncDescriptorSets swc imagez
+      forM_ [1..300] (\x -> presentNextSlot swc (clearCmd swc vertices x))
 
     endLoader loaderInfo
     endBoundSubmitter boundQueue
@@ -137,5 +153,3 @@ updateUni ub elapsedTime (Extent2D width height) = do
   let projMatrix = transpose $ zeroOnePerspective (45 * 3.14159 / 180.0) aspect 0.1 10 !*! scaleMatrix 1 (-1) 1
   let newUniforms = UBO modelMatrix viewMatrix projMatrix
   updateUniformBuffer ub newUniforms
-
-

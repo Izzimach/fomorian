@@ -19,13 +19,6 @@ packages:
   original:
     hackage: wavefront-0.7.1.4@sha256:0a1e4bc3de7a450c8da2c3b962ebc0b54acdeb9664e73cdd4649861740d96024,1999
 - completed:
-    hackage: constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
-    pantry-tree:
-      size: 1054
-      sha256: 0747857df2bcc667534607a740b41ab3701cd6fc4c52f13254319a486c8de02c
-  original:
-    hackage: constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
-- completed:
     hackage: row-types-1.0.1.0@sha256:62d274be07da06aafe2d94b58818234e89e53864d2f65956da2903784c0005a7,2865
     pantry-tree:
       size: 931
@@ -33,12 +26,26 @@ packages:
   original:
     hackage: row-types-1.0.1.0@sha256:62d274be07da06aafe2d94b58818234e89e53864d2f65956da2903784c0005a7,2865
 - completed:
+    hackage: constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
+    pantry-tree:
+      size: 1054
+      sha256: 0747857df2bcc667534607a740b41ab3701cd6fc4c52f13254319a486c8de02c
+  original:
+    hackage: constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
+- completed:
     hackage: vulkan-3.10@sha256:176e30e9f79b76b184ea5349bf83d419a329c942bba0d720fede43f948dbd29d,24500
     pantry-tree:
       size: 66921
       sha256: b7b0b2eea08d075af6739be07daadae2fe1fdbb69513a1b2dac4c284902180db
   original:
     hackage: vulkan-3.10
+- completed:
+    hackage: HList-0.5.0.0@sha256:7d7a0bee8d01a7e0e10bf96c5214a21bebae3ecfc02d14fc13bf75458b38ac43,7137
+    pantry-tree:
+      size: 5718
+      sha256: 2881dd9fe6ee24dad62ecd68be6d98e834823d21b659f4ff0de87475e33371f1
+  original:
+    hackage: HList-0.5.0.0@sha256:7d7a0bee8d01a7e0e10bf96c5214a21bebae3ecfc02d14fc13bf75458b38ac43,7137
 - completed:
     name: zorja
     version: 0.1.0.0

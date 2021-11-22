@@ -11,19 +11,18 @@ import Data.Word (Word32)
 import qualified Data.Vector as V
 import Data.ByteString (readFile)
 
-import System.FilePath
+import Foreign.Storable (Storable (peekByteOff, pokeByteOff), sizeOf, poke, peek, alignment)
+import Foreign.Ptr (castPtr)
 
 import Linear
 
 import Vulkan.Core10 as VK
-import Vulkan.Core10.PipelineLayout as VKPL
+import qualified Vulkan.Core10.PipelineLayout as VKPL
 import Vulkan.CStruct.Extends (SomeStruct(SomeStruct))
 import qualified Vulkan.Zero as VZ
 
 
 import Fomorian.Vulkan.VulkanMonads
-import Foreign.Storable (Storable (peekByteOff, pokeByteOff), sizeOf, poke, peek, alignment)
-import Foreign.Ptr (castPtr)
 
 -- | Make a render pass that draws to a single color and depth attachment. You need to pass in the formats for the color and depth buffer.
 makeSimpleRenderPass :: (InVulkanMonad effs) => Format -> Format -> Eff effs VK.RenderPass
@@ -78,7 +77,7 @@ makeSimpleRenderPass colorFormat depthFormat = do
           (V.fromList [subpassDescription])
           (V.fromList [subpassDependency])
   d <- getDevice
-  createRenderPass d renderPassCreateInfo Nothing
+  VK.createRenderPass d renderPassCreateInfo Nothing
 
 
 buildSimplePipeline :: (InVulkanMonad effs) => (ShaderModule, ShaderModule) -> RenderPass -> PipelineLayout -> Extent2D -> Eff effs Pipeline

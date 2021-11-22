@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 
 -- | This module handles the ring-buffer that buffers drawing frames to the swapchain.
@@ -12,16 +13,16 @@
 --   use N slots.
 module Fomorian.Vulkan.SwapchainCarousel where
 
+import Control.Exception (bracket)
+import Control.Monad (when)
+import Control.Monad.Freer
+
 import Foreign.Storable (sizeOf)
 import Foreign.Ptr (nullPtr)
 
+import Data.IORef (IORef(..), newIORef, readIORef, modifyIORef)
 import Data.Vector (Vector(..), fromList, singleton, (!))
 import qualified Data.Vector as V
-
-import Data.IORef (IORef(..), newIORef, readIORef, modifyIORef)
-
-import Control.Monad.Freer
-
 
 import Vulkan.Core10 (Semaphore, Fence, CommandPool, CommandBuffer, Queue, Framebuffer, DescriptorSet, DescriptorPool)
 import qualified Vulkan.Core10 as VK
@@ -29,6 +30,7 @@ import qualified Vulkan.Zero as VZ
 import Vulkan.CStruct.Extends
 import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
 
+import Fomorian.Vulkan.WindowBundle
 import Fomorian.Vulkan.VulkanMonads
 import Fomorian.Vulkan.Resources.DataBuffers
 import Fomorian.Vulkan.Resources.DescriptorSets
@@ -59,10 +61,24 @@ data SwapchainCarousel =
     swapchainB :: SwapchainBundle
   }
 
+withCarousel :: (InVulkanMonad effs) => Int -> (SwapchainCarousel -> Eff '[VulkanMonad,IO] x) -> Eff effs x
+withCarousel slotCount wrapped = do
+  -- we need to push the freer monads through 'bracket'
+  wb <- getWindowBundle
+  let runV = runM . runVulkanMonad wb
+  let goCarousel = runV $ makeCarousel 2 Nothing
+  let stopCarousel swc = runV $ do flushCarousel swc; destroyCarousel swc
+  sendM $ bracket goCarousel stopCarousel (runV . wrapped)
+
 -- | Build relevant objects for the given swapchain
-makeCarousel :: (InVulkanMonad effs) => CommandPool -> Queue -> Queue -> Int -> Maybe SwapchainBundle -> Eff effs SwapchainCarousel
-makeCarousel cPool gQ pQ slotCount previousSwapchainBundle = do
+makeCarousel :: (InVulkanMonad effs) => Int -> Maybe SwapchainBundle -> Eff effs SwapchainCarousel
+makeCarousel slotCount previousSwapchainBundle = do
   d <- getDevice
+  deviceBundle <- vulkanDeviceBundle <$> getWindowBundle
+  let gQ = graphicsQueue deviceBundle
+  let gQIndex = graphicsQueueFamilyIndex deviceBundle
+  let pQ = presentQueue deviceBundle
+  cPool <- VK.createCommandPool d (VK.CommandPoolCreateInfo VK.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT gQIndex) Nothing 
   swapchain <- makeSwapchainBundle previousSwapchainBundle
   let allocInfo = VK.CommandBufferAllocateInfo cPool VK.COMMAND_BUFFER_LEVEL_PRIMARY (fromIntegral slotCount)
   cmdBuffers <- VK.allocateCommandBuffers d allocInfo
@@ -86,14 +102,15 @@ makeCarousel cPool gQ pQ slotCount previousSwapchainBundle = do
         return $ CarouselSlot startSem endSem completedFence cBuf dSet uBuf
 
 destroyCarousel :: (InVulkanMonad effs) => SwapchainCarousel -> Eff effs ()
-destroyCarousel (SwapchainCarousel slotRef cP gQ pQ slots dPool sb) = do
+destroyCarousel (SwapchainCarousel slotRef cPool gQ pQ slots dPool sb) = do
   d <- getDevice
   mapM_ destroySlot slots
   let cBufs = fmap slotCommandBuffer slots
-  VK.freeCommandBuffers d cP cBufs
+  VK.freeCommandBuffers d cPool cBufs
   -- don't need to destroy descriptor sets, they get destroyed when the pool is destroyed
   unmakeDescriptorPool dPool Nothing
   destroySwapchainBundle sb
+  VK.destroyCommandPool d cPool Nothing
     where
       destroySlot (CarouselSlot startSem endSem completedFence cBuf _dSet uBuf) = do
         d <- getDevice
@@ -125,7 +142,8 @@ presentNextSlot swc f = do
       f cmdBuf fb cSlot
       VK.queueSubmit (gfxQ swc) (fromList [submitInfo]) cmdFence
       let presentInfo = PresentInfoKHR () (fromList [endSem]) (fromList [swapHandle]) (fromList [imgIndex]) nullPtr
-      _ <- VKSWAPCHAIN.queuePresentKHR (presentQ swc) presentInfo
+      presentResult <- VKSWAPCHAIN.queuePresentKHR (presentQ swc) presentInfo
+      when (presentResult /= VK.SUCCESS) (sendM $ print "error presenting framebuffer")
       sendM $ modifyIORef slotRef (\x -> (x+1) `mod` (length (runSlots swc)))
       return ()
     _ -> do sendM $ print "cannot acquire image"

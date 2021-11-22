@@ -28,7 +28,7 @@ import GHC.Int
 import qualified Graphics.UI.GLFW as GLFW
 
 import Vulkan.CStruct.Extends
-import Vulkan.Core10 (Device, PhysicalDevice, Instance, AllocationCallbacks, Queue, DeviceCreateInfo, InstanceCreateInfo)
+import Vulkan.Core10 (Device, PhysicalDevice, PhysicalDeviceProperties, Instance, AllocationCallbacks, Queue, DeviceCreateInfo, InstanceCreateInfo)
 import qualified Vulkan.Core10 as VK
 import qualified Vulkan.Zero as VZ
 import Vulkan.Extensions.VK_EXT_debug_utils
@@ -76,6 +76,7 @@ data DeviceBundle = DeviceBundle
   {
     deviceHandle :: Device,
     physicalDeviceHandle :: PhysicalDevice,
+    physicalDeviceProperties :: PhysicalDeviceProperties,
     -- | Queue to use for graphics drawing commands
     graphicsQueue :: Queue,
     graphicsQueueFamilyIndex :: Word32,
@@ -86,8 +87,7 @@ data DeviceBundle = DeviceBundle
     auxiliaryQueues :: [Queue],
     auxiliaryQueuesFamilyIndex :: Word32
   }
-  deriving (Eq, Show)
-
+  deriving (Show)
 
 withWindowBundle :: WindowInitConfig -> (WindowBundle -> IO ()) -> IO ()
 withWindowBundle config wrapped = bracket startBundle endBundle goBundle
@@ -191,7 +191,8 @@ withPickAndMakeDevice vkInstance vkSurface auxQueueCount allocator wrapped = do
         graphicsQ <- VK.getDeviceQueue vkDevice gqIndex 0
         presentQ <- VK.getDeviceQueue vkDevice pqIndex 0
         auxQs <- mapM (\ix -> VK.getDeviceQueue vkDevice gqIndex ix) [1..auxQueueCount]
-        wrapped (DeviceBundle vkDevice physDevice graphicsQ gqIndex presentQ pqIndex auxQs gqIndex)
+        devProps <- VK.getPhysicalDeviceProperties physDevice
+        wrapped (DeviceBundle vkDevice physDevice devProps graphicsQ gqIndex presentQ pqIndex auxQs gqIndex)
 
 
 -- | pick a device that has both a graphics queue and a present queue for the given instance and surface

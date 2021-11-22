@@ -15,7 +15,7 @@ import Data.Row
 import Linear
 
 import Fomorian.SceneNode
-import Fomorian.SceneResources ( BasicDataSourceTypes, DataSource(DataSource) )
+import Fomorian.SceneResources ( BasicDataSource, DataSource(DataSource) )
 
 
 -- | NeutralSceneTarget requires
@@ -26,8 +26,8 @@ data NeutralSceneTarget
 type instance (InvokeReq NeutralSceneTarget ir) =
   (
     HasType "shader" FilePath ir,
-    HasType "geometry" (DataSource BasicDataSourceTypes) ir,
-    HasType "textures" [DataSource BasicDataSourceTypes] ir
+    HasType "geometry" BasicDataSource ir,
+    HasType "textures" [BasicDataSource] ir
   )
 
 

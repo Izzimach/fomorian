@@ -13,7 +13,7 @@ module Fomorian.Vulkan.VulkanMonads where
 
 import Control.Concurrent (forkOS)
 import Control.Concurrent.STM ( TMVar, atomically, putTMVar, takeTMVar )
-import Control.Exception (bracket)
+import Control.Exception (bracket, mask, onException)
 import Control.Monad.Freer as CMF
 import Control.Monad.Freer.Reader (Reader(..), ask, runReader)
 
@@ -26,6 +26,10 @@ import Fomorian.SimpleMemoryArena
 import Fomorian.Vulkan.WindowBundle
 import Fomorian.Vulkan.Resources.DeviceMemoryTypes (AbstractMemoryType(..))
 import Fomorian.Vulkan.Resources.DeviceMemoryAllocator
+    ( MemoryAllocatorState,
+      MemoryAllocation,
+      allocateDeviceMemory,
+      freeDeviceMemory )
 
 
 import Vulkan.Core10 (Device, PhysicalDevice, MemoryRequirements(..), DeviceSize, commandBufferHandle)
@@ -79,7 +83,6 @@ runVulkanMonad w = runReader w . vulkanMemToState
           sendM $ deallocateSTM (memoryManager wb) b
           return ()
         GetWindowBundle -> ask
-
 
 
 allocateSTM :: TMVar (MemoryAllocatorState AbstractMemoryType) -> MemoryRequirements -> AbstractMemoryType -> IO (Maybe (MemoryAllocation DeviceSize))

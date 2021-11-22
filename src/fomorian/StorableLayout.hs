@@ -87,8 +87,6 @@ type instance ElementalCount (Linear.V3 x) = 3 * ElementalCount x
 type instance ElementalCount (Linear.V4 x) = 4 * ElementalCount x
 
 
-
-
 -- | fomorian representation of a Vertex Attribute. Convert to your backend-specific representation.
 data DataLayoutElement e =
   DataLayoutElement {
