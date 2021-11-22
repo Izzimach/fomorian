@@ -15,6 +15,7 @@ module Fomorian.Vulkan.Resources.DescriptorSetHelper where
 
 import GHC.Generics
 
+import Control.Exception
 import Control.Monad.Freer
 import Control.Monad.Freer.State
 import Control.Concurrent.STM (atomically)
@@ -38,9 +39,11 @@ import qualified Vulkan.Core10 as VK
 import qualified Vulkan.Zero as VZ
 import Vulkan.CStruct.Extends
 
+import Fomorian.SimpleMemoryArena (MemoryBlock(..))
 
 import Fomorian.Vulkan.WindowBundle
 import Fomorian.Vulkan.VulkanMonads
+import Fomorian.Vulkan.Resources.DeviceMemoryAllocator (MemoryAllocation(..))
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DataBuffers
 
@@ -132,6 +135,10 @@ makeDescriptorSetHelperSource dsi dsl = do
   metaPoolVar <- sendM $ newTMVarIO M.empty
   return (DescriptorSetHelperSource metaPoolVar dsi dsl)
 
+dumpDescriptorSetHelperSource :: DescriptorSetHelperSource -> IO ()
+dumpDescriptorSetHelperSource (DescriptorSetHelperSource poolVar info layout) = do
+  allHelpers <- atomically $ readTMVar poolVar
+  putStrLn $ "DescriptorSetHelper " ++ show allHelpers ++ " " ++ show info ++ " " ++ show layout
 
 useDescriptorSetHelperSource :: (InVulkanMonad effs) => DescriptorSetHelperSource -> Int -> Eff (State DescriptorSetHelper ': effs) x -> Eff effs x
 useDescriptorSetHelperSource (DescriptorSetHelperSource poolVar info layout) poolKey poolOp = do
@@ -153,7 +160,9 @@ makeDescriptorSetHelper :: (InVulkanMonad effs) => DescriptorSetInfo -> VK.Descr
 makeDescriptorSetHelper info layout chunkSize = return $ DescriptorSetHelper V.empty V.empty info layout chunkSize
 
 destroyDescriptorSetHelper :: (InVulkanMonad effs) => DescriptorSetHelper -> Eff effs ()
-destroyDescriptorSetHelper = undefined
+destroyDescriptorSetHelper helper@(DescriptorSetHelper free used info layout _)= do
+  let subPools = free V.++ used
+  mapM_ destroyHelperPool subPools
 
 nextDescriptorSetBundle :: (InVulkanMonad effs, Member (State DescriptorSetHelper) effs) => Eff effs DescriptorHelperBundle
 nextDescriptorSetBundle = do
@@ -207,6 +216,7 @@ makeDescriptorSetHelperPool dHelp@(DescriptorSetHelper _ _ info layout setCount)
   dSets <- VK.allocateDescriptorSets d allocateInfo
 
   -- allocate uniform buffers for those descriptors that reference one (a vector of Maybe UBuffer)
+  -- also mapped memory and records pointer to those mapped regions
   uBuffers <- mapM makeUniformBlock bufStrides
 
   -- now build the DescriptorHelperBundles. Each bundle should have a descriptor set and
@@ -222,12 +232,12 @@ makeDescriptorSetHelperPool dHelp@(DescriptorSetHelper _ _ info layout setCount)
       -- for each binding we need to request some amount of descriptors in the pool
       addBindingToPoolSizes b sizeMap =
         let (dType, requestSize :: Word32) =
-          case b of
-            (UniformDescriptor bindIndex stages size align) -> (VK.DESCRIPTOR_TYPE_UNIFORM_BUFFER, fromIntegral $ setCount)
-            (CombinedDescriptor bindIndex stages count im)  -> (VK.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (count * fromIntegral setCount))
+                case b of
+                  (UniformDescriptor bindIndex stages size align) -> (VK.DESCRIPTOR_TYPE_UNIFORM_BUFFER, fromIntegral $ setCount)
+                  (CombinedDescriptor bindIndex stages count im)  -> (VK.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (count * fromIntegral setCount))
         in case M.lookup dType sizeMap of
-          Nothing                                      -> M.insert dType (VK.DescriptorPoolSize dType requestSize) sizeMap
-          Just (VK.DescriptorPoolSize dType prevCount) -> M.insert dType (VK.DescriptorPoolSize dType (prevCount + requestSize)) sizeMap
+                Nothing                                      -> M.insert dType (VK.DescriptorPoolSize dType requestSize) sizeMap
+                Just (VK.DescriptorPoolSize dType prevCount) -> M.insert dType (VK.DescriptorPoolSize dType (prevCount + requestSize)) sizeMap
 
       findUniformStrides (DescriptorSetInfo bindings) minAlign = fmap (bindingToMemStride minAlign) bindings
 
@@ -238,7 +248,11 @@ makeDescriptorSetHelperPool dHelp@(DescriptorSetHelper _ _ info layout setCount)
       alignedSize size align = ((size + align - 1) `div` align) * align
 
       makeUniformBlock Nothing = return Nothing
-      makeUniformBlock (Just stride) = Just <$> makeUniformBuffer (stride * fromIntegral setCount)
+      makeUniformBlock (Just stride) = do
+        d <- getDevice
+        uBuf@(UBuffer _ alloc) <- makeUniformBuffer (stride * fromIntegral setCount)
+        let (MemoryAllocation memHandle _ _ (MemoryBlock _ blockOffset blockSize)) = alloc
+        return $ Just uBuf
 
       createBundle dSets uBuffers info bufStrides ix = do
         let dSet = dSets V.! ix
@@ -247,8 +261,9 @@ makeDescriptorSetHelperPool dHelp@(DescriptorSetHelper _ _ info layout setCount)
 
       calcOffset :: Int -> (Maybe UBuffer, Maybe VK.DeviceSize) -> Maybe (UBuffer, VK.DeviceSize)
       calcOffset ix (Just uBuf, Just str) = Just (uBuf, str * fromIntegral ix)
-      calcOffset _  _                     = Nothing
+      calcOffset _  _                                = Nothing
 
+      -- bind the uniform descriptors to the right spot in the uniform buffer
       bindBundleUniforms (DescriptorSetInfo bindings) (DescriptorHelperBundle dSet bufData) = do
         d <- getDevice
         mapM_ (calcDescriptorWrite dSet) $ zip bindings (V.toList bufData)
@@ -262,7 +277,67 @@ makeDescriptorSetHelperPool dHelp@(DescriptorSetHelper _ _ info layout setCount)
       calcDescriptorWrite _ (_,_)                                                                      = return ()
 
 getFromPool :: DescriptorSetHelperPool -> Maybe (DescriptorHelperBundle, DescriptorSetHelperPool)
-getFromPool = undefined
+getFromPool (DescriptorSetHelperPool free used dPool uBufs) = do
+  case free !? 0 of
+    Nothing -> Nothing
+    Just newVal ->
+      let newFree = V.tail free
+          newUsed = V.snoc used newVal
+          newHelperPool = DescriptorSetHelperPool newFree newUsed dPool uBufs
+      in
+        Just (newVal, newHelperPool)
+        
 
 resetHelperPool :: (InVulkanMonad effs) => DescriptorSetHelperPool -> Eff effs DescriptorSetHelperPool
-resetHelperPool = undefined
+resetHelperPool (DescriptorSetHelperPool free used dPool uBufs) =
+  let allHelpers = free V.++ used
+      newHelperPool = DescriptorSetHelperPool allHelpers V.empty dPool uBufs
+  in
+    return newHelperPool
+
+destroyHelperPool :: (InVulkanMonad effs) => DescriptorSetHelperPool -> Eff effs ()
+destroyHelperPool (DescriptorSetHelperPool free used dPool uBufs) = do
+  d <- getDevice
+  -- sets get destroyed when the pool is destroyed
+  VK.destroyDescriptorPool d dPool Nothing
+  mapM_ destroyUBuffer (V.mapMaybe id uBufs)
+
+type family (EvalWriteType a) :: DSType where
+  EvalWriteType (VK.ImageView,VK.Sampler) = 'DSCombinedSampler
+  EvalWriteType x = 'DSUniform
+
+
+-- | Typeclass to break down an HList and dispatch each element to the right instance of WriteToDescriptor
+class WriteDescriptors r where
+  writeDescriptors :: (InVulkanMonad effs) => VK.DescriptorSet -> HList r -> Vector (Maybe (UBuffer,VK.DeviceSize)) -> Eff effs ()
+
+instance WriteDescriptors '[] where
+  writeDescriptors _ HNil _ = return ()
+
+instance (WriteDescriptors l, EvalWriteType x ~ (ds :: DSType), WriteToDescriptor ds x) => WriteDescriptors (x ': l) where
+  writeDescriptors dSet (HCons h t) uBuffers = writeToDescriptor dSet (Proxy :: Proxy ds) h (V.head uBuffers) >> writeDescriptors dSet t (V.tail uBuffers)
+
+-- | Update a single descriptor, using the type 'DSType' to determine which descriptor type we're trying to write to
+class WriteToDescriptor (ds :: DSType) x where
+  writeToDescriptor :: (InVulkanMonad effs) => VK.DescriptorSet -> Proxy ds -> x -> Maybe (UBuffer,VK.DeviceSize) -> Eff effs ()
+
+instance WriteToDescriptor 'DSCombinedSampler (VK.ImageView,VK.Sampler) where
+  writeToDescriptor dSet _ (iv,sampler) _ = do
+    d <- getDevice
+    let imageInfo = VK.DescriptorImageInfo sampler iv VK.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    let writeDescriptor = SomeStruct $ VK.WriteDescriptorSet () dSet 1 0 1 VK.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER (V.fromList [imageInfo]) V.empty V.empty
+    VK.updateDescriptorSets d (V.fromList [writeDescriptor]) V.empty
+
+instance (Storable x) => WriteToDescriptor 'DSUniform x where
+  writeToDescriptor dSet _ v (Just (UBuffer _ alloc, offsetInBuffer)) = do
+  d <- getDevice
+  let (MemoryAllocation memHandle _ _ (MemoryBlock _ bOffset bSize)) = alloc
+  sendM $ VK.withMappedMemory d memHandle (bOffset + offsetInBuffer) bSize VZ.zero bracket $ \ptr -> poke (castPtr ptr) v
+
+
+-- | Write to a descriptor set using an Hlist. Each element of the hlist is either:
+--   - (ImageView,Sampler) for writing a combined sampler descriptor
+--   - a Storable record for writing to a uniform buffer descriptor
+--   The hlist should match the structure of the HList used to build the DescriptorSetInfo of the helper source originally.
+writeToHelperBundle :: (InVulkanMonad effs, WriteDescriptors r) => DescriptorHelperBundle -> HList r -> Eff effs ()
+writeToHelperBundle (DescriptorHelperBundle dSet uBuffers) toWrite = writeDescriptors dSet toWrite uBuffers

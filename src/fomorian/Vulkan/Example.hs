@@ -22,6 +22,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Vector as V ((!), (//), Vector, fromList, empty, singleton)
 import Data.Row
+import Data.HList
 
 import Linear
 
@@ -35,6 +36,7 @@ import STMLoader.LoadUnload
 import STMLoader.AsyncLoader
 
 import qualified Graphics.UI.GLFW as GLFW
+
 import Vulkan.CStruct.Extends
 import Vulkan.Core10 as VK
 import Vulkan.Zero as VZ
@@ -52,6 +54,7 @@ import Fomorian.Vulkan.SwapchainBundle
 import Fomorian.Vulkan.Resources.Pipeline
 import Fomorian.Vulkan.Resources.ImageBuffers
 import Fomorian.Vulkan.Resources.DescriptorSets
+import Fomorian.Vulkan.Resources.DescriptorSetHelper
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DeviceMemoryTypes
 import Fomorian.Vulkan.Resources.BoundCommandBuffer
@@ -74,7 +77,7 @@ runSomeVulkan = do
     let basicVertSource = DataSource $ IsJust #wavefrontPath "testcube.obj"
         --let basicImageSource = DataSource $ IsJust #coordinates3d [(0,0,0),(1,0,0),(0,1,0)]
         basicImageSource = DataSource $ IsJust #texturePath "owl.png"
-        basicDescriptorSource = DataSource $ IsJust #descriptorSourceSettings $ DescriptorSetInfo [
+        basicDescriptorSource = DataSource $ IsJust #descriptorHelperSettings $ DescriptorSetInfo [
             UniformDescriptor 0 VK.SHADER_STAGE_VERTEX_BIT (fromIntegral $ sizeOf @UniformBufferObject undefined) (fromIntegral $ Foreign.Storable.alignment @UniformBufferObject undefined),
             CombinedDescriptor 1 VK.SHADER_STAGE_FRAGMENT_BIT 1 V.empty
           ]
@@ -90,12 +93,12 @@ runSomeVulkan = do
         imagez = case trial basicImageData #textureImage of
                     Left _ -> error "argh! textures"
                     Right t -> t
-        dData = case trial basicDescriptorData #descriptorSetSource of
+        dData = case trial basicDescriptorData #descriptorSetHelperSource of
                     Left _ -> error "argh! descriptor source"
                     Right t -> t
     pPrint vertices
     pPrint imagez
-    pPrint dData
+    dumpDescriptorSetHelperSource dData
 
     let d = WB.deviceHandle $ WB.vulkanDeviceBundle wb
         gQ = WB.graphicsQueue $ WB.vulkanDeviceBundle wb
@@ -104,16 +107,17 @@ runSomeVulkan = do
         runV = runM . runVulkanMonad wb
 
     runV $ withCarousel 2 $ \swc -> do
-      useDescriptorPool dData 0 $ do
-        dSet <- getDescriptorSet
-        case dSet of
-          Nothing -> return ()
-          Just d -> do
-            sendM $ print d
-            releaseDescriptorSet d
+      useDescriptorSetHelperSource dData 0 $ do
+        for_ [1..5] $ \_ -> do
+          dSetBundle <- nextDescriptorSetBundle
+          let (ImageBuffer _ _ _ iv samp) = imagez
+          writeToHelperBundle dSetBundle $ hEnd $ hBuild (HelperExample Linear.identity Linear.identity Linear.identity) (iv,samp)
+          sendM $ print dSetBundle
+        resetDescriptorSetHelper
       syncDescriptorSets swc imagez
       forM_ [1..300] (\x -> presentNextSlot swc (clearCmd swc vertices x))
 
+    dumpDescriptorSetHelperSource dData
     endLoader loaderInfo
     endBoundSubmitter boundQueue
   where

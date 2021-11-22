@@ -41,7 +41,7 @@ import Data.Vector as V hiding (mapM_,(++))
 
 import Foreign.Storable (Storable, sizeOf, alignment)
 import Foreign.Marshal.Array
-import Foreign.Ptr (nullPtr, plusPtr,castPtr)
+import Foreign.Ptr (Ptr, nullPtr, plusPtr, castPtr)
 import System.FilePath
 
 import Linear
@@ -68,6 +68,7 @@ type VulkanDataSourceTypes = BasicDataSourceTypes
   .+ ("pipelineSettings"  .== PipelineSettings)   -- ^ produces a simplePipeline
   .+ ("descriptorLayoutInfo" .== DescriptorSetInfo)  -- ^ produces a descriptorSetLayout
   .+ ("descriptorSourceSettings"  .== DescriptorSetInfo)  -- ^ produces a descriptorSetSource
+  .+ ("descriptorHelperSettings"  .== DescriptorSetInfo)  -- ^ produces a descriptorSetSource
 
 type VulkanDataSource = DataSource VulkanDataSourceTypes
   
@@ -79,6 +80,7 @@ type VulkanResourceTypes =
   .+ ("simplePipeline"      .== VK.Pipeline)
   .+ ("descriptorSetLayout" .== VK.DescriptorSetLayout)
   .+ ("descriptorSetSource" .== DescriptorSetSource)
+  .+ ("descriptorSetHelperSource" .== DescriptorSetHelperSource)
 
 type VulkanResource = Resource VulkanResourceTypes
 
@@ -165,6 +167,7 @@ data DescriptorSetHelper = DescriptorSetHelper
     dSetLayout :: VK.DescriptorSetLayout,
     subHelperChunkSize :: Int
   }
+  deriving (Show)
 
 data DescriptorSetHelperPool = DescriptorSetHelperPool
   {
@@ -173,12 +176,14 @@ data DescriptorSetHelperPool = DescriptorSetHelperPool
     dPoolHandle :: VK.DescriptorPool,
     uniformBuffers :: Vector (Maybe UBuffer)
   }
+  deriving (Show)
 
 data DescriptorHelperBundle = DescriptorHelperBundle
   {
     dSetHandle :: VK.DescriptorSet,
     dSetUniformBuffers :: Vector (Maybe (UBuffer, DeviceSize))
   }
+  deriving (Show)
 --
 -- Convert into a vulkan target tree and compute needed resources
 --

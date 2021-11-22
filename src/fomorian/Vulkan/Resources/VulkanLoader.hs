@@ -17,58 +17,38 @@ import Control.Monad
 import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Concurrent
 import Control.Concurrent.Async.Pool
-import Control.Exception
-import Control.Concurrent.STM
 
 import Control.Monad.Freer
-import Control.Monad.Freer.Reader (Reader(..), ask, runReader)
 
-import Data.Maybe (isJust, fromMaybe, fromJust)
+import Data.Maybe (fromMaybe, fromJust)
 import Data.Text (Text)
 import Data.ByteString (readFile)
-import Data.Word
 import Data.Row
-import Data.Row.Variants (view)
-import Data.Functor.Foldable
-import Data.Foldable (find)
 import Data.Monoid
 
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Vector as V hiding (mapM_, (++))
-
-import Foreign.Storable (Storable, sizeOf)
-import Foreign.Marshal.Array
-import Foreign.Ptr (nullPtr, plusPtr,castPtr)
 
 import System.FilePath
-
-import Linear
 
 import STMLoader.LoadUnload
 import STMLoader.AsyncLoader
 
-import Fomorian.SceneNode
-import Fomorian.NeutralSceneTarget
 import Fomorian.SceneResources
-import Fomorian.SimpleMemoryArena
-import Fomorian.GraphicsLoaders.ProcessWavefront (OBJBufferRecord, loadWavefrontOBJFile)
 
 import Fomorian.Vulkan.WindowBundle
 import Fomorian.Vulkan.VulkanMonads
 import Fomorian.Vulkan.Resources.BoundCommandBuffer
-import Fomorian.Vulkan.Resources.DeviceMemoryTypes (AbstractMemoryType(..))
-import Fomorian.Vulkan.Resources.DeviceMemoryAllocator
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DescriptorSets
+import Fomorian.Vulkan.Resources.DescriptorSetHelper
 import Fomorian.Vulkan.Resources.DataBuffers
 import Fomorian.Vulkan.Resources.Pipeline
 import Fomorian.Vulkan.Resources.ImageBuffers (makeTextureImage, unmakeTextureImage)
 
 
-import Vulkan.Core10 (Buffer, Device, MemoryRequirements(..), BufferUsageFlags, BufferCreateInfo(..), DeviceSize)
 import qualified Vulkan.Core10 as VK
 import Vulkan.Zero as VZ
 
@@ -92,6 +72,7 @@ computeVulkanResourceDependencies _wb (DataSource d) = switch d $
                               in return $ S.fromList (singletonDeps ++ dsDeps))
   .+ #descriptorLayoutInfo .== noDep
   .+ #descriptorSourceSettings  .== (\s -> return $ S.singleton (DataSource $ IsJust #descriptorLayoutInfo s))    -- ^ need a DescriptorSetLayout first
+  .+ #descriptorHelperSettings  .== (\s -> return $ S.singleton (DataSource $ IsJust #descriptorLayoutInfo s))    -- ^ need a DescriptorSetLayout first
     where
       noDep _ = return S.empty  
 
@@ -113,6 +94,7 @@ loadVulkanResource wb bQ prebuilt (DataSource r) depsMap = switch r $
   .+ #pipelineSettings  .== undefined
   .+ #descriptorLayoutInfo .== inMonad . loadDescriptorSetLayout
   .+ #descriptorSourceSettings .== inMonad . loadDescriptorSetSource (findDep depsMap (Label @"descriptorSetLayout"))
+  .+ #descriptorHelperSettings .== inMonad . loadDescriptorSetHelperSource (findDep depsMap (Label @"descriptorSetLayout"))
   where
     -- we need this type declaration to avoid the "monomorphism restriction"
     inMonad :: Eff '[OneShotSubmitter, VulkanMonad, IO] x -> IO x
@@ -123,6 +105,9 @@ loadVulkanResource wb bQ prebuilt (DataSource r) depsMap = switch r $
 
     loadDescriptorSetSource :: (InVulkanMonad effs) => Maybe VK.DescriptorSetLayout -> DescriptorSetInfo -> Eff effs VulkanResource
     loadDescriptorSetSource dLayout dInfo = Resource . IsJust #descriptorSetSource <$> makeDescriptorSetSource dInfo (fromJust dLayout)
+
+    loadDescriptorSetHelperSource :: (InVulkanMonad effs) => Maybe VK.DescriptorSetLayout -> DescriptorSetInfo -> Eff effs VulkanResource
+    loadDescriptorSetHelperSource dLayout dInfo = Resource . IsJust #descriptorSetHelperSource <$> makeDescriptorSetHelperSource dInfo (fromJust dLayout)
 
     loadVulkanTextureFromPath :: FilePath -> IO VulkanResource
     loadVulkanTextureFromPath tp =  do
@@ -148,7 +133,7 @@ loadVulkanResource wb bQ prebuilt (DataSource r) depsMap = switch r $
 unloadVulkanResource :: WindowBundle -> BoundQueueThread -> ResourceInfo VulkanDataSource VulkanResource -> IO ()
 unloadVulkanResource wb bQ (ResourceInfo _ (Resource r) _) = 
   let inMonad = runM . runVulkanMonad wb . runBoundOneShot bQ
-      noUnload _ = return ()
+      --noUnload _ = return ()
   in
     switch r $
          #vkGeometry           .== inMonad . unloadGeometry
@@ -158,6 +143,7 @@ unloadVulkanResource wb bQ (ResourceInfo _ (Resource r) _) =
       .+ #simplePipeline       .== undefined
       .+ #descriptorSetLayout  .== inMonad . unloadDescriptorSetLayout
       .+ #descriptorSetSource  .== inMonad . destroyDescriptorSetSource
+      .+ #descriptorSetHelperSource .== inMonad . destroyDescriptorSetHelperSource
 
 vulkanLoaderCallbacks :: WindowBundle -> BoundQueueThread -> Map Text BasicResource -> LoadUnloadCallbacks VulkanDataSource VulkanResource VulkanError
 vulkanLoaderCallbacks wb bQ prebuilt =
