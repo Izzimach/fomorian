@@ -11,12 +11,8 @@
 -- | Module for the vulkan resource loader. This hooks up all the calls to load/unload various resources and memory.
 module Fomorian.Vulkan.Resources.VulkanLoader where
 
-import GHC.Generics
 
 import Control.Monad
-import Control.Monad.IO.Class (liftIO, MonadIO)
-import Control.Concurrent
-import Control.Concurrent.Async.Pool
 
 import Control.Monad.Freer
 
@@ -30,6 +26,7 @@ import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Map (Map)
 import qualified Data.Map as M
+import qualified Data.Vector as V
 
 import System.FilePath
 
@@ -65,8 +62,8 @@ computeVulkanResourceDependencies _wb (DataSource d) = switch d $
                               let singletonDeps = 
                                       [
                                         DataSource $ IsJust #renderPassFormat rpFormat,
-                                        DataSource $ IsJust #shaderPath (shSource ++ "vert.spv"),
-                                        DataSource $ IsJust #shaderPath (shSource ++ "frag.spv")
+                                        DataSource $ IsJust #shaderPath (shSource ++ "vert"),
+                                        DataSource $ IsJust #shaderPath (shSource ++ "frag")
                                       ]
                                   dsDeps = fmap (DataSource . IsJust #descriptorLayoutInfo) dsLayouts
                               in return $ S.fromList (singletonDeps ++ dsDeps))
@@ -91,7 +88,7 @@ loadVulkanResource wb bQ prebuilt (DataSource r) depsMap = switch r $
   .+ #shaderPath        .== loadVulkanShaderFromPath
   .+ #texturePath       .== loadVulkanTextureFromPath
   .+ #renderPassFormat  .== loadRenderPass
-  .+ #pipelineSettings  .== undefined
+  .+ #pipelineSettings  .== inMonad . loadVulkanPipeline depsMap
   .+ #descriptorLayoutInfo .== inMonad . loadDescriptorSetLayout
   .+ #descriptorSourceSettings .== inMonad . loadDescriptorSetSource (findDep depsMap (Label @"descriptorSetLayout"))
   .+ #descriptorHelperSettings .== inMonad . loadDescriptorSetHelperSource (findDep depsMap (Label @"descriptorSetLayout"))
@@ -109,6 +106,20 @@ loadVulkanResource wb bQ prebuilt (DataSource r) depsMap = switch r $
     loadDescriptorSetHelperSource :: (InVulkanMonad effs) => Maybe VK.DescriptorSetLayout -> DescriptorSetInfo -> Eff effs VulkanResource
     loadDescriptorSetHelperSource dLayout dInfo = Resource . IsJust #descriptorSetHelperSource <$> makeDescriptorSetHelperSource dInfo (fromJust dLayout)
 
+    loadVulkanPipeline :: (InVulkanMonad effs) => Map VulkanDataSource VulkanResource -> PipelineSettings -> Eff effs VulkanResource
+    loadVulkanPipeline depsMap (SimplePipelineSettings rpFormat shSource dsLayouts) = do
+      let rPass = findDep depsMap (Label @"renderPass")
+          vShader = pullResource depsMap (DataSource $ IsJust #shaderPath (shSource ++ "vert")) (Label @"shaderModule")
+          fShader = pullResource depsMap (DataSource $ IsJust #shaderPath (shSource ++ "frag")) (Label @"shaderModule")
+          dsDeps = fmap (DataSource . IsJust #descriptorLayoutInfo) dsLayouts 
+          dLayouts = fmap (\x -> fromJust $ pullResource depsMap x (Label @"descriptorSetLayout")) dsDeps
+      -- viewport and scissor are bound dynamically so the Extent2D is ignored
+      let pipelineLayoutCreate = VK.PipelineLayoutCreateInfo VZ.zero (V.fromList dLayouts) V.empty
+      d <- getDevice
+      pLayout <- VK.createPipelineLayout d pipelineLayoutCreate Nothing
+      pipe <- buildSimplePipeline (fromJust vShader, fromJust fShader) (fromJust rPass) pLayout (VK.Extent2D 300 300)
+      return $ Resource $ IsJust #simplePipeline (PipelineBundle pLayout pipe)
+
     loadVulkanTextureFromPath :: FilePath -> IO VulkanResource
     loadVulkanTextureFromPath tp =  do
       t <- inMonad $ makeTextureImage ("resources" </> "textures" </> tp) Nothing
@@ -116,10 +127,11 @@ loadVulkanResource wb bQ prebuilt (DataSource r) depsMap = switch r $
 
     loadVulkanShaderFromPath :: FilePath -> IO VulkanResource
     loadVulkanShaderFromPath sp = inMonad $ do
-      sBytes <- sendM $ Data.ByteString.readFile sp
       d <- getDevice
-      sx <- VK.createShaderModule d (VK.ShaderModuleCreateInfo () VZ.zero sBytes) Nothing
-      return $ Resource $ IsJust #shaderModule sx
+      let shPath = "resources" </> "shaders" </> (sp ++ ".spv")
+      shBytes <- sendM $ Data.ByteString.readFile shPath
+      shModule <- sendM $ VK.createShaderModule d (VK.ShaderModuleCreateInfo () VZ.zero shBytes) Nothing
+      return $ Resource $ IsJust #shaderModule shModule
 
     basicVulkanLoad :: BasicResource -> IO VulkanResource
     basicVulkanLoad (Resource baseResource) = 
@@ -140,10 +152,16 @@ unloadVulkanResource wb bQ (ResourceInfo _ (Resource r) _) =
       .+ #textureImage         .== inMonad . unmakeTextureImage
       .+ #shaderModule         .== (\s -> inMonad $ do d <- getDevice; VK.destroyShaderModule d s Nothing)
       .+ #renderPass           .== (\rp -> inMonad $ do d <- getDevice; VK.destroyRenderPass d rp Nothing)
-      .+ #simplePipeline       .== undefined
+      .+ #simplePipeline       .== inMonad . unloadPipeline
       .+ #descriptorSetLayout  .== inMonad . unloadDescriptorSetLayout
       .+ #descriptorSetSource  .== inMonad . destroyDescriptorSetSource
       .+ #descriptorSetHelperSource .== inMonad . destroyDescriptorSetHelperSource
+  where
+    unloadPipeline (PipelineBundle pLayout pipe) = do
+        destroySimplePipeline pipe
+        d <- getDevice
+        VK.destroyPipelineLayout d pLayout Nothing
+        
 
 vulkanLoaderCallbacks :: WindowBundle -> BoundQueueThread -> Map Text BasicResource -> LoadUnloadCallbacks VulkanDataSource VulkanResource VulkanError
 vulkanLoaderCallbacks wb bQ prebuilt =

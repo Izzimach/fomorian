@@ -73,12 +73,27 @@ library
       Fomorian.OpenGL.OpenGLResources
       Fomorian.OpenGL.PlatformRenderer
       Fomorian.GraphicsLoaders.ProcessWavefront
+      Fomorian.Vulkan.Resources.VulkanLoader
+      Fomorian.Vulkan.Resources.DescriptorSetHelper
   hs-source-dirs: src
 
 executable example
   import: deps
   main-is: fomorian/Main.hs
   other-modules:
+      Fomorian.CommonSceneNodes
+      Fomorian.GraphicsLoaders.ProcessWavefront
+      Fomorian.NeutralSceneTarget
+      Fomorian.OpenGL.GLBoundThread
+      Fomorian.OpenGL.OpenGLCommand
+      Fomorian.OpenGL.OpenGLResources
+      Fomorian.OpenGL.PlatformRenderer
+      Fomorian.PlatformRenderer
+      Fomorian.SceneNode
+      Fomorian.SceneResources
+      Fomorian.SimpleMemoryArena
+      Fomorian.ThreadedApp
+      Fomorian.Windowing
   build-depends: vulkan
   hs-source-dirs: src
   c-sources: csrc/VulkanCallback.c

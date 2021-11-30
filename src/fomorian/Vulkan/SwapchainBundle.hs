@@ -31,11 +31,14 @@ import Fomorian.Vulkan.Resources.Pipeline
 data SwapchainPerImageData = SwapchainPerImageData Image ImageView DepthBuffer Framebuffer
   deriving (Eq,Show)
 
+data SwapchainPresentInfo = SwapchainPresentInfo Format Format Extent2D
+
 data SwapchainBundle =
   SwapchainBundle
   {
     relevantCreateInfo :: SwapchainCreateInfoKHR '[],
     swapchainHandle :: SwapchainKHR,
+    swapchainPresentInfo :: SwapchainPresentInfo,
     swapchainRenderPass :: VK.RenderPass,
     swapchainDescriptorLayout :: VK.DescriptorSetLayout,
     swapchainPipeLayout :: VK.PipelineLayout,
@@ -53,7 +56,7 @@ makeSwapchainBundle previousSwapchain = do
   newSwapchain <- createSwapchainKHR d createInfo allocator
   (_, newImages) <- getSwapchainImagesKHR d newSwapchain
   let ext = VKSWAPCHAIN.imageExtent createInfo
-  let fmt = VKSWAPCHAIN.imageFormat createInfo
+      fmt = VKSWAPCHAIN.imageFormat createInfo
   depthFormat <- findDepthFormat
   rPass <- makeSimpleRenderPass fmt depthFormat
   descriptorLayout <- makeDescriptorSetLayout
@@ -62,7 +65,8 @@ makeSwapchainBundle previousSwapchain = do
   (vm, fm) <- sendM $ readSPIRV d "tut"
   pipeline <- buildSimplePipeline (vm,fm) rPass pipelineLayout (VKSWAPCHAIN.imageExtent createInfo)
   perImage <- mapM (makePerImageData ext rPass fmt) newImages
-  return $ SwapchainBundle createInfo newSwapchain rPass descriptorLayout pipelineLayout (vm,fm) pipeline perImage
+  let presentInfo = SwapchainPresentInfo fmt depthFormat ext
+  return $ SwapchainBundle createInfo newSwapchain presentInfo rPass descriptorLayout pipelineLayout (vm,fm) pipeline perImage
   
 destroySwapchainBundle :: (InVulkanMonad effs) => SwapchainBundle -> Eff effs ()
 destroySwapchainBundle scBundle = do
@@ -75,9 +79,6 @@ destroySwapchainBundle scBundle = do
   VK.destroyPipelineLayout d (swapchainPipeLayout scBundle) Nothing
   VK.destroyRenderPass d (swapchainRenderPass scBundle) Nothing
   destroySwapchainKHR d (swapchainHandle scBundle) Nothing
-
-
-
 
 makePerImageData :: (InVulkanMonad effs) => Extent2D -> RenderPass -> Format -> Image -> Eff effs SwapchainPerImageData
 makePerImageData (Extent2D w h) rPass fmt img =
@@ -149,8 +150,8 @@ chooseSwapChainImageCount s =
   let minImages = VKSURFACE.minImageCount s
       maxImages = VKSURFACE.maxImageCount s
       desiredImages = minImages + 1
-   in -- if 'maxImages' is 0 there is no upper limit so we don't need to clamp
-      if maxImages == 0
+  in -- if 'maxImages' is 0 there is no upper limit so we don't need to clamp
+    if maxImages == 0
       then desiredImages
       else min desiredImages maxImages
 
@@ -163,7 +164,7 @@ choosePresentationFormat fs =
       formatCount = length fs
       hasFormat =
         ( \f ->
-              (VKSURFACE.format f == desiredFormat)
+                 (VKSURFACE.format f     == desiredFormat)
               && (VKSURFACE.colorSpace f == desiredColorspace)
         )
    in -- the driver can throw up it's hands (if it had hands) and say "idc what format you use"
@@ -178,7 +179,7 @@ choosePresentationFormat fs =
 chooseSwapChainImageSize :: VKSURFACE.SurfaceCapabilitiesKHR -> Extent2D
 chooseSwapChainImageSize s =
   let (Extent2D w _h) = VKSURFACE.currentExtent s
-   in -- use whatever currentExtent is. If currentExtent is -1 we have to choose our own extent
+    in -- use whatever currentExtent is. If currentExtent is -1 we have to choose our own extent
       if w /= maxBound
         then VKSURFACE.currentExtent s
         else
@@ -186,7 +187,7 @@ chooseSwapChainImageSize s =
               (Extent2D maxW maxH) = VKSURFACE.maxImageExtent s
               chooseW = max minW (min maxW 640)
               chooseH = max minH (min maxH 480)
-           in Extent2D chooseW chooseH
+          in Extent2D chooseW chooseH
 
 checkSwapChainUsageAndTransform :: VKSURFACE.SurfaceCapabilitiesKHR -> (VK.ImageUsageFlagBits, VKSURFACE.SurfaceTransformFlagBitsKHR)
 checkSwapChainUsageAndTransform s =

@@ -80,7 +80,7 @@ makeSimpleRenderPass colorFormat depthFormat = do
   VK.createRenderPass d renderPassCreateInfo Nothing
 
 
-buildSimplePipeline :: (InVulkanMonad effs) => (ShaderModule, ShaderModule) -> RenderPass -> PipelineLayout -> Extent2D -> Eff effs Pipeline
+buildSimplePipeline :: (InVulkanMonad effs) => (ShaderModule, ShaderModule) -> RenderPass -> PipelineLayout -> Extent2D -> Eff effs VK.Pipeline
 buildSimplePipeline (vm,fm) rPass pipelineLayout windowExtent@(Extent2D w h) = do
   let sampleCount = SAMPLE_COUNT_1_BIT
   let allocator = Nothing
@@ -100,6 +100,7 @@ buildSimplePipeline (vm,fm) rPass pipelineLayout windowExtent@(Extent2D w h) = d
   let rasterizerState = PipelineRasterizationStateCreateInfo () VZ.zero False False POLYGON_MODE_FILL CULL_MODE_BACK_BIT FRONT_FACE_CLOCKWISE False 0 0 0 1.0
   -- multisample is basically disabled
   let initMultisampleState = PipelineMultisampleStateCreateInfo () VZ.zero sampleCount False 1.0 V.empty False False
+  -- viewport and scissor are dynamically bound in the command buffer and so they are ignored here
   let viewport = Viewport 0.0 0.0 (fromIntegral w) (fromIntegral h) 0.0 1.0
   let scissor = Rect2D (Offset2D 0 0) windowExtent
   let initViewportState = PipelineViewportStateCreateInfo () VZ.zero 1 (V.singleton viewport) 1 (V.singleton scissor)
@@ -127,9 +128,7 @@ buildSimplePipeline (vm,fm) rPass pipelineLayout windowExtent@(Extent2D w h) = d
         VZ.zero            -- back (stencil)
         0.0             -- minDepthBounds
         1.0             -- maxDepthBounds
-  let dynamicStateCreate = PipelineDynamicStateCreateInfo VZ.zero (V.fromList [DYNAMIC_STATE_VIEWPORT])
-  --let pipelineLayoutCreate = VZ.zero { VKPL.setLayouts = V.fromList dSets }
-  --pipelineLayout <- createPipelineLayout device pipelineLayoutCreate allocator
+  let dynamicStateCreate = PipelineDynamicStateCreateInfo VZ.zero (V.fromList [DYNAMIC_STATE_VIEWPORT, DYNAMIC_STATE_SCISSOR])
   let pipelineCreateInfo =
         GraphicsPipelineCreateInfo
           () -- next

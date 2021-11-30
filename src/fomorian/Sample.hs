@@ -20,7 +20,7 @@ module Fomorian.Sample where
 
 import Linear
 import Data.Row
-import Data.Text (Text, pack)
+import Data.Text (Text)
 import Data.Map as M
 
 import Fomorian.SceneNode
@@ -30,7 +30,6 @@ import Fomorian.SceneResources
 import Fomorian.CommonSceneNodes
 
 import Fomorian.PlatformRenderer
-import Fomorian.SceneResources (vertex2ToGeometry)
 import Fomorian.OpenGL.OpenGLResources
 
 

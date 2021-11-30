@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedLabels #-}
 
-module Fomorian.Main where
+module Main where
 
 import qualified Fomorian.Sample (testScene3d)
 
@@ -11,12 +11,12 @@ import qualified Data.Map as M
 import Fomorian.ThreadedApp
 import Fomorian.OpenGL.PlatformRenderer
 --import Fomorian.Vulkan.PlatformRenderer
---import Fomorian.Vulkan.Example
+import Fomorian.Vulkan.Example
 
 main :: IO ()
 main = do
-  --Fomorian.Vulkan.Example.runSomeVulkan
-  threadTest
+  Fomorian.Vulkan.Example.runSomeVulkan
+  --threadTest
 
 newtype AppState = AppState Int
 

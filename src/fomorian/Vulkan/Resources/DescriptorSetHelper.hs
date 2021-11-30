@@ -306,7 +306,6 @@ type family (EvalWriteType a) :: DSType where
   EvalWriteType (VK.ImageView,VK.Sampler) = 'DSCombinedSampler
   EvalWriteType x = 'DSUniform
 
-
 -- | Typeclass to break down an HList and dispatch each element to the right instance of WriteToDescriptor
 class WriteDescriptors r where
   writeDescriptors :: (InVulkanMonad effs) => VK.DescriptorSet -> HList r -> Vector (Maybe (UBuffer,VK.DeviceSize)) -> Eff effs ()
@@ -330,9 +329,9 @@ instance WriteToDescriptor 'DSCombinedSampler (VK.ImageView,VK.Sampler) where
 
 instance (Storable x) => WriteToDescriptor 'DSUniform x where
   writeToDescriptor dSet _ v (Just (UBuffer _ alloc, offsetInBuffer)) = do
-  d <- getDevice
-  let (MemoryAllocation memHandle _ _ (MemoryBlock _ bOffset bSize)) = alloc
-  sendM $ VK.withMappedMemory d memHandle (bOffset + offsetInBuffer) bSize VZ.zero bracket $ \ptr -> poke (castPtr ptr) v
+    d <- getDevice
+    let (MemoryAllocation memHandle _ _ (MemoryBlock _ bOffset bSize)) = alloc
+    sendM $ VK.withMappedMemory d memHandle (bOffset + offsetInBuffer) bSize VZ.zero bracket $ \ptr -> poke (castPtr ptr) v
 
 
 -- | Write to a descriptor set using an Hlist. Each element of the hlist is either:

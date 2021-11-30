@@ -27,6 +27,7 @@ module Fomorian.SceneResources
     loadWithPrebuilts,
     vertex2ToGeometry,
     wavefrontGeometry,
+    pullResource,
     BufferFill(..)
   )
   where
@@ -181,3 +182,11 @@ loadWithPrebuilts prebuiltMap (DataSource bd) = fmap Resource $ switch bd $
   .+ #shaderPath     .== (\fp -> do b <- B.readFile ("resources" </> "shaders" </> fp); return (IsJust #shaderBytes b))
   .+ #texturePath    .== (\fp -> do b <- B.readFile ("resources "</> "textures" </> fp); return (IsJust #textureBytes b))
 
+-- | Lookup a resource and check the variant label. Returns a Just value if the lookup succeeds and the label matches
+pullResource :: (Forall d Eq, Forall d Ord, KnownSymbol l) => M.Map (DataSource d) (Resource r) -> DataSource d -> Label l -> Maybe (r .! l)
+pullResource resources d l =
+  case M.lookup d resources of
+    Nothing -> Nothing
+    Just (Resource r) -> case trial r l of
+                            Left _ -> Nothing
+                            Right v -> Just v

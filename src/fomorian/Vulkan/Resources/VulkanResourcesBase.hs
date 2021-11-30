@@ -77,7 +77,7 @@ type VulkanResourceTypes =
   .+ ("textureImage"   .== ImageBuffer)
   .+ ("shaderModule"   .== ShaderModule)
   .+ ("renderPass"     .== RenderPass)
-  .+ ("simplePipeline"      .== VK.Pipeline)
+  .+ ("simplePipeline"      .== PipelineBundle)
   .+ ("descriptorSetLayout" .== VK.DescriptorSetLayout)
   .+ ("descriptorSetSource" .== DescriptorSetSource)
   .+ ("descriptorSetHelperSource" .== DescriptorSetHelperSource)
@@ -112,6 +112,9 @@ data PipelineSettings =
     shaderSource :: FilePath,
     descriptorSetLayouts :: [DescriptorSetInfo]
   }
+  deriving (Eq, Ord, Show)
+
+data PipelineBundle = PipelineBundle VK.PipelineLayout VK.Pipeline
   deriving (Eq, Ord, Show)
 
 data DescriptorBinding where
