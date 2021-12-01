@@ -5,7 +5,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE PolyKinds #-}
@@ -161,7 +160,7 @@ instance (ElementalField c) => SingleElementG (K1 i c) where
   singleElementG (K1 _) = singleLayoutElement (Proxy @c)
 
 
--- instance to handle records with multiple fields (products)
+-- | Instance to handle records with multiple fields (products)
 class RecordLayoutG f where
   recordLayoutG :: f p -> DataLayoutMap
 
@@ -179,6 +178,7 @@ instance (SingleElementG f, KnownSymbol lbl) => RecordLayoutG (M1 S ('MetaSel ('
 instance (RecordLayoutG f) => RecordLayoutG (M1 D t f) where
   recordLayoutG (M1 x) = recordLayoutG x
 
+-- we ignore metadata that isn't a field selector
 instance (RecordLayoutG f) => RecordLayoutG (M1 C t f) where
   recordLayoutG (M1 x) = recordLayoutG x
 

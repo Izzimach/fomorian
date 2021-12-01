@@ -5,12 +5,47 @@
 
 packages:
 - completed:
+    hackage: Cabal-3.4.1.0@sha256:664179b2b713dd0436d870640eb342c7758726b23bd6d85d2a6c573452d75e77,30533
+    pantry-tree:
+      size: 45845
+      sha256: 3ff649b92452af2cd492e01e0e6bbed2008471f62038b758e48fafe1fd6a724d
+  original:
+    hackage: Cabal-3.4.1.0@sha256:664179b2b713dd0436d870640eb342c7758726b23bd6d85d2a6c573452d75e77,30533
+- completed:
     hackage: GLUtil-0.10.4@sha256:48f76f9c9666e45062c2fc4146162ca69dc773c742e61e06d752ca05ca1754ba,3217
     pantry-tree:
       size: 1618
       sha256: 370a3e73ae8f35fd5c2913320b5d3a5f7170ae649177d207a6b7ed91534c1281
   original:
     hackage: GLUtil-0.10.4@sha256:48f76f9c9666e45062c2fc4146162ca69dc773c742e61e06d752ca05ca1754ba,3217
+- completed:
+    hackage: constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
+    pantry-tree:
+      size: 1054
+      sha256: 0747857df2bcc667534607a740b41ab3701cd6fc4c52f13254319a486c8de02c
+  original:
+    hackage: constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
+- completed:
+    hackage: directory-1.3.7.0@sha256:4d59f9714700e69d139084b47204fc91f13f31546aac39d666279996192b0d11,2940
+    pantry-tree:
+      size: 3433
+      sha256: 88b74942886e886b22ac1f3f0f65168563df4848766f372aaf014f712d3abb9a
+  original:
+    hackage: directory-1.3.7.0@sha256:4d59f9714700e69d139084b47204fc91f13f31546aac39d666279996192b0d11,2940
+- completed:
+    hackage: row-types-1.0.1.2@sha256:5c56e91d30b61f275eaee0d97b015d5332d95d7599e57582d6e62a43aa388087,2948
+    pantry-tree:
+      size: 1060
+      sha256: 5fb893f6e14aff59d6f2be39b4b288c66d53551f746c44edd0d069487ce167bd
+  original:
+    hackage: row-types-1.0.1.2@sha256:5c56e91d30b61f275eaee0d97b015d5332d95d7599e57582d6e62a43aa388087,2948
+- completed:
+    hackage: time-1.10@sha256:536801b30aa2ce66da07cb19847827662650907efb2af4c8bef0a6276445075f,5738
+    pantry-tree:
+      size: 6693
+      sha256: 1591d9d1034f19cd38fbda525969f805b5ca083b45da85602cf2b04c1a82f640
+  original:
+    hackage: time-1.10@sha256:536801b30aa2ce66da07cb19847827662650907efb2af4c8bef0a6276445075f,5738
 - completed:
     hackage: wavefront-0.7.1.4@sha256:0a1e4bc3de7a450c8da2c3b962ebc0b54acdeb9664e73cdd4649861740d96024,1999
     pantry-tree:
@@ -19,19 +54,12 @@ packages:
   original:
     hackage: wavefront-0.7.1.4@sha256:0a1e4bc3de7a450c8da2c3b962ebc0b54acdeb9664e73cdd4649861740d96024,1999
 - completed:
-    hackage: row-types-1.0.1.0@sha256:62d274be07da06aafe2d94b58818234e89e53864d2f65956da2903784c0005a7,2865
+    hackage: process-1.6.13.2@sha256:a6530a5698796e29d85817f74ca3ae20d2172fb9fa52b492c2e6816e1306bfe8,2963
     pantry-tree:
-      size: 931
-      sha256: 0982996f259a250f4524466af479a8ca90ff72b143a3b9095ace24b1c371c4d5
+      size: 1543
+      sha256: 045d10d710f046aa69ab3dd3f425b9479820809d6c3ca1596e0b995bcf49ac7a
   original:
-    hackage: row-types-1.0.1.0@sha256:62d274be07da06aafe2d94b58818234e89e53864d2f65956da2903784c0005a7,2865
-- completed:
-    hackage: constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
-    pantry-tree:
-      size: 1054
-      sha256: 0747857df2bcc667534607a740b41ab3701cd6fc4c52f13254319a486c8de02c
-  original:
-    hackage: constrained-categories-0.4.1.0@sha256:388757eb8ec34aca27feec47d84e0407ddae452984e7ede3bd62f3b37afead3f,3482
+    hackage: process-1.6.13.2@sha256:a6530a5698796e29d85817f74ca3ae20d2172fb9fa52b492c2e6816e1306bfe8,2963
 - completed:
     hackage: vulkan-3.10@sha256:176e30e9f79b76b184ea5349bf83d419a329c942bba0d720fede43f948dbd29d,24500
     pantry-tree:
@@ -59,7 +87,7 @@ packages:
     commit: ddf713c278bb44ef66ccf1327f5c9d3e9161120a
 snapshots:
 - completed:
-    size: 585393
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/0.yaml
-    sha256: c632012da648385b9fa3c29f4e0afd56ead299f1c5528ee789058be410e883c0
-  original: lts-18.0
+    size: 587126
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/8.yaml
+    sha256: 93a107557e8691ed5ca17beaee41e68222b142c48868fc8c04a4181fb233477d
+  original: lts-18.8

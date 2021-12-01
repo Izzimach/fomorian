@@ -12,21 +12,17 @@
 module Fomorian.Vulkan.Example where
 
 import Control.Exception
-import Control.Monad.IO.Class
-import Control.Concurrent.STM
 import Control.Monad.Freer
 
 import Data.Foldable
-import Data.IORef
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Data.Vector as V ((!), (//), Vector, fromList, empty, singleton)
+import qualified Data.Vector as V
 import Data.Row
 import Data.HList
 
 import Linear
 
-import Foreign.Ptr
 import Foreign.Storable (sizeOf, alignment)
 
 import Text.Pretty.Simple (pPrint)
@@ -35,18 +31,13 @@ import System.FilePath ((</>))
 import STMLoader.LoadUnload
 import STMLoader.AsyncLoader
 
-import qualified Graphics.UI.GLFW as GLFW
-
 import Vulkan.CStruct.Extends
 import Vulkan.Core10 (Extent2D(..), ClearValue(Color, DepthStencil), Offset2D(..), Rect2D(..), ClearColorValue(Float32), ClearDepthStencilValue(..))
 import qualified Vulkan.Core10 as VK
 import Vulkan.Zero as VZ
 import Vulkan.Exception
-import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
 
-import Fomorian.Windowing
 import Fomorian.SceneResources
-import Fomorian.SimpleMemoryArena (MemoryAlignment(..))
 import qualified Fomorian.Vulkan.WindowBundle as WB
 
 import Fomorian.Vulkan.VulkanMonads
@@ -76,15 +67,7 @@ runSomeVulkan = do
     boundQueue <- aQueue `seq` forkBoundSubmitter wb aQueue
     loaderInfo <- startLoader wb boundQueue prebuiltResources
 
-    --pPrint vertices
-    --pPrint imagez
-    --dumpDescriptorSetHelperSource dData
-
-    let d = WB.deviceHandle $ WB.vulkanDeviceBundle wb
-        gQ = WB.graphicsQueue $ WB.vulkanDeviceBundle wb
-        gQIndex = WB.graphicsQueueFamilyIndex $ WB.vulkanDeviceBundle wb
-        pQ = WB.presentQueue $ WB.vulkanDeviceBundle wb
-        runV = runM . runVulkanMonad wb
+    let runV = runM . runVulkanMonad wb
 
     finally 
       (do
@@ -97,8 +80,6 @@ runSomeVulkan = do
          )
   where
     clearCmd swc resourceLoader curTime cBuf frameBuf cSlot = do
-      --let swapchainBundle = swapchainB swc
-      --let rPass = swapchainRenderPass swapchainBundle
       let (SwapchainPresentInfo cFormat dFormat ext2d@(Extent2D w h)) = swapchainPresentInfo (swapchainB swc)
       let renderarea = Rect2D (Offset2D 0 0) ext2d
       let clearTo = V.fromList [Color (Float32 1 0 0 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
@@ -106,7 +87,6 @@ runSomeVulkan = do
       let scissor = VK.Rect2D (Offset2D 0 0) ext2d
 
       let basicVertSource = DataSource $ IsJust #wavefrontPath "testcube.obj"
-          --let basicImageSource = DataSource $ IsJust #coordinates3d [(0,0,0),(1,0,0),(0,1,0)]
           basicImageSource = DataSource $ IsJust #texturePath "sad-crab.png"
           basicDescriptorInfo = DescriptorSetInfo [
               UniformDescriptor 0 VK.SHADER_STAGE_VERTEX_BIT (fromIntegral $ sizeOf @HelperExample undefined) (fromIntegral $ Foreign.Storable.alignment @HelperExample undefined),
@@ -120,7 +100,6 @@ runSomeVulkan = do
               shaderSource = "tut",
               descriptorSetLayouts = [basicDescriptorInfo]
             }
-      --newRequest loaderInfo sceneResources
       -- wait until loader loads our stuff
       resources <- sendM $ waitForResourceProcessing resourceLoader (S.empty, S.fromList [basicVertSource, basicImageSource, basicRenderpassSource, basicDescriptorSource, basicPipelineSource])
       let (Just vertices)       = pullResource resources basicVertSource #vkGeometry
@@ -132,7 +111,7 @@ runSomeVulkan = do
 
       curDSets <- useDescriptorSetHelperSource dData (slotIndex cSlot) $ do
         resetDescriptorSetHelper
-        flip mapM [1,2,3] $ \ix -> do
+        forM [1,2,3] $ \ix -> do
           dSetBundle <- nextDescriptorSetBundle
           let (ImageBuffer _ _ _ iv samp) = imagez
           let uBuf = computeUniforms (curTime * 0.016 + fromIntegral ix) ext2d
@@ -151,7 +130,7 @@ runSomeVulkan = do
       VK.cmdBindVertexBuffers cBuf 0 (V.singleton vBuf) (V.singleton 0)
       VK.cmdBindIndexBuffer cBuf ixBuf 0 VK.INDEX_TYPE_UINT32
 
-      mapM (\curDSet -> do
+      mapM_ (\curDSet -> do
         VK.cmdBindDescriptorSets cBuf VK.PIPELINE_BIND_POINT_GRAPHICS pLayout 0 (V.singleton curDSet) V.empty
         VK.cmdDrawIndexed cBuf (fromIntegral elements) 1 0 0 0
         )

@@ -11,7 +11,6 @@
 --   vulkan functions such as the device and physical device. Also provides a route to allocate/deallocate device memory.
 module Fomorian.Vulkan.VulkanMonads where
 
-import Control.Concurrent (forkOS)
 import Control.Concurrent.STM ( TMVar, atomically, putTMVar, takeTMVar )
 import Control.Exception (bracket, mask, onException)
 import Control.Monad.Freer as CMF
