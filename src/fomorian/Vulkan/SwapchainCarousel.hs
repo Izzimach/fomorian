@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | This module handles the ring-buffer that buffers drawing frames to the swapchain.
 --   We need several copies of certain objects (command buffers, semaphores, etc.) since the resources
@@ -13,21 +14,23 @@
 --   use N slots.
 module Fomorian.Vulkan.SwapchainCarousel where
 
-import Control.Exception (SomeException, bracket, catch)
+import Control.Exception
 import Control.Monad (when)
 import Control.Monad.Freer
+import Control.Monad.Freer.Error
 
 import Foreign.Storable (sizeOf)
 import Foreign.Ptr (nullPtr)
 
 import Data.Word (Word32)
-import Data.IORef (IORef(..), newIORef, readIORef, modifyIORef)
+import Data.IORef (IORef(..), newIORef, readIORef, writeIORef, modifyIORef)
 import Data.Vector (Vector(..), fromList, singleton, (!))
 import qualified Data.Vector as V
 
 import Vulkan.Core10 (Semaphore, Fence, CommandPool, CommandBuffer, Queue, Framebuffer, DescriptorSet, DescriptorPool)
 import qualified Vulkan.Core10 as VK
 import qualified Vulkan.Zero as VZ
+import Vulkan.Exception
 import Vulkan.CStruct.Extends
 import Vulkan.Extensions.VK_KHR_swapchain as VKSWAPCHAIN
 
@@ -60,7 +63,7 @@ data SwapchainCarousel =
     gfxQ     :: Queue,
     presentQ :: Queue,
     runSlots :: Vector CarouselSlot,
-    swapchainB :: SwapchainBundle
+    bundleRef :: IORef SwapchainBundle
   }
 
 withCarousel :: (InVulkanMonad effs) => Int -> (SwapchainCarousel -> Eff '[VulkanMonad,IO] x) -> Eff effs x
@@ -69,7 +72,7 @@ withCarousel slotCount wrapped = do
   wb <- getWindowBundle
   let runV = runM . runVulkanMonad wb
   let goCarousel = runV $ makeCarousel 2 Nothing
-  let stopCarousel swc = runV $ do flushCarousel swc; destroyCarousel swc
+  let stopCarousel swc = runV $ do flushCarousel swc Nothing; destroyCarousel swc
   sendM $ bracket goCarousel stopCarousel (runV . wrapped)
 
 -- | Build relevant objects for the given swapchain
@@ -87,7 +90,8 @@ makeCarousel slotCount previousSwapchainBundle = do
   slots <- mapM makeSlot (V.zip cmdBuffers (V.fromList [0..(slotCount-1)]))
 
   curSlotIndex <- sendM $ newIORef 0
-  return $ SwapchainCarousel curSlotIndex cPool gQ pQ slots swapchain
+  swapchainRef <- sendM $ newIORef swapchain
+  return $ SwapchainCarousel curSlotIndex cPool gQ pQ slots swapchainRef
     where
       makeSlot (cBuf,ix) = do
         d <- getDevice
@@ -98,12 +102,13 @@ makeCarousel slotCount previousSwapchainBundle = do
         return $ CarouselSlot ix startSem endSem completedFence cBuf
 
 destroyCarousel :: (InVulkanMonad effs) => SwapchainCarousel -> Eff effs ()
-destroyCarousel (SwapchainCarousel slotRef cPool gQ pQ slots sb) = do
+destroyCarousel (SwapchainCarousel slotRef cPool gQ pQ slots sbRef) = do
   d <- getDevice
   mapM_ destroySlot slots
   let cBufs = fmap slotCommandBuffer slots
   VK.freeCommandBuffers d cPool cBufs
   -- don't need to destroy descriptor sets, they get destroyed when the pool is destroyed
+  sb <- sendM $ readIORef sbRef
   destroySwapchainBundle sb
   VK.destroyCommandPool d cPool Nothing
     where
@@ -119,48 +124,73 @@ destroyCarousel (SwapchainCarousel slotRef cPool gQ pQ slots sb) = do
 presentNextSlot :: (InVulkanMonad effs) => SwapchainCarousel -> (CommandBuffer -> Framebuffer -> CarouselSlot -> Eff effs ()) -> Eff effs ()
 presentNextSlot swc f = do
   d <- getDevice
-  let swapBundle = swapchainB swc
+  swapBundle <- sendM $ readIORef (bundleRef swc)
   let swapHandle = swapchainHandle swapBundle
   let slotRef = nextSlot swc
-  slotIndex <- sendM $ readIORef slotRef 
-  let cSlot@(CarouselSlot ix startSem endSem cmdFence cmdBuf) = runSlots swc ! slotIndex
-  -- wait for the fence to make sure this slot is done
-  (result, imgIndex) <- sendM $ catch
-    (VKSWAPCHAIN.acquireNextImageKHR d swapHandle maxBound startSem VK.NULL_HANDLE)
-    swapchainFailure
-  case result of
-    VK.SUCCESS -> do
-      fenceResult <- VK.waitForFences d (fromList [cmdFence]) True maxBound
-      let (SwapchainPerImageData _ _ _ fb) = swapchainImages swapBundle ! fromIntegral imgIndex
-      let submitInfo = SomeStruct $ VK.SubmitInfo () (singleton startSem) (fromList [VK.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT]) (fromList [VK.commandBufferHandle cmdBuf]) (fromList [endSem])
-      VK.resetFences d (fromList [cmdFence])
-      VK.resetCommandBuffer cmdBuf VZ.zero
-      f cmdBuf fb cSlot
-      VK.queueSubmit (gfxQ swc) (fromList [submitInfo]) cmdFence
-      let presentInfo = PresentInfoKHR () (fromList [endSem]) (fromList [swapHandle]) (fromList [imgIndex]) nullPtr
-      presentResult <- sendM $ catch
-        (VKSWAPCHAIN.queuePresentKHR (presentQ swc) presentInfo)
-        swapchainFailure2
-      when (presentResult /= VK.SUCCESS) (sendM $ print "error presenting framebuffer")
-      sendM $ modifyIORef slotRef (\x -> (x+1) `mod` (length (runSlots swc)))
-      win <- windowHandle <$> getWindowBundle
-      winTerminate <- sendM $ do
-        GLFW.pollEvents
-        GLFW.windowShouldClose win
-      return ()
-    _ -> do error "cannot acquire image"
-            return ()
+  slotIx <- sendM $ readIORef slotRef 
+  let cSlot@(CarouselSlot _ix startSem endSem cmdFence cmdBuf) = runSlots swc ! slotIx
+  -- both acquire and present can throw exceptions if the swapchain is invalid, so we catch those exceptions and return error
+  -- results. Error results will throw errors via freer-simple's 'Error' monad and get processed at the bottom
+  goFrame <- runError @VK.Result $ do
+    -- catch invalid swapchain exceptions and rebuild the swapchain
+    (acquireResult, imgIndex) <- sendM $ handle catchAcquireException (VKSWAPCHAIN.acquireNextImageKHR d swapHandle maxBound startSem VK.NULL_HANDLE)
+    when (acquireResult /= VK.SUCCESS) $ throwError acquireResult
+    _ <- VK.waitForFences d (fromList [cmdFence]) True maxBound
+    -- Note that in this section the current fence is not and will not be signalled, so you can't wait for it!
+    -- This is important if handling exceptions. Luckily exceptions due to swapchain errors don't happen in this section so it's not
+    -- normally an issue.
+    let (SwapchainPerImageData _ _ _ fb) = swapchainImages swapBundle ! fromIntegral imgIndex
+    VK.resetFences d (fromList [cmdFence])
+    VK.resetCommandBuffer cmdBuf VZ.zero
+    raise $ f cmdBuf fb cSlot
+    let submitInfo = SomeStruct $ VK.SubmitInfo () (singleton startSem) (fromList [VK.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT]) (fromList [VK.commandBufferHandle cmdBuf]) (fromList [endSem])
+    VK.queueSubmit (gfxQ swc) (fromList [submitInfo]) cmdFence
+    -- here the fence will again be signalled upon command completion so you can wait for it
+    let presentInfo = PresentInfoKHR () (fromList [endSem]) (fromList [swapHandle]) (fromList [imgIndex]) nullPtr
+    presentResult <- sendM $ handle catchSwapchainException (VKSWAPCHAIN.queuePresentKHR (presentQ swc) presentInfo)
+    when (presentResult /= VK.SUCCESS) $ throwError presentResult
+    sendM $ modifyIORef slotRef (\x -> (x+1) `mod` length (runSlots swc))
+    win <- windowHandle <$> getWindowBundle
+    sendM $ do
+      GLFW.pollEvents
+      GLFW.windowShouldClose win
+  case goFrame of
+    Right shouldTerminate -> return ()
+    Left result -> if result == VK.ERROR_OUT_OF_DATE_KHR || result == VK.SUBOPTIMAL_KHR
+                   then rebuildSwapchain
+                   else error ("Swapchain exception: " ++ show result)
   where
-    swapchainFailure :: SomeException -> IO (VK.Result,Word32)
-    swapchainFailure e = error $ "Swapchain acquire failure: " ++ show e
+    -- | exception handler that catches 
+    catchSwapchainException :: VulkanException -> IO VK.Result
+    catchSwapchainException (VulkanException vkResult) =
+      if vkResult == VK.ERROR_OUT_OF_DATE_KHR || vkResult == VK.SUBOPTIMAL_KHR
+      then pure vkResult
+      else error $ "Vulkan exception in SwapchainCarousel: " ++ show vkResult
 
-    swapchainFailure2 :: SomeException -> IO VK.Result
-    swapchainFailure2 e = error $ "Swapchain present failure: " ++ show e
+    catchAcquireException :: VulkanException -> IO (VK.Result,Word32)
+    catchAcquireException e = fmap (\x -> (x,0)) (catchSwapchainException e)
+
+    rebuildSwapchain :: (InVulkanMonad effs) => Eff effs ()
+    rebuildSwapchain = do
+      -- need to wait for previous frames to complete
+      flushCarousel swc Nothing
+      let swRef = bundleRef swc
+      sb <- sendM $ readIORef swRef
+      -- make a new swapchain, possibly re-using parts of the old one
+      newSB <- makeSwapchainBundle (Just sb)
+      destroySwapchainBundle sb
+      sendM $ writeIORef swRef newSB
+
 
 -- | Wait for any frames currently being drawn to finish (or at least the command buffers)
-flushCarousel :: (InVulkanMonad effs) => SwapchainCarousel -> Eff effs ()
-flushCarousel swc = do
+--   The @Maybe CarouselSlot@ passed in is a slot which has a zombie fence and so we shouldn't wait for that slot
+flushCarousel :: (InVulkanMonad effs) => SwapchainCarousel -> Maybe CarouselSlot -> Eff effs ()
+flushCarousel swc ignoreThis = do
   d <- getDevice
-  let fences = fmap (\(CarouselSlot _ _ _ f _) -> f) (runSlots swc)
+  let fenceFilter = case ignoreThis of
+                      Nothing -> const True
+                      Just t  -> (/= t)
+      extractFence = (\(CarouselSlot _ _ _ f _) -> f)
+      fences = fmap extractFence (V.filter fenceFilter $ runSlots swc)
   _ <- VK.waitForFences d fences True maxBound
   return ()

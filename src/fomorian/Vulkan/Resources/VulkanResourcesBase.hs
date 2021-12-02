@@ -39,7 +39,7 @@ import qualified Data.Set as S
 import qualified Data.Map as M
 import Data.Vector as V hiding (mapM_,(++))
 
-import Foreign.Storable (Storable, sizeOf, alignment)
+import Foreign.Storable
 import Foreign.Marshal.Array
 import Foreign.Ptr (Ptr, nullPtr, plusPtr, castPtr)
 import System.FilePath
@@ -187,55 +187,3 @@ data DescriptorHelperBundle = DescriptorHelperBundle
     dSetUniformBuffers :: Vector (Maybe (UBuffer, DeviceSize))
   }
   deriving (Show)
---
--- Convert into a vulkan target tree and compute needed resources
---
-
-data VulkanTargetTree
-
-type instance (InvokeReq VulkanTargetTree ir) = (HasType "pipeline" FilePath ir,
-                                               HasType "geometry" BasicDataSource ir,
-                                               HasType "instanceDescriptor" String ir)
-type instance (DrawReq VulkanTargetTree dr) = (HasType "modelMatrix" (M44 Float) dr,
-                                               HasType "viewMatrix" (M44 Float) dr,
-                                               HasType "projectionMatrix" (M44 Float) dr)
-
-neutralToVulkanTargetAlg :: SceneGraphF NeutralSceneTarget dr (SceneGraph VulkanTargetTree dr) -> SceneGraph VulkanTargetTree dr
-neutralToVulkanTargetAlg (InvokeF x) = Invoke $
-                (#pipeline           .== x .! #shader)
-             .+ (#geometry           .== x .! #geometry)
-             .+ (#instanceDescriptor .== "argh")
-neutralToVulkanTargetAlg (GroupF xs) = Group xs
-neutralToVulkanTargetAlg (TransformerF f gr) = Transformer f (neutralToVulkanTarget gr)
-
-neutralToVulkanTarget :: SceneGraph NeutralSceneTarget dr -> SceneGraph VulkanTargetTree dr
-neutralToVulkanTarget = cata neutralToVulkanTargetAlg
-
-
-
-newtype VulkanDataSources = VulkanDataSources (S.Set (VulkanDataSource))
-  deriving (Eq, Show)
-  deriving (Monoid,Semigroup) via (S.Set VulkanDataSource)
-
-newtype VulkanResources = VulkanResources (M.Map VulkanDataSource VulkanResource)
-
--- | Given a scene node returns the resources used
-vulkanResourcesAlgebra :: SceneGraphF VulkanTargetTree dr VulkanDataSources -> VulkanDataSources
-vulkanResourcesAlgebra (GroupF cmds) = Prelude.foldl (<>) mempty cmds
-vulkanResourcesAlgebra (TransformerF _ gr) = vulkanResourcesScene gr
-vulkanResourcesAlgebra (InvokeF x) =
-  let v    = bumpTex $ x .! #geometry
-      pipe = x .! #pipeline
-      txs  = [] --fmap bumpTex (x .! #textures)
-  in
-    VulkanDataSources $ S.fromList ([v] ++ txs)
-  where
-    bumpTex :: BasicDataSource -> VulkanDataSource
-    bumpTex (DataSource t) = switch t $
-         #userSource     .== DataSource . IsJust #userSource
-      .+ #wavefrontPath  .== DataSource . IsJust #wavefrontPath
-      .+ #shaderPath     .== DataSource . IsJust #shaderPath
-      .+ #texturePath    .== DataSource . IsJust #texturePath
-
-vulkanResourcesScene :: SceneGraph VulkanTargetTree dr -> VulkanDataSources
-vulkanResourcesScene = cata vulkanResourcesAlgebra

@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLabels #-}
@@ -70,17 +69,15 @@ runSomeVulkan = do
     let runV = runM . runVulkanMonad wb
 
     finally 
-      (do
-         runV $ withCarousel 2 $ \swc -> forM_ [1..300] (\x -> presentNextSlot swc (clearCmd swc loaderInfo x))
-         --dumpDescriptorSetHelperSource dData
-         )
+      (runV $ withCarousel 2 $ \swc -> forM_ [1..300] (\x -> presentNextSlot swc (clearCmd swc loaderInfo x)))
       (do
          endLoader loaderInfo
          endBoundSubmitter boundQueue
          )
   where
     clearCmd swc resourceLoader curTime cBuf frameBuf cSlot = do
-      let (SwapchainPresentInfo cFormat dFormat ext2d@(Extent2D w h)) = swapchainPresentInfo (swapchainB swc)
+      sb <- sendM $ readIORef (bundleRef swc)
+      let (SwapchainPresentInfo cFormat dFormat ext2d@(Extent2D w h)) = swapchainPresentInfo sb
       let renderarea = Rect2D (Offset2D 0 0) ext2d
       let clearTo = V.fromList [Color (Float32 1 0 0 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
       let viewport = VK.Viewport 0.0 0.0 (fromIntegral w) (fromIntegral h) 0.0 1.0
@@ -92,7 +89,7 @@ runSomeVulkan = do
               UniformDescriptor 0 VK.SHADER_STAGE_VERTEX_BIT (fromIntegral $ sizeOf @HelperExample undefined) (fromIntegral $ Foreign.Storable.alignment @HelperExample undefined),
               CombinedDescriptor 1 VK.SHADER_STAGE_FRAGMENT_BIT 1 V.empty
             ]
-          basicDescriptorSource = (DataSource $ IsJust #descriptorHelperSettings $ basicDescriptorInfo :: VulkanDataSource)
+          basicDescriptorSource = (DataSource $ IsJust #descriptorHelperSettings basicDescriptorInfo :: VulkanDataSource)
           basicRenderpassFormat = (cFormat,dFormat)
           basicRenderpassSource = DataSource $ IsJust #renderPassFormat basicRenderpassFormat
           basicPipelineSource = DataSource $ IsJust #pipelineSettings $ SimplePipelineSettings {

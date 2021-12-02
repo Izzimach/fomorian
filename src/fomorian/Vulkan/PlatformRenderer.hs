@@ -25,7 +25,7 @@ import Fomorian.Vulkan.Example
 
 import Fomorian.PlatformRenderer
 
-import LoadUnload
+import STMLoader.LoadUnload
 
 data VulkanRendererState =
   VulkanRendererState {
