@@ -79,7 +79,7 @@ library
 
 executable example
   import: deps
-  main-is: fomorian/Main.hs
+  main-is: Main.hs
   other-modules:
       Fomorian.CommonSceneNodes
       Fomorian.GraphicsLoaders.ProcessWavefront
