@@ -16,15 +16,10 @@ module Fomorian.Vulkan.VulkanTargetTree where
 
 import GHC.Generics
 
-import Control.Monad.IO.Class (liftIO, MonadIO)
 
-import Control.Monad.Freer
-import Control.Monad.Freer.Reader (Reader(..), ask, runReader)
 
-import Data.Maybe (isJust)
-import Data.Word
+import Data.Proxy
 import Data.Row
-import Data.Row.Variants (view)
 import Data.Functor.Foldable
 import qualified Data.Set as S
 import qualified Data.Map as M
@@ -32,8 +27,7 @@ import Data.Vector as V hiding (mapM_,(++))
 import Data.HList.HList
 
 import Foreign.Storable
-import Foreign.Marshal.Array
-import Foreign.Ptr (Ptr, nullPtr, plusPtr, castPtr)
+import Foreign.Ptr (castPtr)
 import System.FilePath
 
 import Linear
@@ -49,7 +43,6 @@ import Fomorian.Vulkan.Resources.DeviceMemoryAllocator
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DescriptorSetHelper
 
-import Vulkan.Core10 (Buffer, Device, BufferUsageFlags, BufferCreateInfo(..), DeviceSize, DeviceMemory, Format, Image, ImageView, Sampler, ShaderModule, RenderPass)
 import qualified Vulkan.Core10 as VK
 
 --
@@ -59,8 +52,9 @@ import qualified Vulkan.Core10 as VK
 data VulkanTargetTree
 
 type instance (InvokeReq VulkanTargetTree ir) = (HasType "pipeShader" FilePath ir,
-                                                 HasType "geometry" BasicDataSource ir,
-                                                 HasType "texture" [BasicDataSource] ir)
+                                                 HasType "vkImage" VulkanDataSource ir,
+                                                 HasType "vkVertex" VulkanDataSource ir)
+
 type instance (DrawReq VulkanTargetTree dr) = (HasType "modelMatrix" (M44 Float) dr,
                                                HasType "viewMatrix" (M44 Float) dr,
                                                HasType "projectionMatrix" (M44 Float) dr)
@@ -68,8 +62,8 @@ type instance (DrawReq VulkanTargetTree dr) = (HasType "modelMatrix" (M44 Float)
 neutralToVulkanTargetAlg ::SceneGraphF NeutralSceneTarget dr (SceneGraph VulkanTargetTree dr) -> SceneGraph VulkanTargetTree dr
 neutralToVulkanTargetAlg (InvokeF x) = Invoke $
                 (#pipeShader .== x .! #shader)
-             .+ (#geometry   .== x .! #geometry)
-             .+ (#texture    .== x .! #textures)
+             .+ (#vkVertex   .== diversifyToVulkanSource (x .! #geometry))
+             .+ (#vkImage   .== diversifyToVulkanSource (Prelude.head (x .! #textures)))
 neutralToVulkanTargetAlg (GroupF xs) = Group xs
 neutralToVulkanTargetAlg (TransformerF f gr) = Transformer f (neutralToVulkanTarget gr)
 
@@ -117,44 +111,23 @@ helperDescriptorInfo = dSetTypeToInfo (Proxy @(HList HelperDescriptorFields)) (h
 -- | Given a scene node returns the resources used
 vulkanResourcesAlgebra :: (VK.Format, VK.Format) -> SceneGraphF VulkanTargetTree dr VulkanDataSources -> VulkanDataSources
 vulkanResourcesAlgebra _ (GroupF cmds) = Prelude.foldl (<>) mempty cmds
-vulkanResourcesAlgebra _ (TransformerF _ gr) = vulkanResourcesScene gr
+vulkanResourcesAlgebra fmtz (TransformerF _ gr) = vulkanResourcesScene fmtz gr
 vulkanResourcesAlgebra fmtz (InvokeF x) =
-  let v    = x .! #geometry
-      txs  = x .! #texture
+  let v    = x .! #vkVertex
+      tx  = x .! #vkImage
       basicDescriptorInfo = DescriptorSetInfo [
               UniformDescriptor 0 VK.SHADER_STAGE_VERTEX_BIT (fromIntegral $ sizeOf @DefaultMatrices undefined) (fromIntegral $ Foreign.Storable.alignment @DefaultMatrices undefined),
               CombinedDescriptor 1 VK.SHADER_STAGE_FRAGMENT_BIT 1 V.empty
             ]
-      basicPipelineSource   = DataSource $ IsJust #pipelineSettings $ SimplePipelineSettings {
+      descriptorSetHelperSource = (DataSource $ IsJust #descriptorHelperSettings basicDescriptorInfo :: VulkanDataSource)
+      pipelineSource   = DataSource $ IsJust #pipelineSettings $ SimplePipelineSettings {
               renderPassFormat = fmtz,
               shaderSource = x .! #pipeShader,
               descriptorSetLayouts = [basicDescriptorInfo]
             }
   in
-    VulkanDataSources $ S.fromList ([v,basicPipelineSource] ++ txs)
-  where
-    bumpTex :: BasicDataSource -> VulkanDataSource
-    bumpTex (DataSource t) = switch t $
-         #userSource     .== DataSource . IsJust #userSource
-      .+ #wavefrontPath  .== DataSource . IsJust #wavefrontPath
-      .+ #shaderPath     .== DataSource . IsJust #shaderPath
-      .+ #texturePath    .== DataSource . IsJust #texturePath
+    VulkanDataSources $ S.fromList [v, descriptorSetHelperSource, pipelineSource, tx]
 
 vulkanResourcesScene :: (VK.Format, VK.Format) -> SceneGraph VulkanTargetTree dr -> VulkanDataSources
-vulkanResourcesScene fmz = cata (vulkanResourcesAlgebra fmtz)
+vulkanResourcesScene fmtz = cata (vulkanResourcesAlgebra fmtz)
 
-{-
-      let basicVertSource = DataSource $ IsJust #wavefrontPath "testcube.obj"
-          basicImageSource = DataSource $ IsJust #texturePath "sad-crab.png"
-          basicDescriptorInfo = DescriptorSetInfo [
-              UniformDescriptor 0 VK.SHADER_STAGE_VERTEX_BIT (fromIntegral $ sizeOf @HelperExample undefined) (fromIntegral $ Foreign.Storable.alignment @HelperExample undefined),
-              CombinedDescriptor 1 VK.SHADER_STAGE_FRAGMENT_BIT 1 V.empty
-            ]
-          basicDescriptorSource = (DataSource $ IsJust #descriptorHelperSettings basicDescriptorInfo :: VulkanDataSource)
-          basicRenderpassFormat = (cFormat,dFormat)
-          basicRenderpassSource = DataSource $ IsJust #renderPassFormat basicRenderpassFormat
-          basicPipelineSource = DataSource $ IsJust #pipelineSettings $ SimplePipelineSettings {
-              renderPassFormat = basicRenderpassFormat,
-              shaderSource = "tut",
-              descriptorSetLayouts = [basicDescriptorInfo]
-            } -}

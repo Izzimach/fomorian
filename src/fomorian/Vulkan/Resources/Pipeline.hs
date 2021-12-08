@@ -97,7 +97,7 @@ buildSimplePipeline (vm,fm) rPass pipelineLayout windowExtent@(Extent2D w h) = d
           (V.fromList [vertexDataBinding])
           (V.fromList vertexInputAttrs)
   let inputAssembly = PipelineInputAssemblyStateCreateInfo VZ.zero PRIMITIVE_TOPOLOGY_TRIANGLE_LIST False
-  let rasterizerState = PipelineRasterizationStateCreateInfo () VZ.zero False False POLYGON_MODE_FILL CULL_MODE_BACK_BIT FRONT_FACE_CLOCKWISE False 0 0 0 1.0
+  let rasterizerState = PipelineRasterizationStateCreateInfo () VZ.zero False False POLYGON_MODE_FILL CULL_MODE_BACK_BIT FRONT_FACE_COUNTER_CLOCKWISE False 0 0 0 1.0
   -- multisample is basically disabled
   let initMultisampleState = PipelineMultisampleStateCreateInfo () VZ.zero sampleCount False 1.0 V.empty False False
   -- viewport and scissor are dynamically bound in the command buffer and so they are ignored here

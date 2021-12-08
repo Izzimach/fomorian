@@ -19,37 +19,51 @@ import qualified Data.Set as S
 import qualified Data.Vector as V
 import Data.Row
 import Data.HList
+import Data.Maybe (fromJust)
 
 import Linear
 
 import Foreign.Storable (sizeOf, alignment)
 
-import Text.Pretty.Simple (pPrint)
-import System.FilePath ((</>))
-
-import STMLoader.LoadUnload
 import STMLoader.AsyncLoader
 
-import Vulkan.CStruct.Extends
 import Vulkan.Core10 (Extent2D(..), ClearValue(Color, DepthStencil), Offset2D(..), Rect2D(..), ClearColorValue(Float32), ClearDepthStencilValue(..))
 import qualified Vulkan.Core10 as VK
 import Vulkan.Zero as VZ
-import Vulkan.Exception
 
+import Fomorian.SceneNode
+import Fomorian.NeutralSceneTarget
+import Fomorian.CommonSceneNodes
 import Fomorian.SceneResources
+import Fomorian.PlatformRenderer
+
 import qualified Fomorian.Vulkan.WindowBundle as WB
 
 import Fomorian.Vulkan.VulkanMonads
 import Fomorian.Vulkan.SwapchainCarousel
 import Fomorian.Vulkan.SwapchainBundle
-import Fomorian.Vulkan.Resources.Pipeline
-import Fomorian.Vulkan.Resources.ImageBuffers
-import Fomorian.Vulkan.Resources.DescriptorSets
 import Fomorian.Vulkan.Resources.DescriptorSetHelper
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
-import Fomorian.Vulkan.Resources.DeviceMemoryTypes
 import Fomorian.Vulkan.Resources.BoundCommandBuffer
 import Fomorian.Vulkan.Resources.VulkanLoader
+import Fomorian.Vulkan.VulkanTargetTree
+import Fomorian.Vulkan.VulkanCommandTree
+
+testScene3d :: SceneGraph NeutralSceneTarget DefaultDrawFrameParams 
+testScene3d = neutral3DSceneRoot $
+                perspectiveProject config $
+                  autoAspect $ 
+                    cameraLookAt (V3 5 10 0) (V3 0 0 0) (V3 0 0 1) $ 
+                      group [
+                        someCube,
+                        translate3d (V3 3 0 0) $ spin3d (V3 0.7071 0.7071 0) 2 someCube,
+                        spin3d (V3 0 0.7071 0.7071) 1.7 $ translate3d (V3 3 0 0) $ spin3d (V3 0 1 0) 0.3 $ someCube
+                        ]
+  where
+    config = PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 1000 {-far plane-}
+    someCube :: (DrawReq NeutralSceneTarget dr) => SceneGraph NeutralSceneTarget dr
+    --someCube = wavefrontMesh "tut" "testcube.obj" ["salamander.png"]
+    someCube = wavefrontMesh "tut" "testcube.obj" ["salamander.png"]
 
 
 runSomeVulkan :: IO ()
@@ -66,99 +80,69 @@ runSomeVulkan = do
     boundQueue <- aQueue `seq` forkBoundSubmitter wb aQueue
     loaderInfo <- startLoader wb boundQueue prebuiltResources
 
+    let curTree = testScene3d
+
     let runV = runM . runVulkanMonad wb
 
     finally 
-      (runV $ withCarousel 2 $ \swc -> forM_ [1..300] (\x -> presentNextSlot swc (clearCmd swc loaderInfo x)))
+      (runV $ withCarousel 2 $ \swc -> forM_ [1..200] (\ix -> presentNextSlot swc (clearCmd swc loaderInfo curTree ix)))
       (do
          endLoader loaderInfo
          endBoundSubmitter boundQueue
          )
   where
-    clearCmd swc resourceLoader curTime cBuf frameBuf cSlot = do
+    clearCmd swc resourceLoader sceneGraph curTime cBuf frameBuf cSlot = do
       sb <- sendM $ readIORef (bundleRef swc)
       let (SwapchainPresentInfo cFormat dFormat ext2d@(Extent2D w h)) = swapchainPresentInfo sb
-      let renderarea = Rect2D (Offset2D 0 0) ext2d
-      let clearTo = V.fromList [Color (Float32 1 0 0 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
-      let viewport = VK.Viewport 0.0 0.0 (fromIntegral w) (fromIntegral h) 0.0 1.0
-      let scissor = VK.Rect2D (Offset2D 0 0) ext2d
 
-      let basicVertSource = DataSource $ IsJust #wavefrontPath "testcube.obj"
-          basicImageSource = DataSource $ IsJust #texturePath "sad-crab.png"
-          basicDescriptorInfo = DescriptorSetInfo [
+      let basicDescriptorInfo = DescriptorSetInfo [
               UniformDescriptor 0 VK.SHADER_STAGE_VERTEX_BIT (fromIntegral $ sizeOf @HelperExample undefined) (fromIntegral $ Foreign.Storable.alignment @HelperExample undefined),
               CombinedDescriptor 1 VK.SHADER_STAGE_FRAGMENT_BIT 1 V.empty
             ]
           basicDescriptorSource = (DataSource $ IsJust #descriptorHelperSettings basicDescriptorInfo :: VulkanDataSource)
           basicRenderpassFormat = (cFormat,dFormat)
           basicRenderpassSource = DataSource $ IsJust #renderPassFormat basicRenderpassFormat
-          basicPipelineSource = DataSource $ IsJust #pipelineSettings $ SimplePipelineSettings {
-              renderPassFormat = basicRenderpassFormat,
-              shaderSource = "tut",
-              descriptorSetLayouts = [basicDescriptorInfo]
-            }
-      -- wait until loader loads our stuff
-      resources <- sendM $ waitForResourceProcessing resourceLoader (S.empty, S.fromList [basicVertSource, basicImageSource, basicRenderpassSource, basicDescriptorSource, basicPipelineSource])
-      let (Just vertices)       = pullResource resources basicVertSource #vkGeometry
-          (Just imagez)         = pullResource resources basicImageSource #textureImage
-          (Just dData)          = pullResource resources basicDescriptorSource #descriptorSetHelperSource
-          (Just rPass)          = pullResource resources basicRenderpassSource #renderPass
-          (Just pBundle)        = (pullResource resources basicPipelineSource #simplePipeline :: Maybe PipelineBundle)
-          (PipelineBundle pLayout pipe) = pBundle
+          targetTree = neutralToVulkanTarget sceneGraph
+          (VulkanDataSources reqSources) = vulkanResourcesScene (cFormat,dFormat) targetTree
 
-      curDSets <- useDescriptorSetHelperSource dData (slotIndex cSlot) $ do
-        resetDescriptorSetHelper
-        forM [1,2,3] $ \ix -> do
-          dSetBundle <- nextDescriptorSetBundle
-          let (ImageBuffer _ _ _ iv samp) = imagez
-          let uBuf = computeUniforms (curTime * 0.016 + fromIntegral ix) ext2d
-          writeToHelperBundle dSetBundle $ uBuf `HCons` (iv,samp) `HCons` HNil
-          return $ dSetHandle dSetBundle
+      --sendM $ print reqSources
+      -- wait until loader loads our stuff
+      --resources <- sendM $ waitForResourceProcessing resourceLoader (S.empty, S.fromList [basicVertSource, basicImageSource, basicRenderpassSource, basicDescriptorSource, basicPipelineSource])
+      resources <- sendM $ waitForResourceProcessing resourceLoader (S.empty, S.insert basicDescriptorSource reqSources)
+      --sendM $ print "Resources loaded!"
+      let dData = fromJust $ pullResource resources basicDescriptorSource #descriptorSetHelperSource
+          --(Just vertices)       = pullResource resources basicVertSource #vkGeometry
+          --(Just imagez)         = pullResource resources basicImageSource #textureImage
+          rPass = fromJust $ pullResource resources basicRenderpassSource #renderPass
+          --(Just pBundle)        = (pullResource resources basicPipelineSource #simplePipeline :: Maybe PipelineBundle)
+          --(PipelineBundle pLayout pipe) = pBundle-}
+
+      useDescriptorSetHelperSource dData (slotIndex cSlot) $ resetDescriptorSetHelper
 
       VK.beginCommandBuffer cBuf (VK.CommandBufferBeginInfo () VZ.zero Nothing)
+
+      let viewport = VK.Viewport 0.0 0.0 (fromIntegral w) (fromIntegral h) 0.0 1.0
+      let scissor = VK.Rect2D (Offset2D 0 0) ext2d
       VK.cmdSetViewport cBuf 0 (V.singleton viewport)
       VK.cmdSetScissor cBuf 0 (V.singleton scissor)
       
+      let renderarea = Rect2D (Offset2D 0 0) ext2d
+      let clearTo = V.fromList [Color (Float32 0 0.5 0.5 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
       VK.cmdBeginRenderPass cBuf (VK.RenderPassBeginInfo () rPass frameBuf renderarea clearTo) VK.SUBPASS_CONTENTS_INLINE
 
-      VK.cmdBindPipeline cBuf VK.PIPELINE_BIND_POINT_GRAPHICS pipe --(swapchainPipeline swapchainBundle)
+      let commandTree = vulkanToCommand (VulkanResources resources) (cFormat,dFormat) targetTree
+          --compiledTree = vulkanCommandToTrie commandTree
+          flipPerspective = Linear.scaled (V4 1 (-1) 1 1)
+          drawParams =    #curTime .== (curTime * 0.016)
+                       .+ #windowX .== fromIntegral w
+                       .+ #windowY .== fromIntegral h
+                       .+ #correctNDC .== flipPerspective
+      --sendM $ print compiledTree
+      --runInvocation compiledTree
+      vulkanGo commandTree drawParams (slotIndex cSlot) cBuf
       
-      let (GeometryResource (VBuffer vBuf _) (Just (IxBuffer ixBuf _)) elements _) = vertices
-      VK.cmdBindVertexBuffers cBuf 0 (V.singleton vBuf) (V.singleton 0)
-      VK.cmdBindIndexBuffer cBuf ixBuf 0 VK.INDEX_TYPE_UINT32
-
-      mapM_ (\curDSet -> do
-        VK.cmdBindDescriptorSets cBuf VK.PIPELINE_BIND_POINT_GRAPHICS pLayout 0 (V.singleton curDSet) V.empty
-        VK.cmdDrawIndexed cBuf (fromIntegral elements) 1 0 0 0
-        )
-        curDSets
-
       VK.cmdEndRenderPass cBuf
       VK.endCommandBuffer cBuf
 
-whatResourcesForScene :: (InVulkanMonad effs) => SwapchainPresentInfo -> Eff effs (S.Set VulkanDataSource)
-whatResourcesForScene = undefined
 
 
-computeUniforms :: Float -> Extent2D -> HelperExample
-computeUniforms elapsedTime (Extent2D width height) = 
-  -- our shaders use premultiply so matrices need to be transposed
-  let modelMatrix = transpose $ mkTransformation (axisAngle (V3 0 0 1) (elapsedTime*5)) (V3 (sin elapsedTime) 0 0.1)
-      viewMatrix = transpose $ lookAt (V3 2 2 2) (V3 0 0 0) (V3 0 0 1)
-      scaleMatrix sx sy sz = V4 (V4 sx 0 0 0) (V4 0 sy 0 0) (V4 0 0 sz 0) (V4 0 0 0 1)
-      aspect = fromIntegral width / fromIntegral height
-      projMatrix = transpose $ zeroOnePerspective (45 * 3.14159 / 180.0) aspect 0.1 10 !*! scaleMatrix 1 (-1) 1
-  in
-    HelperExample modelMatrix viewMatrix projMatrix
-
-
-updateUni :: (InVulkanMonad effs) => UBuffer -> Float -> Extent2D -> Eff effs ()
-updateUni ub elapsedTime (Extent2D width height) = do
-  -- our shaders use premultiply so matrices need to be transposed
-  let modelMatrix = transpose $ mkTransformation (axisAngle (V3 0 0 1) (elapsedTime*5)) (V3 (sin elapsedTime) 0 0.1)
-  let viewMatrix = transpose $ lookAt (V3 2 2 2) (V3 0 0 0) (V3 0 0 1)
-  let scaleMatrix sx sy sz = V4 (V4 sx 0 0 0) (V4 0 sy 0 0) (V4 0 0 sz 0) (V4 0 0 0 1)
-  let aspect = fromIntegral width / fromIntegral height
-  let projMatrix = transpose $ zeroOnePerspective (45 * 3.14159 / 180.0) aspect 0.1 10 !*! scaleMatrix 1 (-1) 1
-  let newUniforms = UBO modelMatrix viewMatrix projMatrix
-  updateUniformBuffer ub newUniforms

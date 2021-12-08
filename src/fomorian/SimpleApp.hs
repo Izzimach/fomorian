@@ -132,7 +132,8 @@ simpleAppRenderParams appstate =
       (w,h) = appstate .! #windowSize
   in   (#curTime .== t) .+
        (#windowX .== fromIntegral w) .+
-       (#windowY .== fromIntegral h)
+       (#windowY .== fromIntegral h) .+
+       (#correctNDC .== Linear.identity)
 
 
 

@@ -62,8 +62,6 @@ type instance InvokeReq DebugDumpTarget ir = (HasType "label" String ir)
 type instance DrawReq DebugDumpTarget dr = ()
 
 
-
-
 -- | A node of a scene graph. The type has two sets of constraints:
 --   - 'target' is the draw target. Different targets produce different out when you "draw" them. Targets that are Graphics APIs will typically produce
 --     a monad that does the actual drawing. Other targets might produce a list of resources or simply a text string.
@@ -177,7 +175,7 @@ sceneLabels sg = (runDC $ dumpScene sg) Data.Row.Records.empty
                  
 
 
--- | Dot/graphviz data for a particular node. The first field is the lable for that node as a string.
+-- | Dot/graphviz data for a particular node. The first field is the label for that node as a string.
 --   The second field is a list of edgestrings, or strings where each element is an edge (in dot format) of the subtree.
 data NodeVizData = NodeVizData { vizLabel :: String, edgeStrings :: [String] }
   deriving (Eq, Show, GHC.Generic)
@@ -202,9 +200,9 @@ dumpDotAlgebra (GroupF cmds) = do i <- get
                                   let my_vizdata = combineNodeViz my_label x
                                   return my_vizdata
 dumpDotAlgebra (TransformerF _ gr) = do i <- get
-                                        let (d, i') = runState (dumpDotScene (gr)) i
+                                        let (d, i') = runState (dumpDotScene (gr)) (i+1)
                                         put i'
-                                        return d
+                                        return $ combineNodeViz ("transformer" ++ show i) [d]
 
 dumpDotScene :: SceneGraph DebugDumpTarget dr -> State Integer NodeVizData
 dumpDotScene sg = cata dumpDotAlgebra sg
@@ -225,4 +223,3 @@ group xs = Group xs
 
 invoke :: (InvokeReq target s, DrawReq target dr) => Rec s -> SceneGraph target dr
 invoke r = Invoke r
-

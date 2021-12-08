@@ -66,8 +66,8 @@ type OpenGLResource = Resource GLResourceTypes
 type OpenGLGeometry = GeometryResource GL.BufferObject GL.BufferObject (Map String (VertexArrayDescriptor Float))
 
 
-type instance (InvokeReq OpenGLTarget ir) = (HasType "vertexarray" (FilePath, DataSource BasicDataSourceTypes) ir,
-                                               HasType "textures" [DataSource BasicDataSourceTypes] ir)
+type instance (InvokeReq OpenGLTarget ir) = (HasType "vertexarray" (FilePath, BasicDataSource) ir,
+                                               HasType "textures" [BasicDataSource] ir)
 type instance (DrawReq OpenGLTarget dr) = (HasType "modelMatrix" (M44 Float) dr,
                                                HasType "viewMatrix" (M44 Float) dr,
                                                HasType "projectionMatrix" (M44 Float) dr)

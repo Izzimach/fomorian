@@ -24,7 +24,7 @@ import Linear
 import Graphics.Rendering.OpenGL (GLfloat)
 
 import Data.Row
-import Data.Row.Records
+import Data.Row.Records as R
 
 import Fomorian.SceneNode
 
@@ -34,17 +34,14 @@ import Fomorian.SceneNode
 
 -- | generate a 'M44' to scale in x,y,z
 scaleMatrix :: (Num a) => a -> a -> a -> M44 a
-scaleMatrix x y z = scaled (V4 x y z 1) {-V4  (V4 x 0 0 0)
-                        (V4 0 y 0 0)
-                        (V4 0 0 z 0)
-                        (V4 0 0 0 1)-}
+scaleMatrix x y z = scaled (V4 x y z 1)
 
 -- | generate a 'M44' to translate by x,y,z
 translationMatrix :: (Num a) => a -> a -> a -> M44 a
 translationMatrix x y z = V4 (V4 1 0 0 x)
-                              (V4 0 1 0 y)
-                              (V4 0 0 1 z)
-                              (V4 0 0 0 1)
+                             (V4 0 1 0 y)
+                             (V4 0 0 1 z)
+                             (V4 0 0 0 1)
 
 -- | Build a matrix to map from from a rectangle [ (0,0) - (w,h) ] to [ (-1,-1) - (1,1) ]
 buildPixelOrthoMatrix :: (Integral a, RealFrac b) => a -> a -> M44 b
@@ -91,6 +88,7 @@ data PerspectiveProjectConfig =
     farPlane :: Float
   } deriving (Eq, Show)
 
+
 -- | Generate a perspective projection representing the camera looking down the -z axis from the origin.
 perspectiveProject :: PerspectiveProjectConfig -> SceneGraph target ("projectionMatrix" .== M44 Float .// dr) -> SceneGraph target dr
 perspectiveProject (PerspectiveProject v a n f) sg = setFields setPerspective sg
@@ -98,7 +96,10 @@ perspectiveProject (PerspectiveProject v a n f) sg = setFields setPerspective sg
     setPerspective :: Rec r -> Rec ("projectionMatrix" .== M44 Float)
     setPerspective _ = (#projectionMatrix .== perspective v a n f)
 
-autoAspect :: (HasType "windowX" Integer dr, HasType "windowY" Integer dr, HasType "projectionMatrix" (M44 Float) dr) =>
+autoAspect :: (HasType "windowX" Integer dr, 
+               HasType "windowY" Integer dr, 
+               HasType "projectionMatrix" (M44 Float) dr,
+               HasType "correctNDC" (M44 Float) dr) =>
   SceneGraph target dr -> SceneGraph target dr
 autoAspect sg = Transformer correctAspect sg
   where
@@ -108,7 +109,8 @@ autoAspect sg = Transformer correctAspect sg
           a = ((fromInteger y)/(fromInteger x)) :: Float
           m = r .! #projectionMatrix
           scaleAspect = scaleMatrix a 1 1
-      in update #projectionMatrix (scaleAspect !*! m) r
+          correctNDC = r .! #correctNDC
+      in update #projectionMatrix (scaleAspect !*! m !*! correctNDC) r
 
 cameraLookAt :: (HasType "viewMatrix" (M44 Float) dr) => V3 Float -> V3 Float -> V3 Float -> SceneGraph target dr -> SceneGraph target dr
 cameraLookAt camat lookat upvector sg = Transformer setLookAt sg
@@ -163,3 +165,15 @@ spin3d axis spinspeed = transformer (spinAxis spinspeed)
     spinAxis spin r =
       let ang = spin * realToFrac (r .! #curTime)
       in rotateAxisAngle axis ang r
+
+-- | Update 'modelMatrix' field to perform a translation
+scaleBy :: (HasType "modelMatrix" (M44 Float) r) => V3 Float -> Rec r -> Rec r
+scaleBy (V3 sx sy sz) r =
+  let xform = r .! #modelMatrix
+      xform' = xform !*! scaleMatrix sx sy sz
+  in
+    update #modelMatrix xform' r
+
+scale3d :: (HasType "modelMatrix" (M44 Float) dr) => V3 GLfloat -> SceneGraph target dr -> SceneGraph target dr
+scale3d scaleVals = transformer (scaleBy scaleVals)
+

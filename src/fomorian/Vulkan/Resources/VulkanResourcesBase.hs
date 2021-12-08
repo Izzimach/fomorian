@@ -1,7 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -65,13 +63,23 @@ import qualified Vulkan.Core10 as VK
 
 type VulkanDataSourceTypes = BasicDataSourceTypes
   .+ ("renderPassFormat"  .== (Format,Format))    -- ^ produces a renderPass
-  .+ ("pipelineSettings"  .== PipelineSettings)   -- ^ produces a simplePipeline
   .+ ("descriptorLayoutInfo" .== DescriptorSetInfo)  -- ^ produces a descriptorSetLayout
   .+ ("descriptorSourceSettings"  .== DescriptorSetInfo)  -- ^ produces a descriptorSetSource
   .+ ("descriptorHelperSettings"  .== DescriptorSetInfo)  -- ^ produces a descriptorSetSource
+  .+ ("pipelineSettings"  .== PipelineSettings)   -- ^ produces a simplePipeline
 
 type VulkanDataSource = DataSource VulkanDataSourceTypes
   
+diversifyToVulkanSource :: BasicDataSource -> VulkanDataSource
+diversifyToVulkanSource (DataSource x) = DataSource (diversify @(
+     "renderPassFormat" .== (Format,Format)    -- ^ produces a renderPass
+  .+ "pipelineSettings"  .== PipelineSettings   -- ^ produces a simplePipeline
+  .+ "descriptorLayoutInfo" .== DescriptorSetInfo  -- ^ produces a descriptorSetLayout
+  .+ "descriptorSourceSettings"  .== DescriptorSetInfo  -- ^ produces a descriptorSetSource
+  .+ "descriptorHelperSettings"  .== DescriptorSetInfo)
+  x)  -- ^ produces a descriptorSetSource
+
+
 type VulkanResourceTypes =
      ("vkGeometry"     .==  GeometryResource VBuffer IxBuffer DataLayoutMap)
   .+ ("textureImage"   .== ImageBuffer)

@@ -145,8 +145,8 @@ useDescriptorSetHelperSource (DescriptorSetHelperSource poolVar info layout) poo
   allHelpers <- sendM $ atomically $ takeTMVar poolVar
   -- find the relevant pool, or create it
   helper <- case M.lookup poolKey allHelpers of
-            Just p -> return p
-            Nothing -> makeDescriptorSetHelper info layout 10
+              Just p -> return p
+              Nothing -> makeDescriptorSetHelper info layout 10
   (x, helper') <- runState helper poolOp
   sendM $ atomically $ putTMVar poolVar (M.insert poolKey helper' allHelpers)
   return x

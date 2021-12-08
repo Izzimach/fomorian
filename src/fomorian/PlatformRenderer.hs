@@ -38,9 +38,10 @@ data PlatformRendererFunctions renderState =
 
 -- | This is all the scene graph gets by default. Usually a 'Transformer' will add things like the projection matrix and model/view matrix
 type DefaultDrawFrameParams =
-  ("windowX" .== Integer .+
-   "windowY" .== Integer .+ 
-   "curTime" .== Float)
+  "windowX"    .== Integer .+
+  "windowY"    .== Integer .+ 
+  "curTime"    .== Float   .+
+  "correctNDC" .== M44 Float
 
 -- | Some default per-frame draw parameters generated from 'RenderStats'
 generateDefaultDrawFrameParameters :: RenderStats -> Rec DefaultDrawFrameParams
@@ -49,4 +50,5 @@ generateDefaultDrawFrameParameters stats =
       t        = (fromIntegral $ frameCount stats) * (0.016 :: Float) -- assume 60 fps
   in  (#curTime .== t) .+
       (#windowX .== fromIntegral w) .+
-      (#windowY .== fromIntegral h)
+      (#windowY .== fromIntegral h) .+
+      (#correctNDC .== Linear.identity)

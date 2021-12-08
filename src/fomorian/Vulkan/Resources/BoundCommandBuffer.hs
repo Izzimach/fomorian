@@ -24,9 +24,7 @@
 --   to transfer static resources (vertex buffers, images) from host-visible memory to device-local memory.
 module Fomorian.Vulkan.Resources.BoundCommandBuffer where
 
-import Control.Monad
 import Control.Monad.Freer
-import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Concurrent
 import Control.Exception
 import Control.Concurrent.STM
@@ -41,23 +39,10 @@ import Control.Concurrent.STM
       putTMVar,
       takeTMVar )
 
-import Data.Maybe (isJust)
-import Data.Row
-import Data.Row.Variants (view)
-import Data.Functor.Foldable
-import Data.Foldable (find)
-import qualified Data.Set as S
-import qualified Data.Map as M
 import Data.Vector as V hiding (mapM_)
 
-import Foreign.Storable (Storable, sizeOf)
-import Foreign.Marshal.Array
-import Foreign.Ptr (nullPtr, plusPtr,castPtr)
-
-import System.FilePath
-
 -- vulkan core has a lot of common variables exposed like 'size' 'buffer' etc so we specifically import only what we need
-import Vulkan.Core10 (CommandBuffer, CommandPool, Fence, Queue, SubmitInfo(..), CommandPoolCreateInfo(..), commandBufferHandle)
+import Vulkan.Core10 (CommandBuffer, CommandPool, Fence, Queue, SubmitInfo(..), CommandPoolCreateInfo(..))
 import qualified Vulkan.Core10 as VK
 import Vulkan.Zero as VZ ( Zero(zero) )
 import Vulkan.CStruct.Extends
@@ -158,5 +143,5 @@ wrapBoundCommand cmd resultVar wb cPool qew fence = do
   atomically $ putTMVar resultVar result
 
 -- | Generates a OneShotSubmitter monad that sends stuff to the bound thread
-runBoundOneShot :: (LastMember IO effs, Member VulkanMonad effs) => BoundQueueThread -> Eff (OneShotSubmitter ': effs) ~> Eff effs
+runBoundOneShot :: (LastMember IO effs) => BoundQueueThread -> Eff (OneShotSubmitter ': effs) ~> Eff effs
 runBoundOneShot boundQ = interpret $ \(OneShotCommand cmd) -> sendM $ awaitCommandBuffer boundQ cmd

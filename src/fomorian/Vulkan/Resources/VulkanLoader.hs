@@ -11,9 +11,6 @@
 -- | Module for the vulkan resource loader. This hooks up all the calls to load/unload various resources and memory.
 module Fomorian.Vulkan.Resources.VulkanLoader where
 
-
-import Control.Monad
-
 import Control.Monad.Freer
 
 import Data.Maybe (fromMaybe, fromJust)
@@ -88,7 +85,7 @@ loadVulkanResource wb bQ prebuilt (DataSource r) depsMap = switch r $
   .+ #shaderPath        .== loadVulkanShaderFromPath
   .+ #texturePath       .== loadVulkanTextureFromPath
   .+ #renderPassFormat  .== loadRenderPass
-  .+ #pipelineSettings  .== inMonad . loadVulkanPipeline depsMap
+  .+ #pipelineSettings  .== inMonad . loadVulkanPipeline
   .+ #descriptorLayoutInfo .== inMonad . loadDescriptorSetLayout
   .+ #descriptorSourceSettings .== inMonad . loadDescriptorSetSource (findDep depsMap (Label @"descriptorSetLayout"))
   .+ #descriptorHelperSettings .== inMonad . loadDescriptorSetHelperSource (findDep depsMap (Label @"descriptorSetLayout"))
@@ -106,8 +103,8 @@ loadVulkanResource wb bQ prebuilt (DataSource r) depsMap = switch r $
     loadDescriptorSetHelperSource :: (InVulkanMonad effs) => Maybe VK.DescriptorSetLayout -> DescriptorSetInfo -> Eff effs VulkanResource
     loadDescriptorSetHelperSource dLayout dInfo = Resource . IsJust #descriptorSetHelperSource <$> makeDescriptorSetHelperSource dInfo (fromJust dLayout)
 
-    loadVulkanPipeline :: (InVulkanMonad effs) => Map VulkanDataSource VulkanResource -> PipelineSettings -> Eff effs VulkanResource
-    loadVulkanPipeline depsMap (SimplePipelineSettings rpFormat shSource dsLayouts) = do
+    loadVulkanPipeline :: (InVulkanMonad effs) => PipelineSettings -> Eff effs VulkanResource
+    loadVulkanPipeline (SimplePipelineSettings _rpFormat shSource dsLayouts) = do
       let rPass = findDep depsMap (Label @"renderPass")
           vShader = pullResource depsMap (DataSource $ IsJust #shaderPath (shSource ++ "vert")) (Label @"shaderModule")
           fShader = pullResource depsMap (DataSource $ IsJust #shaderPath (shSource ++ "frag")) (Label @"shaderModule")
@@ -174,7 +171,7 @@ vulkanLoaderCallbacks wb bQ prebuilt =
 
 startLoader :: WindowBundle -> BoundQueueThread -> Map Text BasicResource -> IO (AsyncLoader VulkanDataSource VulkanResource VulkanError)
 startLoader wb bQ prebuilt = do
-  let asyncConfig = AsyncLoaderConfig 2 simpleThreadWrapper simpleThreadWrapper
+  let asyncConfig = AsyncLoaderConfig 1 simpleThreadWrapper simpleThreadWrapper
   let callbacks = vulkanLoaderCallbacks wb bQ prebuilt
   startAsyncLoader asyncConfig callbacks
     

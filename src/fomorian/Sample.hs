@@ -69,8 +69,6 @@ testScene2d = neutral3DSceneRoot $
 testScene3d :: SceneGraph NeutralSceneTarget DefaultDrawFrameParams 
 testScene3d = neutral3DSceneRoot $
                 perspectiveProject config $
-                  -- We set the static aspect in 'PerspectiveProject' to 1.0 and let 'autoAspect' handle
-                  -- the aspect to work with window resizing.
                   autoAspect $
                     cameraLookAt (V3 5 10 0) (V3 0 0 0) (V3 0 0 1) $ 
                       group [
