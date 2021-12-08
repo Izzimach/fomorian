@@ -128,20 +128,20 @@ runSomeVulkan = do
       
       let renderarea = Rect2D (Offset2D 0 0) ext2d
       let clearTo = V.fromList [Color (Float32 0 0.5 0.5 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
-      VK.cmdBeginRenderPass cBuf (VK.RenderPassBeginInfo () rPass frameBuf renderarea clearTo) VK.SUBPASS_CONTENTS_INLINE
+      --VK.cmdBeginRenderPass cBuf (VK.RenderPassBeginInfo () rPass frameBuf renderarea clearTo) VK.SUBPASS_CONTENTS_INLINE
 
       let commandTree = vulkanToCommand (VulkanResources resources) (cFormat,dFormat) targetTree
-          --compiledTree = vulkanCommandToTrie commandTree
+          compiledTree = compileToInvocationTrie commandTree
           flipPerspective = Linear.scaled (V4 1 (-1) 1 1)
           drawParams =    #curTime .== (curTime * 0.016)
                        .+ #windowX .== fromIntegral w
                        .+ #windowY .== fromIntegral h
                        .+ #correctNDC .== flipPerspective
       --sendM $ print compiledTree
-      --runInvocation compiledTree
-      vulkanGo commandTree drawParams (slotIndex cSlot) cBuf
+      runInvocationTrie compiledTree drawParams (slotIndex cSlot) cBuf frameBuf ext2d
+      --vulkanGo commandTree drawParams (slotIndex cSlot) cBuf
       
-      VK.cmdEndRenderPass cBuf
+      --VK.cmdEndRenderPass cBuf
       VK.endCommandBuffer cBuf
 
 

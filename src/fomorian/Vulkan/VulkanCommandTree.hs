@@ -165,13 +165,49 @@ vulkanGo sg fd s c = let sm = cata vulkanGoAlgebra sg
 
 -- | Compile a VulkanCommand tree into a tree where draw calls are grouped/binned by pipeline and renderpass.
 --  The first grouping is by 'RenderPass' and then the second grouping is by Pipeline.
-newtype InvocationTrie dr effs = InvocationTrie (M.Map VK.RenderPass (M.Map PipelineBundle (VkDrawCmd dr (Eff effs) ())))
+data InvocationTrie dr effs = InvocationTrie (M.Map VK.RenderPass (M.Map PipelineBundle (VkDrawCmd dr (Eff effs) ()))) --(S.Set DescriptorSetHelper)
 
 instance Semigroup (InvocationTrie dr effs) where
   InvocationTrie m1 <> InvocationTrie m2 = InvocationTrie $ M.unionWith (M.unionWith (>>)) m1 m2
 
 instance Monoid (InvocationTrie dr effs) where
   mempty = InvocationTrie M.empty
+
+-- | Drawing a single thing with OpenGL - shader parameters must be Uniform-valid, which
+--   means they are GLfloat, GLint, or vectors (V2,V3,V4) or matrices.
+invokeVulkanNoPipeBind :: (InvokeReq VulkanCommand ir, DrawReq VulkanCommand dr, 
+                 InVulkanMonad effs) => Rec ir -> VkDrawCmd dr (Eff effs) ()
+invokeVulkanNoPipeBind r = VDC $ \dr slotIndex cBuf ->
+  do
+    -- statics from the 'Invoke' node
+    let dData = r .! #descriptorSetHelper
+        imagez = r .! #imageBuffer
+        vertices = r .! #vertexData
+        (PipelineBundle pLayout pipe) = r .! #pipe
+
+    curDSet <- useDescriptorSetHelperSource dData slotIndex $ do
+      dSetBundle <- nextDescriptorSetBundle
+      let (ImageBuffer _ _ _ iv samp) = imagez
+          flipProjection = scaled (V4 1 (-1) 1 1)
+          uBuf = DefaultMatrices {
+            -- GLSL requires tranlation values are in 13,14,15th element of the matrix layout in
+            -- memory. This is not how matrices in Linear are laid out, so we need to transpose.
+            -- We don't need this in the OpenGL renderer since 'setUniform' of uses GL_TRANSPOSE set to true.
+            matrModel = transpose $ dr .! #modelMatrix,
+            matrView = transpose $ dr .! #viewMatrix,
+            matrProjection = transpose $ dr .! #projectionMatrix
+        }
+      writeToHelperBundle dSetBundle $ uBuf `HCons` (iv,samp) `HCons` HNil
+      return $ dSetHandle dSetBundle
+
+    let (GeometryResource (VBuffer vBuf _) (Just (IxBuffer ixBuf _)) elements _) = vertices
+    VK.cmdBindVertexBuffers cBuf 0 (V.singleton vBuf) (V.singleton 0)
+    VK.cmdBindIndexBuffer cBuf ixBuf 0 VK.INDEX_TYPE_UINT32
+
+    VK.cmdBindDescriptorSets cBuf VK.PIPELINE_BIND_POINT_GRAPHICS pLayout 0 (V.singleton curDSet) V.empty
+    VK.cmdDrawIndexed cBuf (fromIntegral elements) 1 0 0 0
+
+
 
 transformTrie :: (Rec dr2 -> Rec dr) -> InvocationTrie dr effs -> InvocationTrie dr2 effs
 transformTrie t (InvocationTrie m) = InvocationTrie $ M.map (M.map transformCmd) m
@@ -192,7 +228,7 @@ vulkanCommandToTrie (InvokeF x) =
   let rPass    = x .! #renderPass
       pBundle = x .! #pipe
   in
-      InvocationTrie (M.singleton rPass (M.singleton pBundle (invokeVulkan x)))
+      InvocationTrie (M.singleton rPass (M.singleton pBundle (invokeVulkanNoPipeBind x)))
 vulkanCommandToTrie (GroupF cmds) = foldl (<>) mempty cmds
 vulkanCommandToTrie (TransformerF t gr) =
   -- an InvocationTrie using dr2 instead of dr
@@ -205,15 +241,21 @@ compileToInvocationTrie = cata vulkanCommandToTrie
 runInvocationTrie :: (InVulkanMonad effs) => InvocationTrie dr effs -> Rec dr -> Int -> VK.CommandBuffer -> VK.Framebuffer -> VK.Extent2D -> Eff effs ()
 runInvocationTrie (InvocationTrie trie) frameData s cBuf attachments ext2d@(VK.Extent2D w h) = M.foldrWithKey runTrieRenderPass (return ()) trie
   where
-    runTrieRenderPass rPass pipesMap cmdAccum = do
+    runTrieRenderPass rPass pipesMap cmdAccum = cmdAccum >> do
       -- start/end the render pass and run the subtree pipelines in the middle
       let renderarea = VK.Rect2D (VK.Offset2D 0 0) ext2d
       let clearTo = V.fromList [VK.Color (VK.Float32 0 0.5 0.5 1), VK.DepthStencil (VK.ClearDepthStencilValue 1.0 0)]
       VK.cmdBeginRenderPass cBuf (VK.RenderPassBeginInfo () rPass attachments renderarea clearTo) VK.SUBPASS_CONTENTS_INLINE
 
-      --M.foldrWithKey runTriePipelines 
+      M.foldrWithKey runTriePipeline (return ()) pipesMap
 
       VK.cmdEndRenderPass cBuf
+
+    runTriePipeline (PipelineBundle pLayout pipe) pipeCmd cmdAccum = cmdAccum >> do
+      VK.cmdBindPipeline cBuf VK.PIPELINE_BIND_POINT_GRAPHICS pipe
+      runVDC pipeCmd frameData s cBuf
+    
+
 
 
 
