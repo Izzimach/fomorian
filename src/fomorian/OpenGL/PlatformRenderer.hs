@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -56,6 +57,13 @@ threadedLoaderGLCallbacks prebuilt glb =
     processException = const Drop
     }
 
+resizeWindow :: IORef RenderStats -> GLFW.WindowSizeCallback
+resizeWindow rref = \_ w h -> windowResizeEvent w h
+  where
+    windowResizeEvent :: Int -> Int -> IO ()
+    windowResizeEvent w h = do
+      modifyIORef' rref $ \r -> r { windowSize = (V2 w h) }
+
 openGLWrapRenderLoop :: Map Text BasicResource -> (Int, Int) -> (OpenGLRendererState -> IO ()) -> IO ()
 openGLWrapRenderLoop prebuiltResources (w,h) wrapped = bracket startGL endGL wrapped
   where
@@ -70,6 +78,7 @@ openGLWrapRenderLoop prebuiltResources (w,h) wrapped = bracket startGL endGL wra
 
       win <- atomically $ takeTMVar (windowValue glThread)
       statsRef <- newIORef (RenderStats win (V2 w h) 0)
+      GLFW.setWindowSizeCallback win (Just $ resizeWindow statsRef)
       return $ OpenGLRendererState glThread mtLoader statsRef
 
     endGL (OpenGLRendererState glThread mtLoader _) = do
@@ -88,12 +97,13 @@ shouldEndProgram win = do
   return shouldTerminate
 
 -- | Given a scene graph, draw a single frame on an OpenGL canvas.
-renderOneFrame :: SceneGraph OpenGLCommand dr -> Rec dr -> IO ()
-renderOneFrame scene frameData = do
+renderOneFrame :: SceneGraph OpenGLCommand dr -> Rec dr -> V2 Int -> IO ()
+renderOneFrame scene frameData (V2 w h) = do
   GL.clearColor $= Color4 0 0.5 0.5 1
   GL.clear [GL.ColorBuffer, GL.DepthBuffer]
-  depthFunc $= Just Less
-  cullFace $= Just Front
+  GL.depthFunc $= Just Less
+  GL.cullFace $= Just Back
+  GL.viewport $= (GL.Position 0 0, GL.Size (fromIntegral w) (fromIntegral h))
   renderresult <- try $ openGLgo scene frameData
   case renderresult of
     Left e   -> putStrLn $ displayException (e :: SomeException)
@@ -125,7 +135,7 @@ openGLRendererFunctions prebuilt =
       -- force the sceneCaommand and frameData thunks before passing them to the OGL thread
       sceneCommand `seq` frameData `seq`
         waitForPriorityGLTask boundGL $ do
-          renderOneFrame sceneCommand frameData
+          renderOneFrame sceneCommand frameData (windowSize stats)
           GLFW.swapBuffers (renderWindow stats)
       
       -- check for app end, this uses OpenGL so it needs to run in the OpenGL thread
