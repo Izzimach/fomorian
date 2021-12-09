@@ -170,6 +170,12 @@ data DescriptorSetFixedPool = DescriptorSetFixedPool
 data DescriptorSetHelperSource = DescriptorSetHelperSource (TMVar (M.Map Int DescriptorSetHelper)) DescriptorSetInfo VK.DescriptorSetLayout
   deriving (Eq)
 
+instance Ord DescriptorSetHelperSource where
+  (DescriptorSetHelperSource _ i1 l1) <= (DescriptorSetHelperSource _ i2 l2) = (i1 <= i2) && (l1 <= l2)
+
+instance Show DescriptorSetHelperSource where
+  show (DescriptorSetHelperSource _ dInfo dLayout) = "(DescriptorSetHelperSource " ++ show dInfo ++ ", " ++ show dLayout ++")"
+
 data DescriptorSetHelper = DescriptorSetHelper
   {
     freeSubHelpers :: V.Vector DescriptorSetHelperPool,

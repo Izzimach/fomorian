@@ -95,29 +95,11 @@ runSomeVulkan = do
       sb <- sendM $ readIORef (bundleRef swc)
       let (SwapchainPresentInfo cFormat dFormat ext2d@(Extent2D w h)) = swapchainPresentInfo sb
 
-      let basicDescriptorInfo = DescriptorSetInfo [
-              UniformDescriptor 0 VK.SHADER_STAGE_VERTEX_BIT (fromIntegral $ sizeOf @HelperExample undefined) (fromIntegral $ Foreign.Storable.alignment @HelperExample undefined),
-              CombinedDescriptor 1 VK.SHADER_STAGE_FRAGMENT_BIT 1 V.empty
-            ]
-          basicDescriptorSource = (DataSource $ IsJust #descriptorHelperSettings basicDescriptorInfo :: VulkanDataSource)
-          basicRenderpassFormat = (cFormat,dFormat)
-          basicRenderpassSource = DataSource $ IsJust #renderPassFormat basicRenderpassFormat
+      let basicRenderpassFormat = (cFormat,dFormat)
           targetTree = neutralToVulkanTarget sceneGraph
           (VulkanDataSources reqSources) = vulkanResourcesScene (cFormat,dFormat) targetTree
 
-      --sendM $ print reqSources
-      -- wait until loader loads our stuff
-      --resources <- sendM $ waitForResourceProcessing resourceLoader (S.empty, S.fromList [basicVertSource, basicImageSource, basicRenderpassSource, basicDescriptorSource, basicPipelineSource])
-      resources <- sendM $ waitForResourceProcessing resourceLoader (S.empty, S.insert basicDescriptorSource reqSources)
-      --sendM $ print "Resources loaded!"
-      let dData = fromJust $ pullResource resources basicDescriptorSource #descriptorSetHelperSource
-          --(Just vertices)       = pullResource resources basicVertSource #vkGeometry
-          --(Just imagez)         = pullResource resources basicImageSource #textureImage
-          rPass = fromJust $ pullResource resources basicRenderpassSource #renderPass
-          --(Just pBundle)        = (pullResource resources basicPipelineSource #simplePipeline :: Maybe PipelineBundle)
-          --(PipelineBundle pLayout pipe) = pBundle-}
-
-      useDescriptorSetHelperSource dData (slotIndex cSlot) $ resetDescriptorSetHelper
+      resources <- sendM $ waitForResourceProcessing resourceLoader (S.empty, reqSources)
 
       VK.beginCommandBuffer cBuf (VK.CommandBufferBeginInfo () VZ.zero Nothing)
 
@@ -126,10 +108,6 @@ runSomeVulkan = do
       VK.cmdSetViewport cBuf 0 (V.singleton viewport)
       VK.cmdSetScissor cBuf 0 (V.singleton scissor)
       
-      let renderarea = Rect2D (Offset2D 0 0) ext2d
-      let clearTo = V.fromList [Color (Float32 0 0.5 0.5 1), DepthStencil (ClearDepthStencilValue 1.0 0)]
-      --VK.cmdBeginRenderPass cBuf (VK.RenderPassBeginInfo () rPass frameBuf renderarea clearTo) VK.SUBPASS_CONTENTS_INLINE
-
       let commandTree = vulkanToCommand (VulkanResources resources) (cFormat,dFormat) targetTree
           compiledTree = compileToInvocationTrie commandTree
           flipPerspective = Linear.scaled (V4 1 (-1) 1 1)
@@ -137,11 +115,9 @@ runSomeVulkan = do
                        .+ #windowX .== fromIntegral w
                        .+ #windowY .== fromIntegral h
                        .+ #correctNDC .== flipPerspective
-      --sendM $ print compiledTree
+
       runInvocationTrie compiledTree drawParams (slotIndex cSlot) cBuf frameBuf ext2d
-      --vulkanGo commandTree drawParams (slotIndex cSlot) cBuf
       
-      --VK.cmdEndRenderPass cBuf
       VK.endCommandBuffer cBuf
 
 

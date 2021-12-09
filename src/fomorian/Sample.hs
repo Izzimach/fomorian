@@ -78,7 +78,7 @@ testScene3d = neutral3DSceneRoot $
   where
     config = PerspectiveProject  1.2 {-fov-} 1.0 {-aspect-} 0.1 {-near plane-} 1000 {-far plane-}
     someCube :: (DrawReq NeutralSceneTarget dr) => SceneGraph NeutralSceneTarget dr
-    someCube = wavefrontMesh "unlit3d" "testcube.obj" ["salamander.png"]
+    someCube = wavefrontMesh "tut" "testcube.obj" ["salamander.png"]
 
 dynamicsTestScene3d :: SceneGraph NeutralSceneTarget DefaultDrawFrameParams
 dynamicsTestScene3d = undefined

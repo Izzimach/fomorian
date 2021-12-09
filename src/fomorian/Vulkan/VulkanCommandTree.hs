@@ -38,9 +38,6 @@ import Fomorian.StorableLayout
 import Fomorian.Vulkan.VulkanMonads
 import Fomorian.Vulkan.Resources.VulkanResourcesBase
 import Fomorian.Vulkan.Resources.DescriptorSetHelper
-    ( writeToHelperBundle,
-      nextDescriptorSetBundle,
-      useDescriptorSetHelperSource )
 import Fomorian.Vulkan.VulkanTargetTree
 
 
@@ -165,13 +162,21 @@ vulkanGo sg fd s c = let sm = cata vulkanGoAlgebra sg
 
 -- | Compile a VulkanCommand tree into a tree where draw calls are grouped/binned by pipeline and renderpass.
 --  The first grouping is by 'RenderPass' and then the second grouping is by Pipeline.
-data InvocationTrie dr effs = InvocationTrie (M.Map VK.RenderPass (M.Map PipelineBundle (VkDrawCmd dr (Eff effs) ()))) --(S.Set DescriptorSetHelper)
+data InvocationTrie dr effs = InvocationTrie (M.Map VK.RenderPass (M.Map PipelineBundle (VkDrawCmd dr (Eff effs) ()))) (S.Set DescriptorSetHelperSource)
 
 instance Semigroup (InvocationTrie dr effs) where
-  InvocationTrie m1 <> InvocationTrie m2 = InvocationTrie $ M.unionWith (M.unionWith (>>)) m1 m2
+  (InvocationTrie m1 d1) <> (InvocationTrie m2 d2) = InvocationTrie (M.unionWith (M.unionWith (>>)) m1 m2) (S.union d1 d2)
 
 instance Monoid (InvocationTrie dr effs) where
-  mempty = InvocationTrie M.empty
+  mempty = InvocationTrie M.empty S.empty
+
+instance Show (InvocationTrie dr effs) where
+  show (InvocationTrie m d) = (M.foldrWithKey showRPass "" m) ++ (S.foldr' showDSetHelper "" d)
+    where
+      showRPass kr r accum = ("Renderpass=" ++ show kr ++ ": " ++ M.foldrWithKey showPipes "" r)
+      showPipes kp p accum = ("(Pipe=" ++ show kp ++ ")")
+      showDSetHelper ds accum = "Descriptor Set Helper=" ++ show ds ++ " " ++ accum
+
 
 -- | Drawing a single thing with OpenGL - shader parameters must be Uniform-valid, which
 --   means they are GLfloat, GLint, or vectors (V2,V3,V4) or matrices.
@@ -210,25 +215,19 @@ invokeVulkanNoPipeBind r = VDC $ \dr slotIndex cBuf ->
 
 
 transformTrie :: (Rec dr2 -> Rec dr) -> InvocationTrie dr effs -> InvocationTrie dr2 effs
-transformTrie t (InvocationTrie m) = InvocationTrie $ M.map (M.map transformCmd) m
+transformTrie t (InvocationTrie m d) = InvocationTrie (M.map (M.map transformCmd) m) d
   where
-    --transformCmd :: VkDrawCmd dr (Eff effs) () -> VkDrawCmd dr2 (Eff effs) ()
     transformCmd cmd = VDC $ \fd s c ->
       let fd2 = t fd
       in runVDC cmd fd2 s c
-
-instance Show (InvocationTrie dr effs) where
-  show (InvocationTrie m) = M.foldrWithKey showRPass "" m
-    where
-      showRPass kr r accum = ("Renderpass=" ++ show kr ++ ": " ++ M.foldrWithKey showPipes "" r)
-      showPipes kp p accum = ("(Pipe=" ++ show kp ++ ")")
 
 vulkanCommandToTrie :: (InVulkanMonad effs) => SceneGraphF VulkanCommand dr (InvocationTrie dr effs) -> InvocationTrie dr effs
 vulkanCommandToTrie (InvokeF x) =
   let rPass    = x .! #renderPass
       pBundle = x .! #pipe
+      dSetHelper = x .! #descriptorSetHelper
   in
-      InvocationTrie (M.singleton rPass (M.singleton pBundle (invokeVulkanNoPipeBind x)))
+      InvocationTrie (M.singleton rPass (M.singleton pBundle (invokeVulkanNoPipeBind x))) (S.singleton dSetHelper)
 vulkanCommandToTrie (GroupF cmds) = foldl (<>) mempty cmds
 vulkanCommandToTrie (TransformerF t gr) =
   -- an InvocationTrie using dr2 instead of dr
@@ -239,7 +238,11 @@ compileToInvocationTrie :: (InVulkanMonad effs) => SceneGraph VulkanCommand dr -
 compileToInvocationTrie = cata vulkanCommandToTrie
 
 runInvocationTrie :: (InVulkanMonad effs) => InvocationTrie dr effs -> Rec dr -> Int -> VK.CommandBuffer -> VK.Framebuffer -> VK.Extent2D -> Eff effs ()
-runInvocationTrie (InvocationTrie trie) frameData s cBuf attachments ext2d@(VK.Extent2D w h) = M.foldrWithKey runTrieRenderPass (return ()) trie
+runInvocationTrie (InvocationTrie trie dSetHelpers) frameData slotIndex cBuf attachments ext2d@(VK.Extent2D w h) = do
+  -- reset all descriptor set helpers used by this trie
+  mapM_ (\dSet -> useDescriptorSetHelperSource dSet slotIndex $ resetDescriptorSetHelper) (S.toList dSetHelpers)
+
+  M.foldrWithKey runTrieRenderPass (return ()) trie
   where
     runTrieRenderPass rPass pipesMap cmdAccum = cmdAccum >> do
       -- start/end the render pass and run the subtree pipelines in the middle
@@ -253,7 +256,7 @@ runInvocationTrie (InvocationTrie trie) frameData s cBuf attachments ext2d@(VK.E
 
     runTriePipeline (PipelineBundle pLayout pipe) pipeCmd cmdAccum = cmdAccum >> do
       VK.cmdBindPipeline cBuf VK.PIPELINE_BIND_POINT_GRAPHICS pipe
-      runVDC pipeCmd frameData s cBuf
+      runVDC pipeCmd frameData slotIndex cBuf
     
 
 
