@@ -127,7 +127,7 @@ invokeVulkan r = VDC $ \dr slotIndex cBuf ->
           flipProjection = scaled (V4 1 (-1) 1 1)
           uBuf = DefaultMatrices {
             -- GLSL requires tranlation values are in 13,14,15th element of the matrix layout in
-            -- memory. This is not how matrices in Linear are laid out, so we need to transpose.
+            -- memory. This is not how matrices are laid out in the 'Linear' package, so we need to transpose.
             -- We don't need this in the OpenGL renderer since 'setUniform' of uses GL_TRANSPOSE set to true.
             matrModel = transpose $ dr .! #modelMatrix,
             matrView = transpose $ dr .! #viewMatrix,
