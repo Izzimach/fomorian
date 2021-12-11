@@ -1,3 +1,4 @@
+// glsl fragment shader for the 'unlit3d' resource used by the OpenGL renderer
 #version 330
 
 // basic fragment shader for unlit 3d objects.

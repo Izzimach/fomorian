@@ -1,3 +1,5 @@
+// fragment shader for 'unlit3d' shader used by the Vulkan renderer. After changing
+// this you need to recompile it into "unlit3dfrag.spv" using glslc or equivalent
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
