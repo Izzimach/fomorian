@@ -40,10 +40,6 @@ data SwapchainBundle =
     swapchainHandle :: SwapchainKHR,
     swapchainPresentInfo :: SwapchainPresentInfo,
     swapchainRenderPass :: VK.RenderPass,
-    swapchainDescriptorLayout :: VK.DescriptorSetLayout,
-    swapchainPipeLayout :: VK.PipelineLayout,
-    swapchainShaders :: (VK.ShaderModule, VK.ShaderModule),
-    swapchainPipeline :: VK.Pipeline,
     swapchainImages :: Vector SwapchainPerImageData
   }
 
@@ -59,24 +55,14 @@ makeSwapchainBundle previousSwapchain = do
       fmt = VKSWAPCHAIN.imageFormat createInfo
   depthFormat <- findDepthFormat
   rPass <- makeSimpleRenderPass fmt depthFormat
-  descriptorLayout <- makeDescriptorSetLayout
-  let pipelineLayoutCreate = VK.PipelineLayoutCreateInfo VZ.zero (fromList [descriptorLayout]) empty
-  pipelineLayout <- VK.createPipelineLayout d pipelineLayoutCreate allocator
-  (vm, fm) <- sendM $ readSPIRV d "tut"
-  pipeline <- buildSimplePipeline (vm,fm) rPass pipelineLayout (VKSWAPCHAIN.imageExtent createInfo)
   perImage <- mapM (makePerImageData ext rPass fmt) newImages
   let presentInfo = SwapchainPresentInfo fmt depthFormat ext
-  return $ SwapchainBundle createInfo newSwapchain presentInfo rPass descriptorLayout pipelineLayout (vm,fm) pipeline perImage
+  return $ SwapchainBundle createInfo newSwapchain presentInfo rPass perImage
   
 destroySwapchainBundle :: (InVulkanMonad effs) => SwapchainBundle -> Eff effs ()
 destroySwapchainBundle scBundle = do
   mapM_ destroyPerImageData (swapchainImages scBundle)
   d <- getDevice
-  destroySimplePipeline (swapchainPipeline scBundle)
-  VK.destroyShaderModule d (fst $ swapchainShaders scBundle) Nothing
-  VK.destroyShaderModule d (snd $ swapchainShaders scBundle) Nothing
-  unmakeDescriptorSetLayout (swapchainDescriptorLayout scBundle)
-  VK.destroyPipelineLayout d (swapchainPipeLayout scBundle) Nothing
   VK.destroyRenderPass d (swapchainRenderPass scBundle) Nothing
   destroySwapchainKHR d (swapchainHandle scBundle) Nothing
 
@@ -210,30 +196,3 @@ choosePresentMode pmodes =
   case find (== VKSURFACE.PRESENT_MODE_FIFO_KHR) pmodes of
     Nothing -> error "No FIFO presentation mode found"
     Just m -> m
-
-
--- | Read in SPIR-V shader files
-readSPIRV :: Device -> FilePath -> IO (VK.ShaderModule, VK.ShaderModule)
-readSPIRV dev shaderPath = do
-  let vertPath = "resources" </> "shaders" </> (shaderPath ++ "vert.spv")
-  vertBytes <- Data.ByteString.readFile vertPath
-  vertModule <- VK.createShaderModule dev (VK.ShaderModuleCreateInfo () VZ.zero vertBytes) Nothing
-  let fragPath = "resources" </> "shaders" </> (shaderPath ++ "frag.spv")
-  fragBytes <- Data.ByteString.readFile fragPath
-  fragModule <- VK.createShaderModule dev (VK.ShaderModuleCreateInfo () VZ.zero fragBytes) Nothing
-  return (vertModule, fragModule)
-
-
-
-makeDescriptorSetLayout :: (InVulkanMonad effs) => Eff effs VK.DescriptorSetLayout
-makeDescriptorSetLayout = do
-  let dBinding1 = VK.DescriptorSetLayoutBinding 0 VK.DESCRIPTOR_TYPE_UNIFORM_BUFFER 1 VK.SHADER_STAGE_VERTEX_BIT empty
-  let dBinding2 = VK.DescriptorSetLayoutBinding 1 VK.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER 1 VK.SHADER_STAGE_FRAGMENT_BIT empty
-  let createInfo = VK.DescriptorSetLayoutCreateInfo () VZ.zero (fromList [dBinding1,dBinding2])
-  d <- getDevice
-  VK.createDescriptorSetLayout d createInfo Nothing
-
-unmakeDescriptorSetLayout :: (InVulkanMonad effs) => VK.DescriptorSetLayout -> Eff effs ()
-unmakeDescriptorSetLayout descriptorSetLayoutInstance = do
-  d <- getDevice
-  VK.destroyDescriptorSetLayout d descriptorSetLayoutInstance Nothing

@@ -99,6 +99,7 @@ vulkanRenderFrame (VulkanRendererState wb ld swc stats) scene frameData = do
             targetTree = neutralToVulkanTarget sceneGraph
             (VulkanDataSources reqSources) = vulkanResourcesScene (cFormat,dFormat) targetTree
 
+        -- right now loading is forced to be synchronous        
         resources <- sendM $ waitForResourceProcessing resourceLoader (S.empty, reqSources)
 
         VK.beginCommandBuffer cBuf (VK.CommandBufferBeginInfo () VZ.zero Nothing)
