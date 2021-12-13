@@ -332,7 +332,7 @@ instance (Storable x) => WriteToDescriptor 'DSUniform x where
     d <- getDevice
     let (MemoryAllocation memHandle _ _ memPtr (MemoryBlock _ bOffset bSize)) = alloc
     case memPtr of
-      Nothing -> error "Uniform buffer was not auto mapped using the AlwaysMapped enum of AbstractMemoryType
+      Nothing -> error "Uniform buffer was not auto mapped using the AlwaysMapped enum of AbstractMemoryType"
       Just ptr -> let offsetPtr = plusPtr ptr (fromIntegral offsetInBuffer)
                   in sendM $ poke (castPtr offsetPtr) v
 
