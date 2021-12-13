@@ -167,7 +167,7 @@ destroyDescriptorSetHelper helper@(DescriptorSetHelper free used info layout _)=
 nextDescriptorSetBundle :: (InVulkanMonad effs, Member (State DescriptorSetHelper) effs) => Eff effs DescriptorHelperBundle
 nextDescriptorSetBundle = do
   h <- get @DescriptorSetHelper
-  case (freeSubHelpers h) !? 0 of
+  case freeSubHelpers h !? 0 of
     Nothing -> makeNewPool h
     Just sh -> do
       case getFromPool sh of
@@ -179,7 +179,7 @@ nextDescriptorSetBundle = do
           -- run again, maybe the next freeSubHelper will work
           nextDescriptorSetBundle
         Just (dSet, sh') -> do
-          let h' = h { freeSubHelpers = (freeSubHelpers h) // [(0,sh')]}
+          let h' = h { freeSubHelpers = freeSubHelpers h // [(0,sh')]}
           put h'
           return dSet
   where
@@ -251,7 +251,7 @@ makeDescriptorSetHelperPool dHelp@(DescriptorSetHelper _ _ info layout setCount)
       makeUniformBlock (Just stride) = do
         d <- getDevice
         uBuf@(UBuffer _ alloc) <- makeUniformBuffer (stride * fromIntegral setCount)
-        let (MemoryAllocation memHandle _ _ (MemoryBlock _ blockOffset blockSize)) = alloc
+        let (MemoryAllocation memHandle _ _ _ (MemoryBlock _ blockOffset blockSize)) = alloc
         return $ Just uBuf
 
       createBundle dSets uBuffers info bufStrides ix = do
@@ -268,7 +268,7 @@ makeDescriptorSetHelperPool dHelp@(DescriptorSetHelper _ _ info layout setCount)
         d <- getDevice
         mapM_ (calcDescriptorWrite dSet) $ zip bindings (V.toList bufData)
 
-      calcDescriptorWrite dSet ((UniformDescriptor bindIndex _ size _), Just ((UBuffer uBuf _),offset)) = do
+      calcDescriptorWrite dSet (UniformDescriptor bindIndex _ size _, Just (UBuffer uBuf _, offset)) = do
         d <- getDevice
         let bufferInfo = VK.DescriptorBufferInfo uBuf offset (fromIntegral size)
             writeStruct = SomeStruct $ VK.WriteDescriptorSet () dSet bindIndex 0 1 VK.DESCRIPTOR_TYPE_UNIFORM_BUFFER V.empty (V.singleton bufferInfo) V.empty
@@ -330,8 +330,11 @@ instance WriteToDescriptor 'DSCombinedSampler (VK.ImageView,VK.Sampler) where
 instance (Storable x) => WriteToDescriptor 'DSUniform x where
   writeToDescriptor dSet _ v (Just (UBuffer _ alloc, offsetInBuffer)) = do
     d <- getDevice
-    let (MemoryAllocation memHandle _ _ (MemoryBlock _ bOffset bSize)) = alloc
-    sendM $ VK.withMappedMemory d memHandle (bOffset + offsetInBuffer) bSize VZ.zero bracket $ \ptr -> poke (castPtr ptr) v
+    let (MemoryAllocation memHandle _ _ memPtr (MemoryBlock _ bOffset bSize)) = alloc
+    case memPtr of
+      Nothing -> error "Uniform buffer was not auto mapped using the AlwaysMapped enum of AbstractMemoryType
+      Just ptr -> let offsetPtr = plusPtr ptr (fromIntegral offsetInBuffer)
+                  in sendM $ poke (castPtr offsetPtr) v
 
 
 -- | Write to a descriptor set using an Hlist. Each element of the hlist is either:

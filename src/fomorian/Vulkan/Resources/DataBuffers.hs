@@ -77,10 +77,10 @@ loadGeometry geo = do
       toW32 = fromIntegral
 
 
--- | Makes a single uniform buffer. These are always host visible since you'll probably dump stuff in there a lot.
+-- | Makes a single uniform buffer. These are always mapped since you'll probably dump stuff in there a lot.
 makeUniformBuffer :: (InVulkanMonad effs) => DeviceSize -> Eff effs UBuffer
 makeUniformBuffer bufferSize = do
-  (b,alloc) <- makeBuffer bufferSize VK.BUFFER_USAGE_UNIFORM_BUFFER_BIT RequireHostVisible
+  (b,alloc) <- makeBuffer bufferSize VK.BUFFER_USAGE_UNIFORM_BUFFER_BIT AlwaysMapped
   return (UBuffer b alloc)
 
 -- | Create a CPU-accessable buffer, usually used just for copying over to the GPU.
@@ -88,9 +88,11 @@ loadStagingBuffer :: forall effs v. (InVulkanMonad effs, Storable v) => [v] -> B
 loadStagingBuffer arrayData usage = do
   d <- getDevice
   let size = fromIntegral $ sizeOf (undefined :: v) * Prelude.length arrayData
-  (b,alloc) <- makeBuffer size (usage .|. VK.BUFFER_USAGE_TRANSFER_SRC_BIT) RequireHostVisible
-  let (MemoryAllocation memHandle _ _ block) = alloc
-  sendM $ VK.withMappedMemory d memHandle (blockOffset block) (blockSize block) VZ.zero bracket $ \ptr -> pokeArray (castPtr ptr) arrayData
+  (b,alloc) <- makeBuffer size (usage .|. VK.BUFFER_USAGE_TRANSFER_SRC_BIT) AlwaysMapped
+  let (MemoryAllocation memHandle _ _ memPtr block) = alloc
+  case memPtr of
+    Nothing -> error "Staging buffer was not automapped"
+    Just ptr -> sendM $ pokeArray (castPtr ptr) arrayData
   return (StagingBuffer b alloc)
 
 -- | Allocate a new buffer and fill it with data. The data is just an array of storable values, so it can be used for vertices, indices, etc.
@@ -101,14 +103,16 @@ loadStaticBuffer arrayData usage memType = do
   d <- getDevice
   let size = fromIntegral $ sizeOf (undefined :: x) * Prelude.length arrayData
   -- always make sure we can run a transfer command to this buffer, which we'll need if it's on device local memory
-  (b,alloc) <- makeBuffer size (usage .|. VK.BUFFER_USAGE_TRANSFER_DST_BIT) RequireHostVisible --memType
-  let (MemoryAllocation memHandle memTypeIndex _ block) = alloc
+  (b,alloc) <- makeBuffer size (usage .|. VK.BUFFER_USAGE_TRANSFER_DST_BIT) memType
+  let (MemoryAllocation memHandle memTypeIndex _ memPtr block) = alloc
   memManagerVar <- memoryManager <$> getWindowBundle
   memManager <- sendM $ atomically $ readTMVar memManagerVar
   -- if the buffer is host visible we can just map it and copy over the data. if not, we need to put the data into a staging buffer
   -- and transfer that data to the buffer via a command buffer operation
   if isHostVisible memManager alloc
-  then sendM $ VK.withMappedMemory d memHandle (blockOffset block) (blockSize block) VZ.zero bracket $ \ptr -> pokeArray (castPtr ptr) arrayData
+  then case memPtr of
+         Nothing -> sendM $ VK.withMappedMemory d memHandle (blockOffset block) (blockSize block) VZ.zero bracket $ \ptr -> pokeArray (castPtr ptr) arrayData
+         Just ptr -> sendM $ pokeArray (castPtr ptr) arrayData
   else do
     staging@(StagingBuffer srcBuf srcAlloc) <- loadStagingBuffer arrayData usage
     oneShotCommand $ \cBuf -> VK.cmdCopyBuffer cBuf srcBuf b (V.fromList [VK.BufferCopy 0 0 size])
@@ -124,7 +128,7 @@ makeBuffer bSize bUsage memType = do
   buf <- VK.createBuffer d bufInfo Nothing
   req <- VK.getBufferMemoryRequirements d buf
   allocResult <- allocateV req memType
-  let (MemoryAllocation memHandle _ _ block) = allocResult
+  let (MemoryAllocation memHandle _ _ _ block) = allocResult
   VK.bindBufferMemory d buf memHandle (blockOffset block)
   return (buf, allocResult)
 

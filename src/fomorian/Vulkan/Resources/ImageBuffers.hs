@@ -88,7 +88,7 @@ makeImagePrimitives (w,h,mipmaps) numSamples imgFormat imgTiling imgUsage imgAsp
   sendM $ print memReq
   pd <- getPhysicalDevice
   memAlloc <- allocateV memReq PreferGPU
-  let (MemoryAllocation memHandle _ _ block) = memAlloc
+  let (MemoryAllocation memHandle _ _ _ block) = memAlloc
   VK.bindImageMemory d imageHandle memHandle (blockOffset block)
   let viewInfo = VK.ImageViewCreateInfo () VZ.zero imageHandle VK.IMAGE_VIEW_TYPE_2D imgFormat VZ.zero (VK.ImageSubresourceRange imgAspect 0 (fromIntegral mipmaps) 0 1)
   imgView <- VK.createImageView d viewInfo allocator

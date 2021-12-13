@@ -101,8 +101,10 @@ updateUBO ub elapsedTime (Extent2D width height) = do
 updateUniformBuffer :: (InVulkanMonad effs) => UBuffer -> UniformBufferObject -> Eff effs ()
 updateUniformBuffer (UBuffer _ alloc) newUniforms = do
   d <- getDevice
-  let (MemoryAllocation memHandle _ _ (MemoryBlock _ bOffset bSize)) = alloc
-  sendM $ VK.withMappedMemory d memHandle bOffset bSize VZ.zero bracket $ \ptr -> poke (castPtr ptr) newUniforms
+  let (MemoryAllocation memHandle _ _ mPtr (MemoryBlock _ bOffset bSize)) = alloc
+  case mPtr of
+    Nothing -> error "uniformbuffer allocated from unmapped pool!"
+    Just ptr -> sendM $ poke (castPtr ptr) newUniforms
 
 
 makeDescriptorPool :: (InVulkanMonad effs) => Int -> Maybe AllocationCallbacks -> Eff effs DescriptorPool

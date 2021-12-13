@@ -17,14 +17,28 @@ data AbstractMemoryType =
   -- | Try to find memory that the host (CPU) can access. Prefers HOST_VISIBLE memory that isn't DEVICE_LOCAL, but will fallback to DEVICE_LOCAL.
   --   If CPU code needs to write to buffers/textures this is the type to use.
   --   This memory will probably be slower for the GPU to access so you should use 'PreferGPU' for most things unless you need to constantly write to
-  --   the memory region. To upload data you would
-  --   create a CPU-visible staging buffer, put the data in there, and then use a command buffer operation to transfer that data to some fast memory. (cmdCopyBuffer)
+  --   the memory region yourself.
+  --   Note that the memory is not mapped. You can map it yourself, but this can cause problems since the memory handle is shared and
+  --   two threads cannot both map the same memory handle at once. For mapped memory that you write to frequently it's better to use 'AlwaysMapped'
   | RequireHostVisible
   -- | Looks for memory local to the GPU (DEVICE_LOCAL) that's also accessible by the CPU. There is generally not a lot of this kind of memory available
   --   (if any is available!) so it should be used sparingly. If none of this memory is available it falls back on general HOST_VISIBLE memory.
   | GPUAndHostVisible
+  -- | Host coherent memory that is always mapped. Used for buffers that are frequenctly written to (like every frame). The mapping/unmapping is done for you,
+  --   and the the pointer in 'MemoryAllocation' is set to the 'Just' value pointing at the relevant memory region including the blockOffset.
+  | AlwaysMapped
   deriving (Eq, Show, Ord)
 
+-- | Some allocations have special requirements.
+data MemoryModifier =
+    DefaultMemory      -- ^ just allocate the memory and hand it back
+  | MappedArena        -- ^ the whole arena is mapped so all suballocations are always mapped as well
+  | UseWholeArena      -- ^ each allocation uses up the whole arena
+  deriving (Eq, Ord, Show)
+
+abstractTypeToModifier :: AbstractMemoryType -> MemoryModifier
+abstractTypeToModifier AlwaysMapped = MappedArena
+abstractTypeToModifier _            = DefaultMemory
 
 newtype MemoryPriorityMap k = MemoryPriorityMap (M.Map k [Word32])
   deriving (Eq, Show)
@@ -77,8 +91,8 @@ fastPrioritizer = MemoryTypePrioritizer {
 }
 
 -- | Prioritizer which only accepts host coherent memory (so we don't have to flush writes), and prefers memory that isn't device local
-hostVisiblePrioritizer :: MemoryTypePrioritizer
-hostVisiblePrioritizer = MemoryTypePrioritizer {
+hostVisibleOnly :: MemoryTypePrioritizer
+hostVisibleOnly = MemoryTypePrioritizer {
   -- only allow host visible and coherent memory
   isValidMemoryType = \(MemoryType m _) ->
     (hasMemoryTypeBit m MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
@@ -115,13 +129,13 @@ describeMemoryType props (MemoryType m hix) =
       hostCoherent = hasMemoryTypeBit m MEMORY_PROPERTY_HOST_COHERENT_BIT
       hostCached = hasMemoryTypeBit m MEMORY_PROPERTY_HOST_CACHED_BIT
       showIfBitSet = \b t -> if b then (t ++ " " ) else ""
-      (MemoryHeap heapSize heapFlags) = (memoryHeaps props) V.! (fromIntegral hix)
+      (MemoryHeap heapSize _heapFlags) = memoryHeaps props V.! fromIntegral hix
   in
     "MemoryType " ++ "Heap index=" ++ show hix ++ " Heap size=" ++ show heapSize ++ " ["
-                  ++ (showIfBitSet deviceLocal "DeviceLocal")
-                  ++ (showIfBitSet hostVisible "HostVisible")
-                  ++ (showIfBitSet hostCoherent "HostCoherent")
-                  ++ (showIfBitSet hostCached "HostCached")
+                  ++ showIfBitSet deviceLocal "DeviceLocal"
+                  ++ showIfBitSet hostVisible "HostVisible"
+                  ++ showIfBitSet hostCoherent "HostCoherent"
+                  ++ showIfBitSet hostCached "HostCached"
                   ++ "]"
 
 describeMemoryOrder :: PhysicalDeviceMemoryProperties -> [Word32] -> String
@@ -138,9 +152,9 @@ compileMemoryPriorities props =
   let types = V.toList $ memoryTypes props
       memoryTypeChoices = [
                             (PreferGPU, fastPrioritizer),
-                            (RequireHostVisible, hostVisiblePrioritizer),
+                            (RequireHostVisible, hostVisibleOnly),
                             -- need a prioritizer for this
-                            (GPUAndHostVisible, fastHostVisiblePrioritizer)
+                            (GPUAndHostVisible, fastHostVisiblePrioritizer),
+                            (AlwaysMapped, hostVisibleOnly)
                           ]
-  in MemoryPriorityMap $ M.fromList $
-       fmap (\(k,v) -> (k, makePriorityMemoryTypeList types v)) memoryTypeChoices
+  in MemoryPriorityMap $ M.fromList $ fmap (\(k,v) -> (k, makePriorityMemoryTypeList types v)) memoryTypeChoices
